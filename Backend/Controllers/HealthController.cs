@@ -1,7 +1,7 @@
 ﻿using System.Reflection;
 using Microsoft.AspNetCore.Mvc;
 
-namespace apikeyservice.Controllers;
+namespace Backend.Controllers;
 
 /// <summary>
 /// provides endpoints for health checks

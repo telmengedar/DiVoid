@@ -3,7 +3,7 @@ using Pooshit.AspNetCore.Services.Data;
 using Pooshit.AspNetCore.Services.Formatters.DataStream;
 using Pooshit.AspNetCore.Services.Patches;
 
-namespace apikeyservice.Services;
+namespace Backend.Services.Auth;
 
 /// <summary>
 /// service used to manage api keys
