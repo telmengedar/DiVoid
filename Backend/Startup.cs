@@ -6,6 +6,7 @@ using Backend.Services.Nodes;
 using mamgo.services.Binding;
 using Microsoft.AspNetCore.Mvc;
 using Pooshit.AspNetCore.Services.Extensions;
+using Pooshit.AspNetCore.Services.Formatters;
 using Pooshit.AspNetCore.Services.Loggers;
 using Pooshit.AspNetCore.Services.Middleware;
 
@@ -37,6 +38,8 @@ public class Startup
     /// <param name="options">options to modify</param>
     protected virtual void ConfigureMvc(MvcOptions options)
     {
+        options.InputFormatters.Insert(0, new JsonInputFormatter());
+        options.OutputFormatters.Insert(0, new JsonOutputFormatter());
         options.OutputFormatters.Insert(0, new JsonStreamOutputFormatter());
     }
 
