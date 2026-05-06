@@ -108,20 +108,10 @@ public class NodeServiceTests
 
         await svc.Delete(a.Id);
 
-        // NOTE: There is a potential bug in NodeService.Delete — it uses AND instead of OR
-        // in the link deletion predicate:
-        //   .Where(l => l.SourceId == nodeId && l.TargetId == nodeId)
-        // This will never delete any link because a link cannot have the same node as both
-        // source and target. Links referencing the deleted node may remain.
-        // This test documents the current behaviour rather than asserting link removal.
-        // TODO: Flag to team — the Delete link-cleanup predicate appears to be a bug
-        //       (AND should be OR: l.SourceId == nodeId || l.TargetId == nodeId).
-        //       After a delete, orphaned links currently remain in NodeLink.
         long linkCount = await fixture.EntityManager.Load<NodeLink>(Pooshit.Ocelot.Tokens.DB.Count())
                                       .Where(l => l.SourceId == a.Id || l.TargetId == a.Id)
                                       .ExecuteScalarAsync<long>();
-        // Document current (buggy) behaviour: links are NOT removed.
-        Assert.That(linkCount, Is.EqualTo(1), "BUG: link rows remain after node deletion due to AND predicate in Delete()");
+        Assert.That(linkCount, Is.EqualTo(0), "Link rows referencing the deleted node must be removed by Delete()");
     }
 
     // -----------------------------------------------------------------------
