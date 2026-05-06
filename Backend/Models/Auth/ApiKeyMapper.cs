@@ -25,8 +25,8 @@ public class ApiKeyMapper : FieldMapper<ApiKeyDetails, ApiKey> {
 		yield return new FieldMapping<ApiKeyDetails, string>("permissions",
 		                                                     k => k.Permissions,
 		                                                     (k, v) => k.Permissions = string.IsNullOrEmpty(v) ? [] : Json.Read<string[]>(v));
-		yield return new FieldMapping<ApiKeyDetails, long?>("customer.id",
-		                                                    k => k.CustomerId,
-		                                                    (k, v) => k.CustomerId = v);
+		yield return new FieldMapping<ApiKeyDetails, long?>("user.id",
+		                                                    k => k.UserId,
+		                                                    (k, v) => k.UserId = v);
 	}
 }
