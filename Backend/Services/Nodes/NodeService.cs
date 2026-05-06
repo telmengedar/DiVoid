@@ -53,7 +53,7 @@ public class NodeService(IEntityManager database) : INodeService
                          .Where(n => n.Id == nodeId)
                          .ExecuteAsync(transaction) == 0)
             throw new NotFoundException<Node>(nodeId);
-        await database.Delete<NodeLink>().Where(l => l.SourceId == nodeId && l.TargetId == nodeId).ExecuteAsync(transaction);
+        await database.Delete<NodeLink>().Where(l => l.SourceId == nodeId || l.TargetId == nodeId).ExecuteAsync(transaction);
         transaction.Commit();
     }
 
