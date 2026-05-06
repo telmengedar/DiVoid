@@ -1,0 +1,42 @@
+# Build output
+bin/
+obj/
+*.binlog
+
+# Visual Studio / Rider / VS Code transient files
+.vs/
+.idea/
+*.user
+*.suo
+*.userprefs
+*.swp
+.DS_Store
+Thumbs.db
+
+# Test results / coverage
+[Tt]est[Rr]esult*/
+*.trx
+coverage/
+coverage.*
+*.coverage
+*.coveragexml
+
+# NuGet
+*.nupkg
+*.snupkg
+artifacts/
+project.lock.json
+project.fragment.lock.json
+
+# Frontend (in case one is added later)
+node_modules/
+
+# Local SQLite development database — recreated automatically by
+# DatabaseModelService on first run; per-developer state, never source.
+Backend/DiVoid.db3
+*.db3-shm
+*.db3-wal
+
+# Generic temp / backup
+*.tmp
+*.bak
