@@ -119,6 +119,21 @@ public class NodeService(IEntityManager database) : INodeService
             predicate &= n => n.Id.In(linkOp) && !n.Id.In(filter.LinkedTo);
         }
 
+        if (filter.Status?.Length > 0)
+            if (filter.Status.Any(s => s.ContainsWildcards()))
+            {
+                PredicateExpression<Node> statusPredicate = null;
+                foreach (string statusFilter in filter.Status)
+                    statusPredicate |= n => n.Status.Like(statusFilter);
+                predicate &= statusPredicate;
+            } else
+            {
+                predicate &= n => n.Status.In(filter.Status);
+            }
+
+        if (filter.NoStatus)
+            predicate &= n => n.Status == null || n.Status == "";
+
         return predicate?.Content;
     }
 

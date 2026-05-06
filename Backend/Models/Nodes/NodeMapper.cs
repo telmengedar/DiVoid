@@ -18,7 +18,7 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
     : base(Mappings()) { }
 
     /// <inheritdoc />
-    public override string[] DefaultListFields => ["id", "type", "name"];
+    public override string[] DefaultListFields => ["id", "type", "name", "status"];
 
     static IEnumerable<FieldMapping<NodeDetails>> Mappings()
     {
@@ -31,6 +31,9 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
         yield return new FieldMapping<NodeDetails, string>("name",
                                                         DB.Property<Node>(n => n.Name, "node"),
                                                         (n, v) => n.Name = v);
+        yield return new FieldMapping<NodeDetails, string>("status",
+                                                        DB.Property<Node>(n => n.Status, "node"),
+                                                        (n, v) => n.Status = v);
     }
 
 
