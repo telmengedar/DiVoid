@@ -18,6 +18,12 @@ public class NodeServiceTests
     static Task<NodeDetails> Create(NodeService svc, string type = "task", string name = "Test node")
         => svc.CreateNode(new NodeDetails { Type = type, Name = name });
 
+    static async Task<NodeDetails> CreateWithStatus(NodeService svc, string status, string type = "task", string name = "Test node")
+    {
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = type, Name = name });
+        return await svc.Patch(node.Id, new PatchOperation { Op = "replace", Path = "/status", Value = status });
+    }
+
     // -----------------------------------------------------------------------
     // CreateNode
     // -----------------------------------------------------------------------
@@ -474,17 +480,190 @@ public class NodeServiceTests
     [Test]
     public void Patch_UnknownNodeId_ThrowsNotFoundException()
     {
-        // TODO: Node currently has no [AllowPatch] properties, so we cannot exercise the
-        // "happy path" of Patch(). This test verifies the NotFoundException branch using
-        // a PropertyNotFoundException that fires before the row check.
-        // When an [AllowPatch] field is added to Node, expand this test.
+        // Path "/nonexistent" causes PropertyNotFoundException inside Patch extension,
+        // which bubbles out before touching the DB. With Status now [AllowPatch] we can
+        // test a valid path against a missing row id.
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        // Path "/nonexistent" causes PropertyNotFoundException inside Patch extension,
-        // which bubbles out before touching the DB, so the not-found path is unreachable
-        // for now. Document with a skip.
-        Assert.Ignore("Node has no [AllowPatch] properties; Patch NotFoundException branch is currently unreachable. Revisit when a patchable field is added to Node.");
+        Assert.ThrowsAsync<NotFoundException<Node>>(
+            () => svc.Patch(99999, new PatchOperation { Op = "replace", Path = "/status", Value = "open" }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Patch — Status field (replace op happy path)
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task Patch_ReplaceStatus_UpdatesField()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await Create(svc);
+        NodeDetails result = await svc.Patch(node.Id, new PatchOperation { Op = "replace", Path = "/status", Value = "open" });
+
+        Assert.That(result.Status, Is.EqualTo("open"));
+    }
+
+    [Test]
+    public async Task Patch_ReplaceStatus_OverwritesExistingStatus()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await Create(svc);
+        await svc.Patch(node.Id, new PatchOperation { Op = "replace", Path = "/status", Value = "open" });
+        NodeDetails result = await svc.Patch(node.Id, new PatchOperation { Op = "replace", Path = "/status", Value = "closed" });
+
+        Assert.That(result.Status, Is.EqualTo("closed"));
+    }
+
+    // TODO: Patch_AddStatus_IsNotMeaningfulForString — the patch infrastructure does not
+    // validate ops against property type, so "add" on a string field currently behaves
+    // as a replace rather than throwing. Fixing this is out of scope (affects all string
+    // fields); track as a separate concern per task 26.
+
+    // TODO: Patch_RemoveStatus_IsNotMeaningfulForString — same infrastructure gap as above.
+
+    // TODO: Patch_FlagStatus_IsNotMeaningfulForString — same.
+
+    // -----------------------------------------------------------------------
+    // ListPaged — status filter
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task ListPaged_FilterByStatus_SingleValue_ReturnsMatchingNodes()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        await CreateWithStatus(svc, "open", name: "Open1");
+        await CreateWithStatus(svc, "open", name: "Open2");
+        await CreateWithStatus(svc, "closed", name: "Closed1");
+        await Create(svc, name: "NoStatus");
+
+        long count = await GetPageCount(svc, new NodeFilter { Status = ["open"], Count = 100 });
+        Assert.That(count, Is.EqualTo(2));
+    }
+
+    [Test]
+    public async Task ListPaged_FilterByStatus_MultiValue_InStyle()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        await CreateWithStatus(svc, "open", name: "Open1");
+        await CreateWithStatus(svc, "in-progress", name: "InProgress1");
+        await CreateWithStatus(svc, "closed", name: "Closed1");
+        await Create(svc, name: "NoStatus");
+
+        long count = await GetPageCount(svc, new NodeFilter { Status = ["open", "in-progress"], Count = 100 });
+        Assert.That(count, Is.EqualTo(2));
+    }
+
+    [Test]
+    public async Task ListPaged_FilterByStatus_Wildcard_UsesLike()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        await CreateWithStatus(svc, "open", name: "Open1");
+        await CreateWithStatus(svc, "open-review", name: "OpenReview");
+        await CreateWithStatus(svc, "closed", name: "Closed1");
+
+        // "open%" should match "open" and "open-review"
+        long count = await GetPageCount(svc, new NodeFilter { Status = ["open%"], Count = 100 });
+        Assert.That(count, Is.EqualTo(2));
+    }
+
+    [Test]
+    public async Task ListPaged_FilterByStatus_ComposesWithType()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        await CreateWithStatus(svc, "open", type: "task", name: "TaskOpen");
+        await CreateWithStatus(svc, "open", type: "bug", name: "BugOpen");
+        await CreateWithStatus(svc, "closed", type: "task", name: "TaskClosed");
+
+        long count = await GetPageCount(svc, new NodeFilter { Type = ["task"], Status = ["open"], Count = 100 });
+        Assert.That(count, Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task ListPaged_FilterByStatus_ComposesWithLinkedTo()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails project = await Create(svc, type: "project", name: "Project");
+        NodeDetails openTask = await CreateWithStatus(svc, "open", type: "task", name: "OpenTask");
+        NodeDetails closedTask = await CreateWithStatus(svc, "closed", type: "task", name: "ClosedTask");
+        NodeDetails unlinked = await CreateWithStatus(svc, "open", type: "task", name: "UnlinkedOpen");
+
+        await svc.LinkNodes(project.Id, openTask.Id);
+        await svc.LinkNodes(project.Id, closedTask.Id);
+
+        var writer = await svc.ListPaged(new NodeFilter { LinkedTo = [project.Id], Status = ["open"], Count = 100 });
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(openTask.Id));
+            Assert.That(ids, Does.Not.Contain(closedTask.Id));
+            Assert.That(ids, Does.Not.Contain(unlinked.Id));
+            Assert.That(ids, Does.Not.Contain(project.Id));
+        });
+    }
+
+    [Test]
+    public async Task ListPaged_NoStatusFilter_ReturnsOnlyNoStatusNodes()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails noStatus = await Create(svc, name: "NoStatus");
+        await CreateWithStatus(svc, "open", name: "HasStatus");
+
+        var writer = await svc.ListPaged(new NodeFilter { NoStatus = true, Count = 100 });
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(noStatus.Id));
+            // nodes with a non-empty status must not appear
+            Assert.That(results.All(n => string.IsNullOrEmpty(n.Status)), Is.True);
+        });
+    }
+
+    [Test]
+    public async Task ListPaged_NoStatusFilter_ExcludesNodesWithStatus()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails withStatus = await CreateWithStatus(svc, "open", name: "WithStatus");
+
+        var writer = await svc.ListPaged(new NodeFilter { NoStatus = true, Count = 100 });
+        List<NodeDetails> results = await CollectPage(writer);
+
+        Assert.That(results.Select(n => n.Id), Does.Not.Contain(withStatus.Id));
+    }
+
+    [Test]
+    public async Task ListPaged_StatusAppearsInDefaultFields()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await Create(svc, name: "CheckFields");
+        await svc.Patch(node.Id, new PatchOperation { Op = "replace", Path = "/status", Value = "open" });
+
+        var writer = await svc.ListPaged(new NodeFilter { Id = [node.Id], Count = 100 });
+        List<NodeDetails> results = await CollectPage(writer);
+
+        Assert.That(results.Single().Status, Is.EqualTo("open"));
     }
 
     // -----------------------------------------------------------------------
@@ -565,6 +744,7 @@ public class NodeServiceTests
                     Id = el.TryGetProperty("id", out System.Text.Json.JsonElement idEl) ? idEl.GetInt64() : 0,
                     Name = el.TryGetProperty("name", out System.Text.Json.JsonElement nameEl) ? nameEl.GetString() : null,
                     Type = el.TryGetProperty("type", out System.Text.Json.JsonElement typeEl) ? typeEl.GetString() : null,
+                    Status = el.TryGetProperty("status", out System.Text.Json.JsonElement statusEl) ? statusEl.GetString() : null,
                 };
                 items.Add(nd);
             }

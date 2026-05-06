@@ -1,3 +1,4 @@
+using Pooshit.AspNetCore.Services.Patches;
 using Pooshit.Ocelot.Entities.Attributes;
 
 namespace Backend.Models.Nodes;
@@ -19,6 +20,7 @@ public class Node
     /// </summary>
     [Index("type")]
     [Index("node")]
+    [Index("nodestatus")]
     public long TypeId { get; set; }
 
     /// <summary>
@@ -38,8 +40,16 @@ public class Node
     public byte[] Content { get; set; }
 
     /// <summary>
-	/// content embedding (only for text / markdown nodes)
-	/// </summary>
-	[Size(3072)]
-	public float[] Embedding { get; set; }
+    /// content embedding (only for text / markdown nodes)
+    /// </summary>
+    [Size(3072)]
+    public float[] Embedding { get; set; }
+
+    /// <summary>
+    /// lifecycle status of the node (e.g. "open", "closed", "in-progress")
+    /// </summary>
+    [AllowPatch]
+    [Index("status")]
+    [Index("nodestatus")]
+    public string Status { get; set; }
 }

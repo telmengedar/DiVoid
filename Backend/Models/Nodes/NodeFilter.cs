@@ -27,4 +27,14 @@ public class NodeFilter : ListFilter
     /// nodes node needs to be linked to
     /// </summary>
     public long[] LinkedTo { get; set; }
+
+    /// <summary>
+    /// status values to filter for
+    /// </summary>
+    public string[] Status { get; set; }
+
+    /// <summary>
+    /// when true, only return nodes with no status set (null or empty string)
+    /// </summary>
+    public bool NoStatus { get; set; }
 }
