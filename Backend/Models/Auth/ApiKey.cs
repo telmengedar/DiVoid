@@ -16,7 +16,7 @@ public class ApiKey {
 	public long Id { get; set; }
 
 	/// <summary>
-	/// customer for which key is valid
+	/// user for which key is valid
 	/// </summary>
 	[AllowPatch]
 	public long UserId { get; set; }
