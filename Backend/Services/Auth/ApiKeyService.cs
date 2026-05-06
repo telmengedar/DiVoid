@@ -38,7 +38,7 @@ public class ApiKeyService : IApiKeyService {
 			                   .ExecuteAsync(),
 			Key = key,
 			Permissions = apiKey.Permissions,
-			CustomerId = apiKey.UserId
+			UserId = apiKey.UserId
 		};
 	}
 

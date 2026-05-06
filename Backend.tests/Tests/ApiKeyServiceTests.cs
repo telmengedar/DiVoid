@@ -11,20 +11,10 @@ namespace Backend.tests.Tests;
 /// <summary>
 /// Tests for <see cref="ApiKeyService"/>.
 ///
-/// NOTE — Production bug discovered during test authoring:
-/// <see cref="ApiKeyMapper"/> has a FieldMapping keyed <c>"customer.id"</c> that maps
-/// <c>ApiKeyDetails.CustomerId</c> via an expression on the DTO type. Ocelot translates
-/// this to a SQL column named <c>customerid</c>, but the actual <c>apikey</c> table only
-/// has a <c>userid</c> column (from <see cref="ApiKey.UserId"/>). Every code path that
-/// reads through the mapper therefore fails with
-/// <c>SQLite Error 1: 'no such column: customerid'</c>.
-///
-/// Affected methods: <c>GetApiKey</c>, <c>GetApiKeyById</c>, <c>UpdateApiKey</c> (which
-/// calls <c>GetApiKeyById</c> after patching), <c>DeleteApiKey</c> (verification step),
-/// <c>ListApiKeys</c> (partially).
-///
-/// Tests exercising those paths are <c>[Ignore]</c>-d with a TODO so they are visible
-/// in the test report and can be re-enabled once the mapper is fixed.
+/// Bug 17 (fixed): ApiKeyMapper had a FieldMapping keyed <c>"customer.id"</c> mapping
+/// to a <c>customerid</c> column that did not exist — the table only has <c>userid</c>.
+/// Fix: renamed key to <c>"user.id"</c>, expression to <c>k.UserId</c>, and renamed
+/// <c>ApiKeyDetails.CustomerId</c> → <c>ApiKeyDetails.UserId</c> to match.
 /// </summary>
 [TestFixture]
 public class ApiKeyServiceTests
@@ -52,7 +42,7 @@ public class ApiKeyServiceTests
             Assert.That(result.Id, Is.GreaterThan(0));
             Assert.That(result.Key, Is.Not.Empty);
             Assert.That(result.Permissions, Is.EqualTo(new[] { "read", "write" }));
-            Assert.That(result.CustomerId, Is.EqualTo(7));
+            Assert.That(result.UserId, Is.EqualTo(7));
         });
     }
 
@@ -76,13 +66,10 @@ public class ApiKeyServiceTests
     }
 
     // -----------------------------------------------------------------------
-    // GetApiKey / GetApiKeyById — go through ApiKeyMapper; currently broken.
-    // TODO: Fix ApiKeyMapper "customer.id" → "userid" column mismatch, then
-    //       remove the [Ignore] attributes below.
+    // GetApiKey / GetApiKeyById — go through ApiKeyMapper (bug 17 fixed).
     // -----------------------------------------------------------------------
 
     [Test]
-    [Ignore("TODO: ApiKeyMapper 'customer.id' FieldMapping references non-existent column 'customerid'. Fix mapper to use ApiKey.UserId, then re-enable.")]
     public async Task GetApiKey_ExistingKey_ReturnsDetails()
     {
         using DatabaseFixture fixture = new();
@@ -96,7 +83,6 @@ public class ApiKeyServiceTests
     }
 
     [Test]
-    [Ignore("TODO: ApiKeyMapper 'customer.id' FieldMapping references non-existent column 'customerid'. Fix mapper to use ApiKey.UserId, then re-enable.")]
     public void GetApiKey_MissingKey_ThrowsNotFoundException()
     {
         using DatabaseFixture fixture = new();
@@ -107,7 +93,6 @@ public class ApiKeyServiceTests
     }
 
     [Test]
-    [Ignore("TODO: ApiKeyMapper 'customer.id' FieldMapping references non-existent column 'customerid'. Fix mapper to use ApiKey.UserId, then re-enable.")]
     public async Task GetApiKeyById_ExistingId_ReturnsDetails()
     {
         using DatabaseFixture fixture = new();
@@ -121,7 +106,6 @@ public class ApiKeyServiceTests
     }
 
     [Test]
-    [Ignore("TODO: ApiKeyMapper 'customer.id' FieldMapping references non-existent column 'customerid'. Fix mapper to use ApiKey.UserId, then re-enable.")]
     public void GetApiKeyById_MissingId_ThrowsNotFoundException()
     {
         using DatabaseFixture fixture = new();
@@ -133,12 +117,10 @@ public class ApiKeyServiceTests
 
     // -----------------------------------------------------------------------
     // UpdateApiKey — Patch itself works (tested in DatabasePatchExtensionsTests);
-    // the return value read goes through ApiKeyMapper so it fails.
-    // TODO: Remove [Ignore] once ApiKeyMapper is fixed.
+    // return value read goes through ApiKeyMapper (bug 17 fixed).
     // -----------------------------------------------------------------------
 
     [Test]
-    [Ignore("TODO: ApiKeyMapper 'customer.id' column mismatch causes failure on GetApiKeyById call inside UpdateApiKey.")]
     public async Task UpdateApiKey_PatchesAllowedField_ReturnsUpdatedDetails()
     {
         using DatabaseFixture fixture = new();
@@ -153,7 +135,7 @@ public class ApiKeyServiceTests
             created.Id,
             new PatchOperation { Op = "replace", Path = "/userid", Value = 99L });
 
-        Assert.That(updated.CustomerId, Is.EqualTo(99));
+        Assert.That(updated.UserId, Is.EqualTo(99));
         await Task.CompletedTask;
     }
 
@@ -199,12 +181,10 @@ public class ApiKeyServiceTests
     }
 
     // -----------------------------------------------------------------------
-    // ListApiKeys — mapper is used for serialisation; broken in same way.
-    // TODO: Remove [Ignore] once ApiKeyMapper is fixed.
+    // ListApiKeys — mapper is used for serialisation (bug 17 fixed).
     // -----------------------------------------------------------------------
 
     [Test]
-    [Ignore("TODO: ApiKeyMapper 'customer.id' column mismatch causes failure when ListApiKeys tries to project results.")]
     public async Task ListApiKeys_ReturnsCreatedKeys()
     {
         using DatabaseFixture fixture = new();

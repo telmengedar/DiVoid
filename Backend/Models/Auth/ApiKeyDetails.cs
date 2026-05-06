@@ -11,9 +11,9 @@ public class ApiKeyDetails {
 	public long Id { get; set; }
 
 	/// <summary>
-	/// customer for which key is valid
+	/// user for which key is valid
 	/// </summary>
-	public long? CustomerId { get; set; }
+	public long? UserId { get; set; }
 	
 	/// <summary>
 	/// key data
