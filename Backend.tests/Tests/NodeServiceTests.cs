@@ -114,6 +114,24 @@ public class NodeServiceTests
         Assert.That(linkCount, Is.EqualTo(0), "Link rows referencing the deleted node must be removed by Delete()");
     }
 
+    [Test]
+    public async Task Delete_RemovesAssociatedLinks_TargetSide()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails a = await Create(svc, name: "A");
+        NodeDetails b = await Create(svc, name: "B");
+        await svc.LinkNodes(a.Id, b.Id); // stored as SourceId=a, TargetId=b
+
+        await svc.Delete(b.Id); // exercises the TargetId == nodeId branch of the OR predicate
+
+        long linkCount = await fixture.EntityManager.Load<NodeLink>(Pooshit.Ocelot.Tokens.DB.Count())
+                                      .Where(l => l.SourceId == b.Id || l.TargetId == b.Id)
+                                      .ExecuteScalarAsync<long>();
+        Assert.That(linkCount, Is.EqualTo(0), "Link rows referencing the deleted node must be removed by Delete() (target-side branch)");
+    }
+
     // -----------------------------------------------------------------------
     // GetNodeData
     // -----------------------------------------------------------------------
