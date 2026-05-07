@@ -445,12 +445,8 @@ public class NodeServiceTests
         await Create(svc, name: "Zebra");
         await Create(svc, name: "Mango");
 
-        // NOTE: NodeMapper registers the sort key as "name" (not "node.name").
-        // Passing "node.name" to the mapper-based ApplyFilter overload causes a
-        // KeyNotFoundException because the mapper dictionary only has "name".
-        // This is a production inconsistency: the API documentation / NodeController
-        // may advertise "node.name" as a sort field but the mapper only knows "name".
-        // The test uses the working key "name" to exercise the ascending/descending path.
+        // Sort key must be one of NodeMapper's registered keys ("id", "type", "name", "status").
+        // The test uses "name" to exercise the ascending/descending path.
         var writer = await svc.ListPaged(new NodeFilter
         {
             Count = 100,
@@ -468,11 +464,10 @@ public class NodeServiceTests
     [Test]
     public async Task ListPaged_SortByNodeName_TwoPart_ThrowsKeyNotFound()
     {
-        // BUG: NodeService.ListPaged routes sorting through ApplyFilter(filter, mapper).
-        // The NodeMapper keys are "id", "type", "name" — NOT "node.name" or "type.name".
-        // Passing Sort = "node.name" therefore throws KeyNotFoundException.
-        // This documents the production inconsistency; once the mapper keys are updated
-        // to match the documented two-part form, update this test accordingly.
+        // NodeService.ListPaged routes sorting through the mapper-based ApplyFilter overload,
+        // which does a strict dictionary lookup. NodeMapper registers "id", "type", "name",
+        // "status" — two-part keys like "node.name" are not registered and throw KeyNotFoundException.
+        // This is intentional: callers sort by the fields the mapper exposes, not by join aliases.
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
         await Create(svc, name: "A");
