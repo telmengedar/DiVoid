@@ -1,9 +1,14 @@
 using System.Text.Json.Serialization;
+using Backend.Auth;
 using Backend.Extensions.Startup;
 using Backend.Formatters;
 using Backend.Init;
+using Backend.Services.Auth;
 using Backend.Services.Nodes;
+using Backend.Services.Users;
 using mamgo.services.Binding;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Pooshit.AspNetCore.Services.Extensions;
 using Pooshit.AspNetCore.Services.Formatters;
@@ -31,6 +36,8 @@ public class Startup
     /// service configuration
     /// </summary>
     protected IConfiguration Configuration { get; }
+
+    bool AuthEnabled => Configuration.GetValue("Auth:Enabled", true);
 
     /// <summary>
     /// method used to configure mvc
@@ -62,7 +69,6 @@ public class Startup
         services.AddLogging(options =>
         {
             options.ClearProviders();
-            // task logger is losing messages ... not sure why - for now use the regular logger
             options.AddProvider(new JsonLoggerProvider());
         });
 
@@ -75,8 +81,38 @@ public class Startup
         services.ConfigureDatabaseService(Configuration);
 
         services.AddTransient<INodeService, NodeService>();
+        services.AddTransient<IKeyGenerator, KeyGenerator>();
+        services.AddTransient<IUserService, UserService>();
+        services.AddTransient<IApiKeyService, ApiKeyService>();
+        services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
+
+        if (AuthEnabled) {
+            services.AddAuthentication(ApiKeyAuthenticationHandler.SchemeName)
+                    .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
+                        ApiKeyAuthenticationHandler.SchemeName, null);
+
+            services.AddAuthorization(options => {
+                options.AddPolicy("admin", p => p.AddRequirements(new PermissionRequirement("admin")));
+                options.AddPolicy("write",  p => p.AddRequirements(new PermissionRequirement("write")));
+                options.AddPolicy("read",   p => p.AddRequirements(new PermissionRequirement("read")));
+
+                // Fallback: require authentication on every endpoint without explicit [AllowAnonymous]
+                options.FallbackPolicy = new AuthorizationPolicyBuilder()
+                    .AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName)
+                    .RequireAuthenticatedUser()
+                    .Build();
+            });
+        } else {
+            services.AddAuthorization(options => {
+                options.AddPolicy("admin", p => p.RequireAssertion(_ => true));
+                options.AddPolicy("write",  p => p.RequireAssertion(_ => true));
+                options.AddPolicy("read",   p => p.RequireAssertion(_ => true));
+                // No fallback — all endpoints open when auth is disabled
+            });
+        }
 
         services.AddHostedService<DatabaseModelService>();
+        services.AddHostedService<StartupWarningService>();
     }
 
     /// <summary>
@@ -88,6 +124,11 @@ public class Startup
     {
         app.UseRouting();
         app.UseMiddleware<ErrorHandlerMiddleware>();
+
+        if (AuthEnabled) {
+            app.UseAuthentication();
+            app.UseAuthorization();
+        }
 
         app.UseEndpoints(endpoints =>
         {
