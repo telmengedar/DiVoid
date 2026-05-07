@@ -174,35 +174,25 @@ public class AuthHandlerTests
     [Test]
     public void FallbackPolicy_StartupConfigureServices_SetsFallbackPolicyOnAuthorizationOptions()
     {
-        // Build a minimal IServiceCollection exactly as Startup.ConfigureServices does
-        // (with Auth:Enabled=true) and resolve IAuthorizationPolicyProvider to assert
-        // that the FallbackPolicy is wired up. If the FallbackPolicy line is ever removed
-        // from Startup, this test will fail.
+        // Invoke the real Startup.ConfigureServices so that removing the FallbackPolicy
+        // assignment from Startup causes this test to fail. Providing minimal configuration
+        // with Auth:Enabled=true and an in-memory SQLite source so no real database file is
+        // required during the service-registration phase.
         IConfiguration configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> {
                 ["Auth:Enabled"] = "true",
-                ["DIVOID_KEY_PEPPER"] = TestPepper
+                ["DIVOID_KEY_PEPPER"] = TestPepper,
+                ["Database:Type"] = "Sqlite",
+                ["Database:Source"] = ":memory:"
             })
             .Build();
 
         IServiceCollection services = new ServiceCollection();
+        // Startup expects IConfiguration to be resolvable from the container for some dependencies.
         services.AddSingleton(configuration);
-        services.AddLogging();
 
-        // Register authorization the same way Startup does when Auth:Enabled=true
-        services.AddAuthentication(ApiKeyAuthenticationHandler.SchemeName)
-                .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
-                    ApiKeyAuthenticationHandler.SchemeName, null);
-
-        services.AddAuthorization(options => {
-            options.AddPolicy("admin", p => p.AddRequirements(new PermissionRequirement("admin")));
-            options.AddPolicy("write",  p => p.AddRequirements(new PermissionRequirement("write")));
-            options.AddPolicy("read",   p => p.AddRequirements(new PermissionRequirement("read")));
-            options.FallbackPolicy = new AuthorizationPolicyBuilder()
-                .AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName)
-                .RequireAuthenticatedUser()
-                .Build();
-        });
+        // Delegate all wiring to the real production code path.
+        new Startup(configuration).ConfigureServices(services);
 
         using ServiceProvider provider = services.BuildServiceProvider();
         IOptions<AuthorizationOptions> authOptions = provider.GetRequiredService<IOptions<AuthorizationOptions>>();
