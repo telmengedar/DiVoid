@@ -27,8 +27,8 @@ public class DatabasePatchExtensionsTests
     static async Task<long> InsertApiKey(DatabaseFixture fixture, long userId = 1, string permissions = "[]")
     {
         return await fixture.EntityManager.Insert<ApiKey>()
-                            .Columns(k => k.Key, k => k.UserId, k => k.Permissions)
-                            .Values("test-key-" + Guid.NewGuid().ToString("N"), userId, permissions)
+                            .Columns(k => k.KeyId, k => k.KeyHash, k => k.UserId, k => k.Permissions, k => k.Enabled, k => k.CreatedAt)
+                            .Values("TESTID" + Guid.NewGuid().ToString("N")[..6], new byte[32], userId, permissions, true, DateTime.UtcNow)
                             .ReturnID()
                             .ExecuteAsync();
     }
@@ -159,11 +159,11 @@ public class DatabasePatchExtensionsTests
     [Test]
     public void Patch_NonAllowPatchProperty_ThrowsNotSupportedException()
     {
-        // ApiKey.Key is not tagged [AllowPatch], so patching it must throw.
+        // ApiKey.KeyId is not tagged [AllowPatch], so patching it must throw.
         using DatabaseFixture fixture = new();
         Assert.Throws<NotSupportedException>(() =>
             fixture.EntityManager.Update<ApiKey>()
-                   .Patch(new PatchOperation { Op = "replace", Path = "/key", Value = "new-key" })
+                   .Patch(new PatchOperation { Op = "replace", Path = "/keyid", Value = "new-id" })
         );
     }
 

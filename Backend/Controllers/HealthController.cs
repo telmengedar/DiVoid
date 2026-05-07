@@ -1,4 +1,5 @@
 ﻿using System.Reflection;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Backend.Controllers;
@@ -17,6 +18,7 @@ public class HealthController : ControllerBase
     /// <returns></returns>
     [ProducesResponseType(200)]
     [HttpGet]
+    [AllowAnonymous]
     public IActionResult CheckHealth()
     {
         return Ok(Assembly.GetExecutingAssembly().GetName().Name);

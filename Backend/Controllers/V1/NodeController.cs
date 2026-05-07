@@ -1,5 +1,6 @@
 using Backend.Models.Nodes;
 using Backend.Services.Nodes;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Pooshit.AspNetCore.Services.Formatters.DataStream;
 using Pooshit.AspNetCore.Services.Patches;
@@ -29,6 +30,7 @@ namespace Backend.Controllers.V1
         /// <param name="node">node to create</param>
         /// <returns>created node</returns>
         [HttpPost]
+        [Authorize(Policy = "write")]
         public Task<NodeDetails> CreateNode([FromBody] NodeDetails node)
         {
             logger.LogInformation("Creating node '{name}'", node.Name);
@@ -41,6 +43,7 @@ namespace Backend.Controllers.V1
         /// <param name="nodeId">id of node to get</param>
         /// <returns><see cref="NodeDetails"/></returns>
         [HttpGet("{nodeId:long}")]
+        [Authorize(Policy = "read")]
         public Task<NodeDetails> GetNodeById(long nodeId) => nodeService.GetNodeById(nodeId);
 
         /// <summary>
@@ -49,6 +52,7 @@ namespace Backend.Controllers.V1
         /// <param name="filter">filter to apply</param>
         /// <returns>page of nodes matching filter</returns>
         [HttpGet]
+        [Authorize(Policy = "read")]
         public Task<AsyncPageResponseWriter<NodeDetails>> ListPaged([FromQuery] NodeFilter filter) => nodeService.ListPaged(filter);
 
         /// <summary>
@@ -57,6 +61,7 @@ namespace Backend.Controllers.V1
         /// <param name="nodeId">id of node</param>
         /// <returns>content type and data of node</returns>
         [HttpGet("{nodeId:long}/content")]
+        [Authorize(Policy = "read")]
         public async Task<IActionResult> GetNodeData(long nodeId)
         {
             (string contentType, Stream data) = await nodeService.GetNodeData(nodeId);
@@ -70,6 +75,7 @@ namespace Backend.Controllers.V1
         /// <param name="patches">patches to apply</param>
         /// <returns>patched nodes</returns>
         [HttpPatch("{nodeId:long}")]
+        [Authorize(Policy = "write")]
         public Task<NodeDetails> Patch(long nodeId, [FromBody] PatchOperation[] patches)
         {
             logger.LogInformation("Patching node '{nodeId}'", nodeId);
@@ -83,6 +89,7 @@ namespace Backend.Controllers.V1
         /// <param name="contentType">content type of data</param>
         /// <param name="data">data to upload</param>
         [HttpPost("{nodeId:long}/content")]
+        [Authorize(Policy = "write")]
         public Task UploadContent(long nodeId)
         {
             logger.LogInformation("Updating content of node '{nodeId}'", nodeId);
@@ -94,6 +101,7 @@ namespace Backend.Controllers.V1
         /// </summary>
         /// <param name="nodeId">id of node to delete</param>
         [HttpDelete("{nodeId:long}")]
+        [Authorize(Policy = "write")]
         public Task Delete(long nodeId)
         {
             logger.LogInformation("Deleting node '{nodeId}'", nodeId);
@@ -106,6 +114,7 @@ namespace Backend.Controllers.V1
         /// <param name="sourceNodeId">id of first node</param>
         /// <param name="targetNodeId">id of second node</param>
         [HttpPost("{sourceNodeId:long}/links")]
+        [Authorize(Policy = "write")]
         public Task LinkNodes(long sourceNodeId, [FromBody] long targetNodeId)
         {
             logger.LogInformation("Linking node '{targetNodeId}' to '{sourceNodeId}'", targetNodeId, sourceNodeId);
@@ -118,6 +127,7 @@ namespace Backend.Controllers.V1
         /// <param name="sourceNodeId">id of first node</param>
         /// <param name="targetNodeId">id of second node</param>
         [HttpDelete("{sourceNodeId:long}/links/{targetNodeId}")]
+        [Authorize(Policy = "write")]
         public Task UnlinkNodes(long sourceNodeId, long targetNodeId)
         {
             logger.LogInformation("Unlinking '{targetNodeId}' from '{sourceNodeId}'", targetNodeId, sourceNodeId);

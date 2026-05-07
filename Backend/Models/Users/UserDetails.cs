@@ -1,18 +1,13 @@
-using Pooshit.AspNetCore.Services.Patches;
-using Pooshit.Ocelot.Entities.Attributes;
-
-namespace Backend.Services.Users;
+namespace Backend.Models.Users;
 
 /// <summary>
-/// user of system
+/// user information returned by the API
 /// </summary>
-[AllowPatch]
-public class User {
+public class UserDetails {
 
     /// <summary>
     /// id of user
     /// </summary>
-    [PrimaryKey, AutoIncrement]
     public long Id { get; set; }
 
     /// <summary>
@@ -23,14 +18,11 @@ public class User {
     /// <summary>
     /// optional email address for out-of-band contact
     /// </summary>
-    [Index("email")]
-    [AllowPatch]
     public string Email { get; set; }
 
     /// <summary>
-    /// whether the user is enabled; disabling blocks all of the user's keys
+    /// whether the user is enabled
     /// </summary>
-    [AllowPatch]
     public bool Enabled { get; set; }
 
     /// <summary>
