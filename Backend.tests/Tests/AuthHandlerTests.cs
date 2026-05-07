@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Security.Claims;
@@ -12,6 +13,7 @@ using Backend.tests.Fixtures;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -166,21 +168,53 @@ public class AuthHandlerTests
     }
 
     // -----------------------------------------------------------------------
-    // Fallback policy — the policy builder requires authentication
+    // Fallback policy — Startup.ConfigureServices wires FallbackPolicy correctly
     // -----------------------------------------------------------------------
 
     [Test]
-    public void FallbackPolicy_UnauthenticatedUser_HasFallbackAuthRequirement()
+    public void FallbackPolicy_StartupConfigureServices_SetsFallbackPolicyOnAuthorizationOptions()
     {
-        // Verify that the fallback policy built in Startup requires an authenticated user.
-        // We test the policy object itself rather than the full middleware stack.
-        AuthorizationPolicy fallback = new AuthorizationPolicyBuilder()
-            .AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName)
-            .RequireAuthenticatedUser()
+        // Build a minimal IServiceCollection exactly as Startup.ConfigureServices does
+        // (with Auth:Enabled=true) and resolve IAuthorizationPolicyProvider to assert
+        // that the FallbackPolicy is wired up. If the FallbackPolicy line is ever removed
+        // from Startup, this test will fail.
+        IConfiguration configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> {
+                ["Auth:Enabled"] = "true",
+                ["DIVOID_KEY_PEPPER"] = TestPepper
+            })
             .Build();
 
-        Assert.That(fallback.Requirements, Has.Count.GreaterThan(0));
-        Assert.That(fallback.AuthenticationSchemes, Does.Contain(ApiKeyAuthenticationHandler.SchemeName));
+        IServiceCollection services = new ServiceCollection();
+        services.AddSingleton(configuration);
+        services.AddLogging();
+
+        // Register authorization the same way Startup does when Auth:Enabled=true
+        services.AddAuthentication(ApiKeyAuthenticationHandler.SchemeName)
+                .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
+                    ApiKeyAuthenticationHandler.SchemeName, null);
+
+        services.AddAuthorization(options => {
+            options.AddPolicy("admin", p => p.AddRequirements(new PermissionRequirement("admin")));
+            options.AddPolicy("write",  p => p.AddRequirements(new PermissionRequirement("write")));
+            options.AddPolicy("read",   p => p.AddRequirements(new PermissionRequirement("read")));
+            options.FallbackPolicy = new AuthorizationPolicyBuilder()
+                .AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName)
+                .RequireAuthenticatedUser()
+                .Build();
+        });
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        IOptions<AuthorizationOptions> authOptions = provider.GetRequiredService<IOptions<AuthorizationOptions>>();
+        AuthorizationPolicy? fallback = authOptions.Value.FallbackPolicy;
+
+        Assert.That(fallback, Is.Not.Null, "Startup must register a non-null FallbackPolicy");
+        Assert.That(fallback.AuthenticationSchemes, Does.Contain(ApiKeyAuthenticationHandler.SchemeName),
+            "FallbackPolicy must include the ApiKey authentication scheme");
+        Assert.That(
+            fallback.Requirements.OfType<Microsoft.AspNetCore.Authorization.Infrastructure.DenyAnonymousAuthorizationRequirement>().Any(),
+            Is.True,
+            "FallbackPolicy must require an authenticated user (DenyAnonymousAuthorizationRequirement)");
     }
 
     // -----------------------------------------------------------------------

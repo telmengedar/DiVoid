@@ -42,7 +42,7 @@ public class ApiKeyService : IApiKeyService {
 
         if (string.IsNullOrEmpty(pepperValue) || Encoding.UTF8.GetByteCount(pepperValue) < 32) {
             if (authEnabled)
-                throw new InvalidOperationException(
+                throw new MissingPepperException(
                     "DIVOID_KEY_PEPPER is unset or shorter than 32 bytes. The service will not start with Auth:Enabled=true without a valid pepper.");
             logger.LogInformation("DIVOID_KEY_PEPPER is not set; using dev placeholder (Auth:Enabled=false). Set the pepper before enabling auth.");
             pepperValue = "dev-placeholder-pepper-not-for-production-use-0000000";
@@ -64,8 +64,26 @@ public class ApiKeyService : IApiKeyService {
         return diff == 0;
     }
 
+    static readonly string[] ValidPermissions = ["admin", "read", "write"];
+
+    static void ValidatePermissions(string[] permissions) {
+        if (permissions == null || permissions.Length == 0)
+            throw new ArgumentException("Permissions must be a non-empty array. Allowed values: admin, read, write.");
+
+        foreach (string permission in permissions) {
+            bool valid = false;
+            foreach (string allowed in ValidPermissions) {
+                if (allowed == permission) { valid = true; break; }
+            }
+            if (!valid)
+                throw new ArgumentException($"Unknown permission '{permission}'. Allowed values: admin, read, write.");
+        }
+    }
+
     /// <inheritdoc />
     public async Task<ApiKeyDetails> CreateApiKey(ApiKeyParameters apiKey) {
+        ValidatePermissions(apiKey.Permissions);
+
         string keyId = keyGenerator.GenerateKey(2);   // 2 * 6 = 12 chars
         string secret = keyGenerator.GenerateKey(4);  // 4 * 6 = 24 chars (~120 bits)
         string fullKey = $"{keyId}.{secret}";

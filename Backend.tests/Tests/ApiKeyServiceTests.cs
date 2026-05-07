@@ -162,7 +162,7 @@ public class ApiKeyServiceTests
             })
             .Build();
 
-        Assert.Throws<InvalidOperationException>(() =>
+        Assert.Throws<MissingPepperException>(() =>
             new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance));
     }
 
@@ -177,7 +177,7 @@ public class ApiKeyServiceTests
             })
             .Build();
 
-        Assert.Throws<InvalidOperationException>(() =>
+        Assert.Throws<MissingPepperException>(() =>
             new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance));
     }
 
@@ -293,7 +293,7 @@ public class ApiKeyServiceTests
     {
         using DatabaseFixture fixture = new();
         ApiKeyService svc = MakeService(fixture);
-        ApiKeyDetails created = await svc.CreateApiKey(new ApiKeyParameters { UserId = 1, Permissions = [] });
+        ApiKeyDetails created = await svc.CreateApiKey(new ApiKeyParameters { UserId = 1, Permissions = ["read"] });
 
         ApiKeyDetails fetched = await svc.GetApiKeyById(created.Id);
 
@@ -319,7 +319,7 @@ public class ApiKeyServiceTests
     {
         using DatabaseFixture fixture = new();
         ApiKeyService svc = MakeService(fixture);
-        ApiKeyDetails created = await svc.CreateApiKey(new ApiKeyParameters { UserId = 1, Permissions = [] });
+        ApiKeyDetails created = await svc.CreateApiKey(new ApiKeyParameters { UserId = 1, Permissions = ["read"] });
 
         ApiKeyDetails updated = await svc.UpdateApiKey(
             created.Id,
@@ -343,7 +343,7 @@ public class ApiKeyServiceTests
     {
         using DatabaseFixture fixture = new();
         ApiKeyService svc = MakeService(fixture);
-        ApiKeyDetails created = await svc.CreateApiKey(new ApiKeyParameters { UserId = 1, Permissions = [] });
+        ApiKeyDetails created = await svc.CreateApiKey(new ApiKeyParameters { UserId = 1, Permissions = ["read"] });
 
         await svc.DeleteApiKey(created.Id);
 
@@ -409,8 +409,8 @@ public class ApiKeyServiceTests
         using DatabaseFixture fixture = new();
         ApiKeyService svc = MakeService(fixture);
 
-        await svc.CreateApiKey(new ApiKeyParameters { UserId = 1, Permissions = [] });
-        await svc.CreateApiKey(new ApiKeyParameters { UserId = 1, Permissions = [] });
+        await svc.CreateApiKey(new ApiKeyParameters { UserId = 1, Permissions = ["read"] });
+        await svc.CreateApiKey(new ApiKeyParameters { UserId = 1, Permissions = ["write"] });
 
         var writer = svc.ListApiKeys(new ListFilter { Count = 10 });
         byte[] buffer;
@@ -419,5 +419,93 @@ public class ApiKeyServiceTests
             buffer = ms.ToArray();
         }
         Assert.That(buffer.Length, Is.GreaterThan(0));
+    }
+
+    // -----------------------------------------------------------------------
+    // Permission vocabulary validation (Task 83)
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public void CreateApiKey_EmptyPermissions_ThrowsArgumentException()
+    {
+        using DatabaseFixture fixture = new();
+        ApiKeyService svc = MakeService(fixture);
+
+        ArgumentException ex = Assert.ThrowsAsync<ArgumentException>(
+            () => svc.CreateApiKey(new ApiKeyParameters { UserId = 1, Permissions = [] }))!;
+        Assert.That(ex.Message, Does.Contain("non-empty"));
+    }
+
+    [Test]
+    public void CreateApiKey_NullPermissions_ThrowsArgumentException()
+    {
+        using DatabaseFixture fixture = new();
+        ApiKeyService svc = MakeService(fixture);
+
+        Assert.ThrowsAsync<ArgumentException>(
+            () => svc.CreateApiKey(new ApiKeyParameters { UserId = 1, Permissions = null }));
+    }
+
+    [Test]
+    public void CreateApiKey_UnknownPermission_ThrowsArgumentException()
+    {
+        using DatabaseFixture fixture = new();
+        ApiKeyService svc = MakeService(fixture);
+
+        ArgumentException ex = Assert.ThrowsAsync<ArgumentException>(
+            () => svc.CreateApiKey(new ApiKeyParameters { UserId = 1, Permissions = ["adimn"] }))!;
+        Assert.That(ex.Message, Does.Contain("adimn"));
+    }
+
+    [Test]
+    public void CreateApiKey_MixedValidAndUnknownPermissions_ThrowsArgumentException()
+    {
+        using DatabaseFixture fixture = new();
+        ApiKeyService svc = MakeService(fixture);
+
+        Assert.ThrowsAsync<ArgumentException>(
+            () => svc.CreateApiKey(new ApiKeyParameters { UserId = 1, Permissions = ["read", "bogus"] }));
+    }
+
+    [Test]
+    public async Task CreateApiKey_ValidSinglePermission_Succeeds()
+    {
+        using DatabaseFixture fixture = new();
+        ApiKeyService svc = MakeService(fixture);
+
+        ApiKeyDetails result = await svc.CreateApiKey(new ApiKeyParameters { UserId = 1, Permissions = ["admin"] });
+        Assert.That(result.Permissions, Is.EqualTo(new[] { "admin" }));
+    }
+
+    [Test]
+    public async Task CreateApiKey_AllValidPermissions_Succeeds()
+    {
+        using DatabaseFixture fixture = new();
+        ApiKeyService svc = MakeService(fixture);
+
+        ApiKeyDetails result = await svc.CreateApiKey(new ApiKeyParameters {
+            UserId = 1,
+            Permissions = ["admin", "read", "write"]
+        });
+        Assert.That(result.Permissions, Has.Length.EqualTo(3));
+    }
+
+    // -----------------------------------------------------------------------
+    // PlaintextKey JSON null hygiene (Task 84)
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task ApiKeyDetails_GetShape_PlaintextKeyNotSerializedWhenNull()
+    {
+        using DatabaseFixture fixture = new();
+        ApiKeyService svc = MakeService(fixture);
+        ApiKeyDetails created = await svc.CreateApiKey(new ApiKeyParameters { UserId = 1, Permissions = ["read"] });
+
+        // Simulate a read-path details object (PlaintextKey is null, as returned by BuildDetails / GetApiKeyById)
+        ApiKeyDetails readShape = await svc.GetApiKeyById(created.Id);
+
+        string json = System.Text.Json.JsonSerializer.Serialize(readShape);
+        Assert.That(json, Does.Not.Contain("plaintextKey"),
+            "PlaintextKey must not appear in GET-shape JSON when null");
     }
 }
