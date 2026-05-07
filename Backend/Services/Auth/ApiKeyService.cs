@@ -1,6 +1,5 @@
 using Backend.Extensions;
 using Backend.Models.Auth;
-using Backend.Services.Auth;
 using Pooshit.AspNetCore.Services.Data;
 using Pooshit.AspNetCore.Services.Errors.Exceptions;
 using Pooshit.AspNetCore.Services.Formatters.DataStream;
@@ -9,7 +8,7 @@ using Pooshit.Json;
 using Pooshit.Ocelot.Entities;
 using Pooshit.Ocelot.Tokens;
 
-namespace apikeyservice.Services;
+namespace Backend.Services.Auth;
 
 /// <inheritdoc />
 public class ApiKeyService : IApiKeyService {

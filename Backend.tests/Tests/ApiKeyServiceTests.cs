@@ -1,4 +1,3 @@
-using apikeyservice.Services;
 using Backend.Models.Auth;
 using Backend.Services.Auth;
 using Backend.tests.Fixtures;
