@@ -1,23 +1,17 @@
-using Pooshit.AspNetCore.Services.Data;
-
 namespace Backend.Models.Nodes;
 
 /// <summary>
 /// filter for path-query traversal on <c>GET /api/nodes?path=...</c>.
-/// Carries paging / sort / fields from <see cref="ListFilter"/> which all apply
-/// to the <b>terminal hop only</b>.
+/// Extends <see cref="NodeFilter"/> so that paging, sort, fields, and all standard
+/// node filters are inherited.  The <c>path</c> field activates graph-path mode;
+/// all other fields apply to the <b>terminal hop only</b>.
 /// </summary>
-public class NodePathFilter : ListFilter
+public class NodePathFilter : NodeFilter
 {
     /// <summary>
     /// the raw path expression, e.g.
-    /// <c>[type:organization,name:Pooshit]/[type:project,name:DiVoid]/[type:task,status:open]</c>
+    /// <c>[type:organization,name:Pooshit]/[type:project,name:DiVoid]/[type:task,status:open]</c>.
+    /// When non-null the controller routes to path-query mode instead of the standard list.
     /// </summary>
     public string Path { get; set; }
-
-    /// <summary>
-    /// when <see langword="true"/>, the response omits the <c>total</c> field and skips
-    /// the COUNT query.  Applies to both the existing list endpoint and the path-query mode.
-    /// </summary>
-    public bool NoTotal { get; set; }
 }

@@ -117,7 +117,7 @@ public class NodePathQueryHttpTests
     }
 
     async Task<HttpResponseMessage> PathQueryAsync(string path, string extra = "")
-        => await _client.GetAsync($"/api/nodes/path?path={Uri.EscapeDataString(path)}{extra}");
+        => await _client.GetAsync($"/api/nodes?path={Uri.EscapeDataString(path)}{extra}");
 
     static async Task<(List<long> ids, long? total)> ParseResultAsync(HttpResponseMessage resp)
     {
@@ -315,6 +315,56 @@ public class NodePathQueryHttpTests
     }
 
     // -----------------------------------------------------------------------
+    // B1 regression — sub-route must be gone
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task SubRoute_NodePath_Returns404()
+    {
+        // /api/nodes/path?path=... was the old (spec-violating) sub-route.
+        // After the B1 fix it must be gone; requests must hit /api/nodes?path=...
+        HttpResponseMessage resp = await _client.GetAsync($"/api/nodes/path?path={Uri.EscapeDataString("[type:task]")}");
+        Assert.That((int) resp.StatusCode, Is.EqualTo(404),
+            "The /api/nodes/path sub-route must not exist; use /api/nodes?path= instead.");
+    }
+
+    // -----------------------------------------------------------------------
+    // B2 regression — single server-side joined query for multi-hop paths
+    //
+    // Pooshit.Ocelot does not expose a query counter, so we verify the contract
+    // behaviourally: the correct result set must be returned for a 4-hop path.
+    // The implementation uses IN(LoadOperation<Node>) subquery chaining
+    // (mirroring the existing linkedto filter at NodeService.cs:175-181) so
+    // the entire chain compiles to ONE SQL statement — no intermediate id-sets
+    // are materialised in C# between hops.
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task FourHop_SingleQueryContract_CorrectTerminalSet()
+    {
+        // Graph: org1 → proj1 (open) → task1 (open)
+        // 4-hop path: [type:organization]/[type:project,status:open]/[type:task,status:open]/[type:task,status:open]
+        // The last hop re-filters task1 by following its self-links; since task1 has no
+        // outgoing links of type:task, the result is empty — which proves the subquery
+        // chain composed correctly rather than failing/crashing at hop 4.
+        // A simpler proof: a 4-hop path that traces org→proj→task→question should return
+        // question1 (proj2→question1 would need org1→proj2, not proj1).
+        // Use: [type:organization,name:Pooshit]/[type:project]/[type:task]/[] to get all
+        // nodes linked to any task that's linked to any project under Pooshit.
+        // Since tasks (task1, task2) only link to proj1, the terminal hop [] returns proj1.
+        HttpResponseMessage resp = await PathQueryAsync(
+            "[type:organization,name:Pooshit]/[type:project]/[type:task]/[]");
+        Assert.That(resp.StatusCode, Is.EqualTo(System.Net.HttpStatusCode.OK),
+            "4-hop subquery chain must execute as a single query without crashing.");
+        (List<long> ids, long? total) = await ParseResultAsync(resp);
+        // task1 and task2 are linked to proj1; proj1 is linked to org1.
+        // Terminal [] from tasks reaches proj1 (undirected link).
+        Assert.That(ids, Does.Contain(_proj1Id),
+            "proj1 must appear as a neighbour of tasks reachable from org1/project.");
+        Assert.That(total, Is.GreaterThanOrEqualTo(0));
+    }
+
+    // -----------------------------------------------------------------------
     // nototal=true
     // -----------------------------------------------------------------------
 
@@ -442,7 +492,7 @@ public class NodePathQueryHttpTests
     // -----------------------------------------------------------------------
 
     [Test]
-    public async Task Cancellation_AlreadyCancelled_ThrowsOperationCancelled()
+    public void Cancellation_AlreadyCancelled_ThrowsOperationCancelled()
     {
         // Pass an already-cancelled token — the service should observe it
         using CancellationTokenSource cts = new();
@@ -459,8 +509,8 @@ public class NodePathQueryHttpTests
             Count = 10
         };
 
-        Assert.ThrowsAsync<OperationCanceledException>(() =>
-            svc.ListPagedByPath(filter, cts.Token));
+        Assert.Throws<OperationCanceledException>(() =>
+            svc.ListPagedByPath(filter, cts.Token).GetAwaiter().GetResult());
     }
 
     // -----------------------------------------------------------------------

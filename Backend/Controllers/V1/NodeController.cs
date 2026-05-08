@@ -48,32 +48,30 @@ namespace Backend.Controllers.V1
         public Task<NodeDetails> GetNodeById(long nodeId) => nodeService.GetNodeById(nodeId);
 
         /// <summary>
-        /// lists existing nodes
-        /// </summary>
-        /// <param name="filter">filter to apply</param>
-        /// <returns>page of nodes matching filter</returns>
-        [HttpGet]
-        [Authorize(Policy = "read")]
-        public Task<AsyncPageResponseWriter<NodeDetails>> ListPaged([FromQuery] NodeFilter filter) => nodeService.ListPaged(filter);
-
-        /// <summary>
-        /// lists nodes reachable via a graph path expression.
+        /// lists existing nodes, or — when <c>path</c> is supplied — resolves a graph path
+        /// expression and returns the terminal-hop node set.
         ///
-        /// Activated when the <c>path</c> query parameter is present.
-        /// Paging, sort, and fields parameters apply to the terminal hop only.
+        /// Standard list mode: all filter fields apply directly.
+        /// Path mode (<c>?path=...</c>): the bracketed path expression is parsed and
+        /// resolved as a single server-side joined query; paging, sort, and fields apply
+        /// to the terminal hop only.
         /// </summary>
         /// <param name="filter">
-        /// path filter; <c>path</c> carries the bracketed path expression,
-        /// e.g. <c>[type:organization,name:Pooshit]/[type:project,name:DiVoid]/[type:task,status:open]</c>
+        /// unified filter; <c>path</c> activates graph-path mode, e.g.
+        /// <c>[type:organization,name:Pooshit]/[type:project,name:DiVoid]/[type:task,status:open]</c>
         /// </param>
         /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
-        /// <returns>page of terminal-hop nodes in the standard list envelope</returns>
-        [HttpGet("path")]
+        /// <returns>page of nodes in the standard list envelope</returns>
+        [HttpGet]
         [Authorize(Policy = "read")]
-        public Task<AsyncPageResponseWriter<NodeDetails>> ListPagedByPath([FromQuery] NodePathFilter filter, CancellationToken ct)
+        public Task<AsyncPageResponseWriter<NodeDetails>> ListPaged([FromQuery] NodePathFilter filter, CancellationToken ct)
         {
-            logger.LogInformation("Path query: {Path}", filter?.Path);
-            return nodeService.ListPagedByPath(filter, ct);
+            if (!string.IsNullOrEmpty(filter?.Path))
+            {
+                logger.LogInformation("Path query: {Path}", filter.Path);
+                return nodeService.ListPagedByPath(filter, ct);
+            }
+            return nodeService.ListPaged(filter);
         }
 
         /// <summary>

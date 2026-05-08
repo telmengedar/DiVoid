@@ -201,72 +201,17 @@ public class NodeService(IEntityManager database) : INodeService
 
     /// <summary>
     /// builds the link sub-query for both directions of <see cref="NodeLink"/> from
-    /// <paramref name="prevHopIds"/>.  This is the same Union-of-two-directions pattern
-    /// used by the original <c>linkedto</c> filter.
+    /// a <paramref name="prevHopOp"/> id-subquery.  This is the same Union-of-two-directions
+    /// pattern used by the original <c>linkedto</c> filter, generalized to accept a
+    /// server-side subquery instead of a materialized id-array so the entire chain
+    /// composes into a single SQL statement.
     /// </summary>
-    LoadOperation<NodeLink> BuildLinkSubquery(long[] prevHopIds)
+    LoadOperation<NodeLink> BuildLinkSubquery(LoadOperation<Node> prevHopOp)
     {
         return database.Load<NodeLink>(l => l.SourceId)
-                       .Where(l => l.SourceId.In(prevHopIds) || l.TargetId.In(prevHopIds))
+                       .Where(l => l.SourceId.In(prevHopOp) || l.TargetId.In(prevHopOp))
                        .Union(database.Load<NodeLink>(l => l.TargetId)
-                                      .Where(l => l.SourceId.In(prevHopIds) || l.TargetId.In(prevHopIds)));
-    }
-
-    /// <summary>
-    /// resolves the first (seed) hop to a set of node ids.
-    /// No traversal — plain filter on Node.
-    /// </summary>
-    async Task<long[]> ResolveSeedHop(HopSegment hop, CancellationToken ct)
-    {
-        ct.ThrowIfCancellationRequested();
-
-        var seedOp = database.Load<Node>(n => n.Id);
-        if (hop.Predicates.Length > 0)
-        {
-            Expression<Func<Node, bool>> pred = GenerateHopFilter(hop);
-            if (pred != null)
-                seedOp.Where(pred);
-        }
-        // If empty (any-node wildcard as seed), load all ids — valid but expensive
-
-        var result = new List<long>();
-        await foreach (Node n in seedOp.ExecuteEntitiesAsync())
-        {
-            ct.ThrowIfCancellationRequested();
-            result.Add(n.Id);
-        }
-        return result.ToArray();
-    }
-
-    /// <summary>
-    /// resolves an intermediate hop by following links from <paramref name="prevIds"/>
-    /// and filtering the reachable nodes by <paramref name="hop"/>'s predicates.
-    /// Returns the resulting id-set.
-    /// </summary>
-    async Task<long[]> ResolveIntermediateHop(HopSegment hop, long[] prevIds, CancellationToken ct)
-    {
-        ct.ThrowIfCancellationRequested();
-
-        if (prevIds.Length == 0)
-            return [];
-
-        LoadOperation<NodeLink> linkOp = BuildLinkSubquery(prevIds);
-        PredicateExpression<Node> chainPredicate = null;
-        chainPredicate &= n => n.Id.In(linkOp) && !n.Id.In(prevIds);
-
-        Expression<Func<Node, bool>> hopPred = GenerateHopFilter(hop);
-        if (hopPred != null)
-            chainPredicate &= new PredicateExpression<Node>(hopPred);
-
-        var nodeOp = database.Load<Node>(n => n.Id).Where(chainPredicate.Content);
-
-        var result = new List<long>();
-        await foreach (Node n in nodeOp.ExecuteEntitiesAsync())
-        {
-            ct.ThrowIfCancellationRequested();
-            result.Add(n.Id);
-        }
-        return result.ToArray();
+                                      .Where(l => l.SourceId.In(prevHopOp) || l.TargetId.In(prevHopOp)));
     }
 
     /// <summary>
@@ -282,62 +227,55 @@ public class NodeService(IEntityManager database) : INodeService
     /// chains N hops into a terminal <see cref="LoadOperation{Node}"/> plus a raw predicate
     /// expression for the count query.
     ///
-    /// For a 1-hop path this is a plain per-hop filter with no traversal.
-    /// For N &gt; 1 hops, hops 1..N-1 are materialised as id-sets; hop N receives
-    /// a link-subquery constraint that chains it to the previous hop.
+    /// Every hop — including all intermediate hops — is expressed as a server-side
+    /// <c>IN (subquery)</c> predicate.  No intermediate id-sets are materialised; the
+    /// entire chain compiles into a single SQL statement executed once by the database.
+    ///
+    /// Pattern mirrors the existing <c>linkedto</c> filter at <c>NodeService.cs:175-181</c>:
+    /// each hop is a <see cref="LoadOperation{Node}"/> whose predicate wraps the previous
+    /// hop's id-subquery via a Union-of-two-<see cref="NodeLink"/>-directions subquery.
     /// </summary>
-    async Task<ComposedPath> ComposeHops(PathQuery query, NodePathFilter filter, NodeMapper mapper, CancellationToken ct)
+    ComposedPath ComposeHops(PathQuery query, NodePathFilter filter, NodeMapper mapper, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
+
         HopSegment[] hops = query.Hops;
         filter.Fields ??= mapper.DefaultListFields;
 
-        if (hops.Length == 1)
-        {
-            // Single-hop: plain filter, no traversal
-            LoadOperation<Node> op = mapper.CreateOperation(database, filter.Fields);
-            op.ApplyFilter(filter, mapper);
-            Expression<Func<Node, bool>> singlePred = GenerateHopFilter(hops[0]);
-            op.Where(singlePred);
-            return new(op, singlePred);
-        }
+        // hop[0]: seed — plain filter on Node, no traversal
+        LoadOperation<Node> currentHopOp = database.Load<Node>(n => n.Id);
+        Expression<Func<Node, bool>> seedPred = GenerateHopFilter(hops[0]);
+        if (seedPred != null)
+            currentHopOp.Where(seedPred);
 
-        // Multi-hop: resolve intermediate hops to id-sets
-        ct.ThrowIfCancellationRequested();
-        long[] currentIds = await ResolveSeedHop(hops[0], ct);
-
-        for (int i = 1; i < hops.Length - 1; i++)
+        // hop[1..N-1]: each intermediate hop chains via IN (link-subquery(prevHop))
+        for (int i = 1; i < hops.Length; i++)
         {
             ct.ThrowIfCancellationRequested();
-            currentIds = await ResolveIntermediateHop(hops[i], currentIds, ct);
-        }
 
-        ct.ThrowIfCancellationRequested();
+            LoadOperation<Node> prevHopOp = currentHopOp;
+            LoadOperation<NodeLink> linkOp = BuildLinkSubquery(prevHopOp);
 
-        // Build terminal hop predicate
-        Expression<Func<Node, bool>> terminalPred;
-        if (currentIds.Length == 0)
-        {
-            // No intermediate results — terminal is definitively empty
-            terminalPred = n => n.Id == -1;
-        }
-        else
-        {
-            LoadOperation<NodeLink> linkOp = BuildLinkSubquery(currentIds);
-            PredicateExpression<Node> chainPred = null;
-            chainPred &= n => n.Id.In(linkOp) && !n.Id.In(currentIds);
+            PredicateExpression<Node> chainPredicate = null;
+            chainPredicate &= n => n.Id.In(linkOp) && !n.Id.In(prevHopOp);
 
-            Expression<Func<Node, bool>> hopPred = GenerateHopFilter(hops[hops.Length - 1]);
+            Expression<Func<Node, bool>> hopPred = GenerateHopFilter(hops[i]);
             if (hopPred != null)
-                chainPred &= new PredicateExpression<Node>(hopPred);
+                chainPredicate &= new PredicateExpression<Node>(hopPred);
 
-            terminalPred = chainPred.Content;
+            currentHopOp = database.Load<Node>(n => n.Id).Where(chainPredicate.Content);
         }
+
+        // The terminal operation uses the mapper join (Node + NodeType) and paging/sort
+        Expression<Func<Node, bool>> terminalPredicate = hops.Length == 1
+            ? GenerateHopFilter(hops[0])
+            : n => n.Id.In(currentHopOp);
 
         LoadOperation<Node> terminal = mapper.CreateOperation(database, filter.Fields);
         terminal.ApplyFilter(filter, mapper);
-        terminal.Where(terminalPred);
+        terminal.Where(terminalPredicate);
 
-        return new(terminal, terminalPred);
+        return new(terminal, terminalPredicate);
     }
 
     /// <inheritdoc />
@@ -372,8 +310,10 @@ public class NodeService(IEntityManager database) : INodeService
     }
 
     /// <inheritdoc />
-    public async Task<AsyncPageResponseWriter<NodeDetails>> ListPagedByPath(NodePathFilter filter, CancellationToken ct)
+    public Task<AsyncPageResponseWriter<NodeDetails>> ListPagedByPath(NodePathFilter filter, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
+
         filter ??= new();
         NodeMapper mapper = new();
         filter.Fields ??= mapper.DefaultListFields;
@@ -383,29 +323,29 @@ public class NodeService(IEntityManager database) : INodeService
 
         ct.ThrowIfCancellationRequested();
 
-        ComposedPath composed = await ComposeHops(query, filter, mapper, ct);
+        ComposedPath composed = ComposeHops(query, filter, mapper, ct);
 
         if (filter.NoTotal)
         {
             // -1 signals that total was not computed (cannot pass null to AsyncPageResponseWriter)
-            return new AsyncPageResponseWriter<NodeDetails>(
+            return Task.FromResult(new AsyncPageResponseWriter<NodeDetails>(
                 mapper.EntitiesFromOperation(composed.Terminal, filter.Fields),
                 () => Task.FromResult(-1L),
                 filter.Continue
-            );
+            ));
         }
 
         // Capture predicate for count — built once, reused in the lambda
         Expression<Func<Node, bool>> countPred = composed.TerminalPredicate;
 
-        return new AsyncPageResponseWriter<NodeDetails>(
+        return Task.FromResult(new AsyncPageResponseWriter<NodeDetails>(
             mapper.EntitiesFromOperation(composed.Terminal, filter.Fields),
             () => {
                 ct.ThrowIfCancellationRequested();
                 return database.Load<Node>(DB.Count()).Where(countPred).ExecuteScalarAsync<long>();
             },
             filter.Continue
-        );
+        ));
     }
 
     /// <inheritdoc />
