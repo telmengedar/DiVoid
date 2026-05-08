@@ -23,3 +23,9 @@ if (isCli) {
                       });
         }).Build().Run();
 }
+
+/// <summary>
+/// Partial declaration exposes the compiler-generated Program class so that
+/// <c>WebApplicationFactory&lt;Program&gt;</c> can reference it from the test project.
+/// </summary>
+public partial class Program { }

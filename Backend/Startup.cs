@@ -125,10 +125,9 @@ public class Startup
         app.UseRouting();
         app.UseMiddleware<ErrorHandlerMiddleware>();
 
-        if (AuthEnabled) {
+        if (AuthEnabled)
             app.UseAuthentication();
-            app.UseAuthorization();
-        }
+        app.UseAuthorization();
 
         app.UseEndpoints(endpoints =>
         {

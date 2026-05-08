@@ -1,3 +1,4 @@
+using Backend.Filters;
 using Backend.Models.Nodes;
 using Backend.Services.Nodes;
 using Microsoft.AspNetCore.Authorization;
@@ -18,6 +19,7 @@ namespace Backend.Controllers.V1
     /// <param name="nodeService">service used to process requests</param>
     [Route("api/nodes")]
     [ApiController]
+    [TypeFilter(typeof(PatchExceptionFilter))]
     public class NodeController(ILogger<NodeController> logger, INodeService nodeService) : ControllerBase
     {
         readonly ILogger<NodeController> logger = logger;
