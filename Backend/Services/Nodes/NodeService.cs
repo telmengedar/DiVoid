@@ -279,7 +279,7 @@ public class NodeService(IEntityManager database) : INodeService
     }
 
     /// <inheritdoc />
-    public async Task<AsyncPageResponseWriter<NodeDetails>> ListPaged(NodeFilter filter = null)
+    public Task<AsyncPageResponseWriter<NodeDetails>> ListPaged(NodeFilter filter = null)
     {
         filter ??= new();
         NodeMapper mapper = new();
@@ -295,18 +295,18 @@ public class NodeService(IEntityManager database) : INodeService
         {
             // -1 signals to callers that the total was not computed.
             // We cannot pass null — AsyncPageResponseWriter requires a delegate.
-            return new AsyncPageResponseWriter<NodeDetails>(
+            return Task.FromResult(new AsyncPageResponseWriter<NodeDetails>(
                 mapper.EntitiesFromOperation(operation, filter.Fields),
                 () => Task.FromResult(-1L),
                 filter.Continue
-            );
+            ));
         }
 
-        return new AsyncPageResponseWriter<NodeDetails>(
+        return Task.FromResult(new AsyncPageResponseWriter<NodeDetails>(
             mapper.EntitiesFromOperation(operation, filter.Fields),
             () => database.Load<Node>(DB.Count()).Where(predicate).ExecuteScalarAsync<long>(),
             filter.Continue
-        );
+        ));
     }
 
     /// <inheritdoc />
