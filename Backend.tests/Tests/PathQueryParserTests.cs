@@ -67,11 +67,27 @@ public class PathQueryParserTests
     }
 
     [Test]
-    public void Parse_EmptySegment_AnyNodeWildcard()
+    public void Parse_EmptySegment_AsFirstHop_Alone_ThrowsParseException()
     {
-        PathQuery q = PathQueryParser.Parse("[]");
-        Assert.That(q.Hops.Length, Is.EqualTo(1));
-        Assert.That(q.Hops[0].Predicates, Is.Empty);
+        // [] as the first (and only) hop is invalid — no constrained seed
+        var ex = Assert.Throws<PathQueryParseException>(() => PathQueryParser.Parse("[]"));
+        Assert.That(ex.Message, Does.Contain("first hop").IgnoreCase);
+    }
+
+    [Test]
+    public void Parse_EmptySegment_AsFirstHop_TwoHop_ThrowsParseException()
+    {
+        // []/[type:task] — first hop unconstrained
+        var ex = Assert.Throws<PathQueryParseException>(() => PathQueryParser.Parse("[]/[type:task]"));
+        Assert.That(ex.Message, Does.Contain("first hop").IgnoreCase);
+    }
+
+    [Test]
+    public void Parse_EmptySegment_AsFirstHop_ThreeHop_ThrowsParseException()
+    {
+        // []/[type:project]/[type:task] — first hop unconstrained
+        var ex = Assert.Throws<PathQueryParseException>(() => PathQueryParser.Parse("[]/[type:project]/[type:task]"));
+        Assert.That(ex.Message, Does.Contain("first hop").IgnoreCase);
     }
 
     [Test]
