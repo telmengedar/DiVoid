@@ -522,6 +522,64 @@ public class NodeServiceTests
         Assert.That(result.Status, Is.EqualTo("closed"));
     }
 
+    // -----------------------------------------------------------------------
+    // Patch — Name field
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task Patch_ReplaceName_UpdatesField()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await Create(svc, name: "OriginalName");
+        NodeDetails result = await svc.Patch(node.Id, new PatchOperation { Op = "replace", Path = "/name", Value = "UpdatedName" });
+
+        Assert.That(result.Name, Is.EqualTo("UpdatedName"));
+    }
+
+    [Test]
+    public async Task Patch_ReplaceName_PersistedToDatabase()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await Create(svc, name: "BeforePatch");
+        await svc.Patch(node.Id, new PatchOperation { Op = "replace", Path = "/name", Value = "AfterPatch" });
+
+        // Reload via list to confirm DB was written
+        var writer = await svc.ListPaged(new NodeFilter { Id = [node.Id], Count = 1 });
+        List<NodeDetails> results = await CollectPage(writer);
+        Assert.That(results.Single().Name, Is.EqualTo("AfterPatch"));
+    }
+
+    [Test]
+    public void Patch_ReplaceType_ThrowsPropertyNotFoundException()
+    {
+        // The PATCH path "/type" does not map to any property on Node — the DB entity
+        // stores type as TypeId (long), not as "type". The extension throws
+        // PropertyNotFoundException before the [AllowPatch] check is reached.
+        // Either way, /type is not patchable and the middleware returns 400.
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        Assert.ThrowsAsync<PropertyNotFoundException>(
+            () => svc.Patch(1, new PatchOperation { Op = "replace", Path = "/type", Value = "other" }));
+    }
+
+    [Test]
+    public async Task Patch_ReplaceStatus_StillWorksAfterNamePatchAdded()
+    {
+        // Regression: adding [AllowPatch] to Name must not break the existing Status patch path.
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await Create(svc);
+        NodeDetails result = await svc.Patch(node.Id, new PatchOperation { Op = "replace", Path = "/status", Value = "in-progress" });
+
+        Assert.That(result.Status, Is.EqualTo("in-progress"));
+    }
+
     // TODO: Patch_AddStatus_IsNotMeaningfulForString — the patch infrastructure does not
     // validate ops against property type, so "add" on a string field currently behaves
     // as a replace rather than throwing. Fixing this is out of scope (affects all string

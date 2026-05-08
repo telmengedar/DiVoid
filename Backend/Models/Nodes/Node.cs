@@ -26,6 +26,7 @@ public class Node
     /// <summary>
     /// name of node
     /// </summary>
+    [AllowPatch]
     [Index("node")]
     public string Name { get; set; }
 
