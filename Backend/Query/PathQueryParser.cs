@@ -82,6 +82,11 @@ public static class PathQueryParser
             }
             if (_pos < _input.Length)
                 throw new PathQueryParseException(Column, $"unexpected character '{Peek()}' — expected '/' or end of input");
+
+            if (hops[0].Predicates.Length == 0)
+                throw new PathQueryParseException(1,
+                    "first hop must specify at least one predicate; an unconstrained [] first segment makes the path query equivalent to the bare /api/nodes endpoint");
+
             return new PathQuery { Hops = hops.ToArray() };
         }
 

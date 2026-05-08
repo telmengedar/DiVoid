@@ -458,6 +458,74 @@ public class NodePathQueryHttpTests
     }
 
     // -----------------------------------------------------------------------
+    // Task 123 — first-hop [] guard
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task EmptyFirstHop_Alone_Returns400()
+    {
+        HttpResponseMessage resp = await PathQueryAsync("[]");
+        Assert.That((int) resp.StatusCode, Is.EqualTo(400));
+    }
+
+    [Test]
+    public async Task EmptyFirstHop_Alone_ReturnsBadParameterCode()
+    {
+        HttpResponseMessage resp = await PathQueryAsync("[]");
+        string json = await resp.Content.ReadAsStringAsync();
+        using JsonDocument doc = JsonDocument.Parse(json);
+        Assert.That(doc.RootElement.GetProperty("code").GetString(), Is.EqualTo("badparameter"));
+    }
+
+    [Test]
+    public async Task EmptyFirstHop_Alone_ErrorTextMentionsFirstHop()
+    {
+        HttpResponseMessage resp = await PathQueryAsync("[]");
+        string json = await resp.Content.ReadAsStringAsync();
+        using JsonDocument doc = JsonDocument.Parse(json);
+        string text = doc.RootElement.GetProperty("text").GetString() ?? "";
+        Assert.That(text, Does.Contain("first hop").IgnoreCase);
+    }
+
+    [Test]
+    public async Task EmptyFirstHop_TwoHop_Returns400()
+    {
+        // []/[type:task] — first hop is unconstrained
+        HttpResponseMessage resp = await PathQueryAsync("[]/[type:task]");
+        Assert.That((int) resp.StatusCode, Is.EqualTo(400));
+        string json = await resp.Content.ReadAsStringAsync();
+        using JsonDocument doc = JsonDocument.Parse(json);
+        Assert.That(doc.RootElement.GetProperty("code").GetString(), Is.EqualTo("badparameter"));
+    }
+
+    [Test]
+    public async Task EmptyFirstHop_ThreeHop_Returns400()
+    {
+        // []/[type:project]/[type:task] — first hop is unconstrained
+        HttpResponseMessage resp = await PathQueryAsync("[]/[type:project]/[type:task]");
+        Assert.That((int) resp.StatusCode, Is.EqualTo(400));
+        string json = await resp.Content.ReadAsStringAsync();
+        using JsonDocument doc = JsonDocument.Parse(json);
+        Assert.That(doc.RootElement.GetProperty("code").GetString(), Is.EqualTo("badparameter"));
+    }
+
+    [Test]
+    public async Task NonFirstEmptyHop_TwoHop_StillWorks()
+    {
+        // [type:project]/[] — valid: constrained seed, wildcard neighbour
+        HttpResponseMessage resp = await PathQueryAsync("[type:project]/[]");
+        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+    }
+
+    [Test]
+    public async Task NonFirstEmptyHop_ThreeHop_StillWorks()
+    {
+        // [type:organization]/[type:project]/[] — valid at depth
+        HttpResponseMessage resp = await PathQueryAsync("[type:organization]/[type:project]/[]");
+        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+    }
+
+    // -----------------------------------------------------------------------
     // Resolution to empty set — 200 not an error
     // -----------------------------------------------------------------------
 
