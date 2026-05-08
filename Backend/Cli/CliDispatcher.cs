@@ -99,7 +99,7 @@ public static class CliDispatcher {
             Console.WriteLine($"Admin key created:   id={key.Id} keyId={key.KeyId}");
             Console.WriteLine($"Key (store now — unrecoverable): {key.PlaintextKey}");
             Environment.Exit(0);
-        } catch (InvalidOperationException ex) when (ex.Message.Contains("DIVOID_KEY_PEPPER")) {
+        } catch (MissingPepperException ex) {
             Console.Error.WriteLine($"error: {ex.Message}");
             logger.LogError("event=cli.create-admin exitCode=1 reason=missing_pepper");
             Environment.Exit(1);

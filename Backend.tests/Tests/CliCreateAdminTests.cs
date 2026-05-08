@@ -122,7 +122,7 @@ public class CliCreateAdminTests
     {
         using DatabaseFixture fixture = new();
 
-        // No pepper → ApiKeyService constructor throws
+        // No pepper → ApiKeyService constructor throws MissingPepperException
         IConfiguration config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> {
                 ["Auth:Enabled"] = "true"
@@ -130,7 +130,7 @@ public class CliCreateAdminTests
             })
             .Build();
 
-        Assert.Throws<InvalidOperationException>(() =>
+        Assert.Throws<MissingPepperException>(() =>
             new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance));
     }
 
