@@ -1,3 +1,4 @@
+using System.Threading;
 using Backend.Models.Nodes;
 using Backend.Services.Nodes;
 using Microsoft.AspNetCore.Authorization;
@@ -54,6 +55,26 @@ namespace Backend.Controllers.V1
         [HttpGet]
         [Authorize(Policy = "read")]
         public Task<AsyncPageResponseWriter<NodeDetails>> ListPaged([FromQuery] NodeFilter filter) => nodeService.ListPaged(filter);
+
+        /// <summary>
+        /// lists nodes reachable via a graph path expression.
+        ///
+        /// Activated when the <c>path</c> query parameter is present.
+        /// Paging, sort, and fields parameters apply to the terminal hop only.
+        /// </summary>
+        /// <param name="filter">
+        /// path filter; <c>path</c> carries the bracketed path expression,
+        /// e.g. <c>[type:organization,name:Pooshit]/[type:project,name:DiVoid]/[type:task,status:open]</c>
+        /// </param>
+        /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
+        /// <returns>page of terminal-hop nodes in the standard list envelope</returns>
+        [HttpGet("path")]
+        [Authorize(Policy = "read")]
+        public Task<AsyncPageResponseWriter<NodeDetails>> ListPagedByPath([FromQuery] NodePathFilter filter, CancellationToken ct)
+        {
+            logger.LogInformation("Path query: {Path}", filter?.Path);
+            return nodeService.ListPagedByPath(filter, ct);
+        }
 
         /// <summary>
         /// get data of a node
