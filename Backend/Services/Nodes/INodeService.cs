@@ -1,3 +1,4 @@
+using System.Threading;
 using Backend.Models.Nodes;
 using Pooshit.AspNetCore.Services.Formatters.DataStream;
 using Pooshit.AspNetCore.Services.Patches;
@@ -30,6 +31,14 @@ public interface INodeService
     /// <param name="filter">filter to apply</param>
     /// <returns>page of nodes matching filter</returns>
     Task<AsyncPageResponseWriter<NodeDetails>> ListPaged(NodeFilter filter = null);
+
+    /// <summary>
+    /// lists nodes reachable via a graph path expression
+    /// </summary>
+    /// <param name="filter">path filter with the raw path string and paging parameters</param>
+    /// <param name="ct">cancellation token from the HTTP request</param>
+    /// <returns>page of terminal-hop nodes</returns>
+    Task<AsyncPageResponseWriter<NodeDetails>> ListPagedByPath(NodePathFilter filter, CancellationToken ct);
 
     /// <summary>
     /// get data of a node

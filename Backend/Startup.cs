@@ -71,9 +71,11 @@ public class Startup
         services.AddErrorHandlers();
         // Override the built-in PropertyNotFoundHandler (which maps to 404) and add
         // NotSupportedExceptionHandler; both map PATCH-input errors to HTTP 400.
+        // PathQueryParseExceptionHandler maps path-query syntax errors to HTTP 400.
         // Registered after AddErrorHandlers() so they take precedence in the collection.
         services.AddTransient<IErrorHandler, PropertyNotFoundExceptionHandler>();
         services.AddTransient<IErrorHandler, NotSupportedExceptionHandler>();
+        services.AddTransient<IErrorHandler, PathQueryParseExceptionHandler>();
         services.AddLogging(options =>
         {
             options.ClearProviders();

@@ -1,3 +1,4 @@
+using System.Threading;
 using Backend.Models.Nodes;
 using Backend.Services.Nodes;
 using Microsoft.AspNetCore.Authorization;
@@ -47,13 +48,31 @@ namespace Backend.Controllers.V1
         public Task<NodeDetails> GetNodeById(long nodeId) => nodeService.GetNodeById(nodeId);
 
         /// <summary>
-        /// lists existing nodes
+        /// lists existing nodes, or — when <c>path</c> is supplied — resolves a graph path
+        /// expression and returns the terminal-hop node set.
+        ///
+        /// Standard list mode: all filter fields apply directly.
+        /// Path mode (<c>?path=...</c>): the bracketed path expression is parsed and
+        /// resolved as a single server-side joined query; paging, sort, and fields apply
+        /// to the terminal hop only.
         /// </summary>
-        /// <param name="filter">filter to apply</param>
-        /// <returns>page of nodes matching filter</returns>
+        /// <param name="filter">
+        /// unified filter; <c>path</c> activates graph-path mode, e.g.
+        /// <c>[type:organization,name:Pooshit]/[type:project,name:DiVoid]/[type:task,status:open]</c>
+        /// </param>
+        /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
+        /// <returns>page of nodes in the standard list envelope</returns>
         [HttpGet]
         [Authorize(Policy = "read")]
-        public Task<AsyncPageResponseWriter<NodeDetails>> ListPaged([FromQuery] NodeFilter filter) => nodeService.ListPaged(filter);
+        public Task<AsyncPageResponseWriter<NodeDetails>> ListPaged([FromQuery] NodePathFilter filter, CancellationToken ct)
+        {
+            if (!string.IsNullOrEmpty(filter?.Path))
+            {
+                logger.LogInformation("Path query: {Path}", filter.Path);
+                return nodeService.ListPagedByPath(filter, ct);
+            }
+            return nodeService.ListPaged(filter);
+        }
 
         /// <summary>
         /// get data of a node

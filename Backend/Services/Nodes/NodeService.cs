@@ -1,6 +1,7 @@
 using System.Linq.Expressions;
 using Backend.Extensions;
 using Backend.Models.Nodes;
+using Backend.Query;
 using Pooshit.AspNetCore.Services.Errors.Exceptions;
 using Pooshit.AspNetCore.Services.Formatters.DataStream;
 using Pooshit.AspNetCore.Services.Patches;
@@ -86,11 +87,72 @@ public class NodeService(IEntityManager database) : INodeService
         transaction.Commit();
     }
 
+    /// <summary>
+    /// builds a predicate for a single hop segment.
+    /// Handles id, type, name, status — with wildcard LIKE semantics on name/status.
+    /// </summary>
+    Expression<Func<Node, bool>> GenerateHopFilter(HopSegment hop)
+    {
+        PredicateExpression<Node> predicate = null;
+
+        foreach (HopPredicate p in hop.Predicates)
+        {
+            switch (p.Key)
+            {
+                case "id":
+                    long[] ids = Array.ConvertAll(p.Values, v => long.Parse(v));
+                    predicate &= n => n.Id.In(ids);
+                    break;
+
+                case "name":
+                    if (p.Values.Any(v => v.ContainsWildcards()))
+                    {
+                        PredicateExpression<Node> namePredicate = null;
+                        foreach (string nameFilter in p.Values)
+                            namePredicate |= n => n.Name.Like(nameFilter);
+                        predicate &= namePredicate;
+                    } else
+                    {
+                        predicate &= n => n.Name.In(p.Values);
+                    }
+                    break;
+
+                case "type":
+                {
+                    LoadOperation<NodeType> typeOp = database.Load<NodeType>(t => t.Id)
+                                                             .Where(t => t.Type.In(p.Values));
+                    predicate &= n => n.TypeId.In(typeOp);
+                    break;
+                }
+
+                case "status":
+                    if (p.Values.Any(v => v.ContainsWildcards()))
+                    {
+                        PredicateExpression<Node> statusPredicate = null;
+                        foreach (string statusFilter in p.Values)
+                            statusPredicate |= n => n.Status.Like(statusFilter);
+                        predicate &= statusPredicate;
+                    } else
+                    {
+                        predicate &= n => n.Status.In(p.Values);
+                    }
+                    break;
+            }
+        }
+
+        return predicate?.Content;
+    }
+
+    /// <summary>
+    /// original single-filter method — preserved for the existing list endpoint.
+    /// </summary>
     Expression<Func<Node, bool>> GenerateFilter(NodeFilter filter)
     {
         PredicateExpression<Node> predicate = null;
+
         if (filter.Id?.Length > 0)
             predicate &= n => n.Id.In(filter.Id);
+
         if (filter.Name?.Length > 0)
             if (filter.Name.Any(n => n.ContainsWildcards()))
             {
@@ -137,6 +199,85 @@ public class NodeService(IEntityManager database) : INodeService
         return predicate?.Content;
     }
 
+    /// <summary>
+    /// builds the link sub-query for both directions of <see cref="NodeLink"/> from
+    /// a <paramref name="prevHopOp"/> id-subquery.  This is the same Union-of-two-directions
+    /// pattern used by the original <c>linkedto</c> filter, generalized to accept a
+    /// server-side subquery instead of a materialized id-array so the entire chain
+    /// composes into a single SQL statement.
+    /// </summary>
+    LoadOperation<NodeLink> BuildLinkSubquery(LoadOperation<Node> prevHopOp)
+    {
+        return database.Load<NodeLink>(l => l.SourceId)
+                       .Where(l => l.SourceId.In(prevHopOp) || l.TargetId.In(prevHopOp))
+                       .Union(database.Load<NodeLink>(l => l.TargetId)
+                                      .Where(l => l.SourceId.In(prevHopOp) || l.TargetId.In(prevHopOp)));
+    }
+
+    /// <summary>
+    /// result of composing hops: the terminal operation (for streaming results) and the
+    /// terminal predicate (for the count query, built separately to avoid re-traversal).
+    /// </summary>
+    readonly record struct ComposedPath(
+        LoadOperation<Node> Terminal,
+        Expression<Func<Node, bool>> TerminalPredicate
+    );
+
+    /// <summary>
+    /// chains N hops into a terminal <see cref="LoadOperation{Node}"/> plus a raw predicate
+    /// expression for the count query.
+    ///
+    /// Every hop — including all intermediate hops — is expressed as a server-side
+    /// <c>IN (subquery)</c> predicate.  No intermediate id-sets are materialised; the
+    /// entire chain compiles into a single SQL statement executed once by the database.
+    ///
+    /// Pattern mirrors the existing <c>linkedto</c> filter at <c>NodeService.cs:175-181</c>:
+    /// each hop is a <see cref="LoadOperation{Node}"/> whose predicate wraps the previous
+    /// hop's id-subquery via a Union-of-two-<see cref="NodeLink"/>-directions subquery.
+    /// </summary>
+    ComposedPath ComposeHops(PathQuery query, NodePathFilter filter, NodeMapper mapper, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        HopSegment[] hops = query.Hops;
+        filter.Fields ??= mapper.DefaultListFields;
+
+        // hop[0]: seed — plain filter on Node, no traversal
+        LoadOperation<Node> currentHopOp = database.Load<Node>(n => n.Id);
+        Expression<Func<Node, bool>> seedPred = GenerateHopFilter(hops[0]);
+        if (seedPred != null)
+            currentHopOp.Where(seedPred);
+
+        // hop[1..N-1]: each intermediate hop chains via IN (link-subquery(prevHop))
+        for (int i = 1; i < hops.Length; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            LoadOperation<Node> prevHopOp = currentHopOp;
+            LoadOperation<NodeLink> linkOp = BuildLinkSubquery(prevHopOp);
+
+            PredicateExpression<Node> chainPredicate = null;
+            chainPredicate &= n => n.Id.In(linkOp) && !n.Id.In(prevHopOp);
+
+            Expression<Func<Node, bool>> hopPred = GenerateHopFilter(hops[i]);
+            if (hopPred != null)
+                chainPredicate &= new PredicateExpression<Node>(hopPred);
+
+            currentHopOp = database.Load<Node>(n => n.Id).Where(chainPredicate.Content);
+        }
+
+        // The terminal operation uses the mapper join (Node + NodeType) and paging/sort
+        Expression<Func<Node, bool>> terminalPredicate = hops.Length == 1
+            ? GenerateHopFilter(hops[0])
+            : n => n.Id.In(currentHopOp);
+
+        LoadOperation<Node> terminal = mapper.CreateOperation(database, filter.Fields);
+        terminal.ApplyFilter(filter, mapper);
+        terminal.Where(terminalPredicate);
+
+        return new(terminal, terminalPredicate);
+    }
+
     /// <inheritdoc />
     public async Task<AsyncPageResponseWriter<NodeDetails>> ListPaged(NodeFilter filter = null)
     {
@@ -150,11 +291,61 @@ public class NodeService(IEntityManager database) : INodeService
         Expression<Func<Node, bool>> predicate = GenerateFilter(filter);
         operation.Where(predicate);
 
+        if (filter.NoTotal)
+        {
+            // -1 signals to callers that the total was not computed.
+            // We cannot pass null — AsyncPageResponseWriter requires a delegate.
+            return new AsyncPageResponseWriter<NodeDetails>(
+                mapper.EntitiesFromOperation(operation, filter.Fields),
+                () => Task.FromResult(-1L),
+                filter.Continue
+            );
+        }
+
         return new AsyncPageResponseWriter<NodeDetails>(
             mapper.EntitiesFromOperation(operation, filter.Fields),
             () => database.Load<Node>(DB.Count()).Where(predicate).ExecuteScalarAsync<long>(),
             filter.Continue
         );
+    }
+
+    /// <inheritdoc />
+    public Task<AsyncPageResponseWriter<NodeDetails>> ListPagedByPath(NodePathFilter filter, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        filter ??= new();
+        NodeMapper mapper = new();
+        filter.Fields ??= mapper.DefaultListFields;
+
+        // Parse throws PathQueryParseException on syntax/constraint violations (→ HTTP 400)
+        PathQuery query = PathQueryParser.Parse(filter.Path);
+
+        ct.ThrowIfCancellationRequested();
+
+        ComposedPath composed = ComposeHops(query, filter, mapper, ct);
+
+        if (filter.NoTotal)
+        {
+            // -1 signals that total was not computed (cannot pass null to AsyncPageResponseWriter)
+            return Task.FromResult(new AsyncPageResponseWriter<NodeDetails>(
+                mapper.EntitiesFromOperation(composed.Terminal, filter.Fields),
+                () => Task.FromResult(-1L),
+                filter.Continue
+            ));
+        }
+
+        // Capture predicate for count — built once, reused in the lambda
+        Expression<Func<Node, bool>> countPred = composed.TerminalPredicate;
+
+        return Task.FromResult(new AsyncPageResponseWriter<NodeDetails>(
+            mapper.EntitiesFromOperation(composed.Terminal, filter.Fields),
+            () => {
+                ct.ThrowIfCancellationRequested();
+                return database.Load<Node>(DB.Count()).Where(countPred).ExecuteScalarAsync<long>();
+            },
+            filter.Continue
+        ));
     }
 
     /// <inheritdoc />
