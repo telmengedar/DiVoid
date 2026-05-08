@@ -40,3 +40,7 @@ Backend/DiVoid.db3
 # Generic temp / backup
 *.tmp
 *.bak
+
+# Agent scratch directories
+.nuget-inspect/
+_tmp_inspect/

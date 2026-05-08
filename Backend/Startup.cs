@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Backend.Auth;
+using Backend.Errors;
 using Backend.Extensions.Startup;
 using Backend.Formatters;
 using Backend.Init;
@@ -10,6 +11,8 @@ using mamgo.services.Binding;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Pooshit.AspNetCore.Services.Errors.Exceptions;
+using Pooshit.AspNetCore.Services.Errors.Handlers;
 using Pooshit.AspNetCore.Services.Extensions;
 using Pooshit.AspNetCore.Services.Formatters;
 using Pooshit.AspNetCore.Services.Loggers;
@@ -66,6 +69,11 @@ public class Startup
     public virtual void ConfigureServices(IServiceCollection services)
     {
         services.AddErrorHandlers();
+        // Override the built-in PropertyNotFoundHandler (which maps to 404) and add
+        // NotSupportedExceptionHandler; both map PATCH-input errors to HTTP 400.
+        // Registered after AddErrorHandlers() so they take precedence in the collection.
+        services.AddTransient<IErrorHandler, PropertyNotFoundExceptionHandler>();
+        services.AddTransient<IErrorHandler, NotSupportedExceptionHandler>();
         services.AddLogging(options =>
         {
             options.ClearProviders();

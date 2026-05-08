@@ -31,6 +31,14 @@ public static class DatabasePatchExtensions {
     /// <param name="updateoperation">update operation to be updated</param>
     /// <param name="operations">operations to apply</param>
     /// <returns>the update operation for fluent behavior</returns>
+    /// <exception cref="PropertyNotFoundException">
+    /// Thrown when a patch path does not resolve to any property on <typeparamref name="T"/>.
+    /// Mapped to HTTP 400 by <see cref="Backend.Errors.PropertyNotFoundExceptionHandler"/>.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// Thrown when the resolved property is not tagged <c>[AllowPatch]</c>.
+    /// Mapped to HTTP 400 by <see cref="Backend.Errors.NotSupportedExceptionHandler"/>.
+    /// </exception>
     public static UpdateValuesOperation<T> Patch<T>(this UpdateValuesOperation<T> updateoperation, IEnumerable<PatchOperation> operations) {
         Type entitytype = typeof(T);
 
