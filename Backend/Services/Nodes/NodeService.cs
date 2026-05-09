@@ -8,6 +8,7 @@ using Pooshit.AspNetCore.Services.Patches;
 using Pooshit.Ocelot.Clients;
 using Pooshit.Ocelot.Entities;
 using Pooshit.Ocelot.Entities.Operations;
+using Pooshit.Ocelot.Entities.Operations.Prepared;
 using Pooshit.Ocelot.Expressions;
 using Pooshit.Ocelot.Fields;
 using Pooshit.Ocelot.Tokens;
@@ -272,7 +273,7 @@ public class NodeService(IEntityManager database) : INodeService
             : n => n.Id.In(currentHopOp);
 
         LoadOperation<Node> terminal = mapper.CreateOperation(database, filter.Fields);
-        terminal.ApplyFilter(filter, mapper, ignoreLimits: true);
+        terminal.ApplyFilter(filter, mapper);
         terminal.Where(terminalPredicate);
 
         return new(terminal);
@@ -285,27 +286,23 @@ public class NodeService(IEntityManager database) : INodeService
         NodeMapper mapper = new();
         filter.Fields ??= mapper.DefaultListFields;
 
-        // Clamp count and resolve paging params before the single-query execution
         if (filter.Count is null or > 500)
             filter.Count = 500;
 
         int limit = (int)filter.Count!.Value;
         int offset = (int)(filter.Continue ?? 0L);
 
-        // Apply sort only — limit/offset are passed directly to ExecutePagedAsync
         LoadOperation<Node> operation = mapper.CreateOperation(database, filter.Fields);
         operation.ApplyFilter(filter, mapper, ignoreLimits: true);
+        operation.Where(GenerateFilter(filter));
 
-        Expression<Func<Node, bool>> predicate = GenerateFilter(filter);
-        operation.Where(predicate);
-
-        // Single query: COUNT(*) OVER () window function supplies total alongside page rows
-        Pooshit.Ocelot.Entities.Operations.Prepared.PagedResult<Node> paged =
-            await operation.ExecutePagedAsync(limit, offset, CancellationToken.None);
+        // Single query: COUNT(*) OVER () window function — mapper resolves join and maps to NodeDetails
+        WindowResult<NodeDetails, long> windowed =
+            await mapper.PagedFromOperation(operation, limit, offset, CancellationToken.None, filter.Fields);
 
         return new AsyncPageResponseWriter<NodeDetails>(
-            mapper.EntitiesFromPaged(database, paged.Items, filter.Fields),
-            () => paged.Total,
+            windowed.Items,
+            async () => await windowed.WindowValue,
             filter.Continue
         );
     }
@@ -324,7 +321,6 @@ public class NodeService(IEntityManager database) : INodeService
 
         ct.ThrowIfCancellationRequested();
 
-        // Clamp count and resolve paging params before the single-query execution
         if (filter.Count is null or > 500)
             filter.Count = 500;
 
@@ -335,13 +331,13 @@ public class NodeService(IEntityManager database) : INodeService
 
         ct.ThrowIfCancellationRequested();
 
-        // Single query: COUNT(*) OVER () window function supplies total alongside page rows
-        Pooshit.Ocelot.Entities.Operations.Prepared.PagedResult<Node> paged =
-            await composed.Terminal.ExecutePagedAsync(limit, offset, ct);
+        // Single query: COUNT(*) OVER () window function — mapper resolves join and maps to NodeDetails
+        WindowResult<NodeDetails, long> windowed =
+            await mapper.PagedFromOperation(composed.Terminal, limit, offset, ct, filter.Fields);
 
         return new AsyncPageResponseWriter<NodeDetails>(
-            mapper.EntitiesFromPaged(database, paged.Items, filter.Fields, ct),
-            () => paged.Total,
+            windowed.Items,
+            async () => await windowed.WindowValue,
             filter.Continue
         );
     }
