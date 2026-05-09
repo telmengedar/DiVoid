@@ -14,10 +14,16 @@ namespace Backend.tests.Fixtures;
 /// DiVoid schema applied. Each test that needs a clean database should create a new
 /// instance (or inherit from <see cref="DatabaseTest"/>).
 ///
-/// Uses a named shared-cache in-memory connection (<c>file::memory:?cache=shared</c> plus a
-/// per-fixture unique name) so that all connections from Pooshit.Ocelot's pool see the same
-/// in-memory database. A keepalive connection is held open for the fixture lifetime to prevent
-/// SQLite from discarding the in-memory database when the pool returns all connections.
+/// Why shared-cache + keepalive rather than plain <c>:memory:</c>:
+/// <see cref="ClientFactory.Create(System.Func{System.Data.Common.DbConnection},Pooshit.Ocelot.Info.IDBInfo,bool,bool)"/>
+/// accepts a connection factory (not a single connection) and creates a new
+/// <see cref="System.Data.Common.DbConnection"/> for each operation. SQLite's plain
+/// <c>:memory:</c> databases are per-connection — every new connection sees a fresh,
+/// empty database — so the schema written by the first connection would be invisible
+/// to the next. The named shared-cache URI (<c>file:&lt;name&gt;?mode=memory&amp;cache=shared</c>)
+/// makes all connections within the process share one in-memory database identified
+/// by name. The keepalive connection prevents SQLite from destroying that in-memory
+/// database the moment the pool temporarily holds no open connections.
 /// </summary>
 public sealed class DatabaseFixture : IDisposable
 {
