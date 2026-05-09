@@ -15,7 +15,7 @@ dotnet test Backend.tests/Backend.tests.csproj --filter "FullyQualifiedName~Test
 
 `Program.cs` overrides Kestrel to listen on port 80 with HTTP/1+2+3, but the dev profile in `Properties/launchSettings.json` uses port 5007. The dev profile wins under `dotnet run`.
 
-The Pooshit packages (`Pooshit.AspNetCore.Services`, `Pooshit.Ocelot`) are pulled from a private/preview NuGet feed — restore failures usually mean the feed isn't configured, not that the package name is wrong.
+The Pooshit packages (`Pooshit.AspNetCore.Services`, `Pooshit.Ocelot`, `Pooshit.Json`, `Pooshit.Http`) are public **preview** packages on nuget.org — vanilla `dotnet restore` works without any custom feed configuration. Restore failures usually mean a network/proxy issue or that the preview-version qualifier got dropped from a `<PackageReference>` line.
 
 ## Architecture
 
