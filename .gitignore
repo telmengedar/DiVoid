@@ -44,7 +44,3 @@ Backend/DiVoid.db3
 # Agent scratch directories
 .nuget-inspect/
 _tmp_inspect/
-
-# Local NuGet feed for Docker builds — populated by scripts/copy-packages.*
-# Not committed; generated on demand before `docker build`.
-packages/

@@ -39,6 +39,3 @@ docs/
 # Agent scratch directories
 _tmp_inspect/
 .nuget-inspect/
-
-# NOTE: packages/ is intentionally NOT excluded — the SDK stage reads
-# local Pooshit .nupkg files from it during dotnet restore.

@@ -2,30 +2,11 @@
 # DiVoid Backend — multi-stage Dockerfile
 # =============================================================================
 #
-# PRIVATE FEED STRATEGY (local filesystem, no remote credentials)
-# ----------------------------------------------------------------
-# The Pooshit packages are distributed as .nupkg files in a local-filesystem
-# NuGet feed rather than via a remote authenticated server.  Before running
-# `docker build`, populate the `packages/` directory at the repo root with
-# the required .nupkg files.  Helper scripts are provided:
-#
-#   # Windows PowerShell:
-#   .\scripts\copy-packages.ps1
-#
-#   # Linux / macOS / WSL:
-#   ./scripts/copy-packages.sh
-#
-# Both scripts copy from the global NuGet package cache by default.
-# See nuget.config for feed configuration details.
-#
 # BUILD COMMAND
 # -------------
-#   # 1. Populate local feed (first time or after package updates):
-#   .\scripts\copy-packages.ps1          # Windows
-#   ./scripts/copy-packages.sh           # Linux / WSL
-#
-#   # 2. Build the image (tests run automatically; build fails if any test fails):
 #   docker build -t divoid:local .
+#
+# Tests run automatically in stage 2; build fails if any test fails.
 #
 # RUNTIME
 # -------
@@ -55,13 +36,7 @@ COPY DiVoid.sln ./
 COPY Backend/Backend.csproj Backend/
 COPY Backend.tests/Backend.tests.csproj Backend.tests/
 
-# Copy nuget.config and the pre-populated local feed directory.
-# packages/ is NOT excluded from .dockerignore so the private
-# Pooshit .nupkg files are accessible during restore.
-COPY nuget.config ./
-COPY packages/ packages/
-
-# Restore all dependencies (nuget.config points at packages/ + nuget.org)
+# Restore all dependencies from nuget.org (default SDK config)
 RUN dotnet restore DiVoid.sln
 
 # Copy full source after restore to maximise layer cache hits
