@@ -10,36 +10,45 @@ using Pooshit.Ocelot.Schemas;
 namespace Backend.tests.Fixtures;
 
 /// <summary>
-/// Spins up an isolated, file-backed SQLite <see cref="IEntityManager"/> with the full
+/// Spins up an isolated, shared in-memory SQLite <see cref="IEntityManager"/> with the full
 /// DiVoid schema applied. Each test that needs a clean database should create a new
 /// instance (or inherit from <see cref="DatabaseTest"/>).
 ///
-/// The database file lives in a temp directory that is cleaned up on <see cref="Dispose"/>.
-/// Using a real file (rather than :memory:) avoids connection-sharing complexity with
-/// Pooshit.Ocelot's own connection pooling.
+/// Uses a named shared-cache in-memory connection (<c>file::memory:?cache=shared</c> plus a
+/// per-fixture unique name) so that all connections from Pooshit.Ocelot's pool see the same
+/// in-memory database. A keepalive connection is held open for the fixture lifetime to prevent
+/// SQLite from discarding the in-memory database when the pool returns all connections.
 /// </summary>
 public sealed class DatabaseFixture : IDisposable
 {
-    readonly string _tempDir;
-    readonly string _dbPath;
+    readonly string dbName;
+    readonly SqliteConnection keepalive;
 
+    /// <summary>
+    /// entity manager for this fixture
+    /// </summary>
     public IEntityManager EntityManager { get; }
 
+    /// <summary>
+    /// creates a new database fixture
+    /// </summary>
     public DatabaseFixture()
     {
-        _tempDir = Path.Combine(Path.GetTempPath(), "divoid_tests_" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_tempDir);
-        _dbPath = Path.Combine(_tempDir, "test.db3");
+        dbName = "divoid_test_" + Guid.NewGuid().ToString("N");
+        string connStr = $"Data Source=file:{dbName}?mode=memory&cache=shared;";
 
-        // Mirror exactly what DatabaseExtensions.ConfigureDatabaseService does for SQLite.
+        // Keepalive connection prevents SQLite from destroying the in-memory DB when
+        // Ocelot's pool temporarily holds no connections.
+        keepalive = new SqliteConnection(connStr);
+        keepalive.Open();
+
         EntityManager = new EntityManager(
             ClientFactory.Create(
-                () => new SqliteConnection($"Data Source={_dbPath}"),
+                () => new SqliteConnection(connStr),
                 new SQLiteInfo(),
                 false,
                 true));
 
-        // Apply the full schema synchronously — tests need tables to exist before running.
         ApplySchema().GetAwaiter().GetResult();
     }
 
@@ -49,9 +58,9 @@ public sealed class DatabaseFixture : IDisposable
         await svc.StartAsync(CancellationToken.None);
     }
 
+    /// <inheritdoc />
     public void Dispose()
     {
-        // EntityManager itself has no IDisposable, but we want to clean up the temp file.
-        try { Directory.Delete(_tempDir, recursive: true); } catch { /* best-effort */ }
+        keepalive.Dispose();
     }
 }

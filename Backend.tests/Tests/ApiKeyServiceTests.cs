@@ -504,7 +504,7 @@ public class ApiKeyServiceTests
         // Simulate a read-path details object (PlaintextKey is null, as returned by BuildDetails / GetApiKeyById)
         ApiKeyDetails readShape = await svc.GetApiKeyById(created.Id);
 
-        string json = System.Text.Json.JsonSerializer.Serialize(readShape);
+        string json = Pooshit.Json.Json.WriteString(readShape);
         Assert.That(json, Does.Not.Contain("plaintextKey"),
             "PlaintextKey must not appear in GET-shape JSON when null");
     }
