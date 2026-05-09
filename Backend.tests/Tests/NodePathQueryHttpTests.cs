@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -7,7 +6,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Backend.Models.Nodes;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
 using Pooshit.AspNetCore.Services.Data;
@@ -96,25 +94,17 @@ public class NodePathQueryHttpTests
         return created.Id;
     }
 
-    async Task SetStatusAsync(long id, string status)
+    Task SetStatusAsync(long id, string status)
     {
         PatchOperation[] ops = [new() { Op = "replace", Path = "/status", Value = status }];
-        await http.Send(new HttpRequestMessage(new HttpMethod("PATCH"), $"{TestSetup.BaseUrl}/api/nodes/{id}") {
-            Content = new StringContent(Json.WriteString(ops, JsonOptions.Camel), System.Text.Encoding.UTF8, "application/json")
-        });
+        return http.Patch<PatchOperation[]>($"{TestSetup.BaseUrl}/api/nodes/{id}", ops);
     }
 
-    async Task LinkAsync(long src, long tgt)
-    {
-        await http.Send(new HttpRequestMessage(HttpMethod.Post, $"{TestSetup.BaseUrl}/api/nodes/{src}/links") {
-            Content = new StringContent(Json.WriteString(tgt), System.Text.Encoding.UTF8, "application/json")
-        });
-    }
+    Task LinkAsync(long src, long tgt)
+        => http.Post<long>($"{TestSetup.BaseUrl}/api/nodes/{src}/links", tgt);
 
     Task<HttpResponseMessage> PathQueryAsync(string path, string extra = "")
-        => http.Send<HttpResponseMessage>(
-            new HttpRequestMessage(HttpMethod.Get, $"{TestSetup.BaseUrl}/api/nodes?path={Uri.EscapeDataString(path)}{extra}"),
-            new HttpOptions());
+        => http.Get<HttpResponseMessage>($"{TestSetup.BaseUrl}/api/nodes?path={Uri.EscapeDataString(path)}{extra}");
 
     static async Task<(List<long> ids, long? total)> ParseResultAsync(HttpResponseMessage resp)
     {
@@ -315,9 +305,8 @@ public class NodePathQueryHttpTests
     {
         // /api/nodes/path?path=... was the old (spec-violating) sub-route.
         // After the B1 fix it must be gone; requests must hit /api/nodes?path=...
-        HttpResponseMessage resp = await http.Send<HttpResponseMessage>(
-            new HttpRequestMessage(HttpMethod.Get, $"{TestSetup.BaseUrl}/api/nodes/path?path={Uri.EscapeDataString("[type:task]")}"),
-            new HttpOptions());
+        HttpResponseMessage resp = await http.Get<HttpResponseMessage>(
+            $"{TestSetup.BaseUrl}/api/nodes/path?path={Uri.EscapeDataString("[type:task]")}");
         Assert.That((int) resp.StatusCode, Is.EqualTo(404),
             "The /api/nodes/path sub-route must not exist; use /api/nodes?path= instead.");
     }
@@ -378,9 +367,8 @@ public class NodePathQueryHttpTests
     public async Task WindowedCount_ListEndpoint_ReturnsTrueTotal()
     {
         // Same guarantee for the regular list endpoint
-        HttpResponseMessage resp = await http.Send<HttpResponseMessage>(
-            new HttpRequestMessage(HttpMethod.Get, $"{TestSetup.BaseUrl}/api/nodes?type=task"),
-            new HttpOptions());
+        HttpResponseMessage resp = await http.Get<HttpResponseMessage>(
+            $"{TestSetup.BaseUrl}/api/nodes?type=task");
         Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         (_, long? total) = await ParseResultAsync(resp);
         Assert.That(total, Is.GreaterThanOrEqualTo(0),

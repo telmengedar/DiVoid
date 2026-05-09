@@ -1,13 +1,7 @@
-using System;
-using System.Collections.Generic;
-using System.Net;
 using System.Net.Http;
-using System.Threading.Tasks;
 using Backend.Models.Nodes;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.Configuration;
 using NUnit.Framework;
-using Pooshit.AspNetCore.Services.Data;
 using Pooshit.AspNetCore.Services.Errors;
 using Pooshit.AspNetCore.Services.Patches;
 using Pooshit.Http;
@@ -55,13 +49,8 @@ public class NodePatchHttpTests
         return created.Id;
     }
 
-    async Task<HttpResponseMessage> PatchAsync(string url, PatchOperation[] ops)
-    {
-        HttpRequestMessage req = new(new HttpMethod("PATCH"), url) {
-            Content = new StringContent(Json.WriteString(ops, JsonOptions.Camel), System.Text.Encoding.UTF8, "application/json")
-        };
-        return await http.Send<HttpResponseMessage>(req, new HttpOptions());
-    }
+    Task<HttpResponseMessage> PatchAsync(string url, PatchOperation[] ops)
+        => http.Patch<PatchOperation[], HttpResponseMessage>(url, ops);
 
     // -----------------------------------------------------------------------
     // 200 happy paths must keep working
