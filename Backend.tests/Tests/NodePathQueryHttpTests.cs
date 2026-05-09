@@ -3,14 +3,18 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
-using System.Text;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Backend.Models.Nodes;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
+using Pooshit.AspNetCore.Services.Data;
+using Pooshit.AspNetCore.Services.Errors;
+using Pooshit.AspNetCore.Services.Patches;
+using Pooshit.Http;
+using Pooshit.Json;
 
 namespace Backend.tests.Tests;
 
@@ -34,58 +38,49 @@ namespace Backend.tests.Tests;
 [TestFixture]
 public class NodePathQueryHttpTests
 {
-    WebApplicationFactory<Program> _factory = null!;
-    HttpClient _client = null!;
+    WebApplicationFactory<Program> factory = null!;
+    IHttpService http = null!;
 
     // node ids set during OneTimeSetUp
-    long _org1Id;
-    long _proj1Id;
-    long _proj2Id;
-    long _task1Id;
-    long _task2Id;
-    long _question1Id;
+    long org1Id;
+    long proj1Id;
+    long proj2Id;
+    long task1Id;
+    long task2Id;
+    long question1Id;
 
     [OneTimeSetUp]
     public async Task Setup()
     {
-        _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder => {
-            builder.ConfigureAppConfiguration((_, config) => {
-                config.AddInMemoryCollection(new Dictionary<string, string?> {
-                    ["Auth:Enabled"] = "false",
-                    ["Database:Type"] = "Sqlite",
-                    ["Database:Source"] = $"/tmp/divoid_path_test_{Guid.NewGuid():N}.db3"
-                });
-            });
-        });
-        _client = _factory.CreateClient();
+        factory = TestSetup.CreateTestFactory();
+        http = TestSetup.HttpServiceFor(factory);
 
         // Seed the graph
-        _org1Id = await CreateNodeAsync("organization", "Pooshit");
-        _proj1Id = await CreateNodeAsync("project", "DiVoid");
-        _proj2Id = await CreateNodeAsync("project", "OtherProject");
-        _task1Id = await CreateNodeAsync("task", "Setup CI");
-        _task2Id = await CreateNodeAsync("task", "Write tests");
-        _question1Id = await CreateNodeAsync("question", "Q1");
+        org1Id = await CreateNodeAsync("organization", "Pooshit");
+        proj1Id = await CreateNodeAsync("project", "DiVoid");
+        proj2Id = await CreateNodeAsync("project", "OtherProject");
+        task1Id = await CreateNodeAsync("task", "Setup CI");
+        task2Id = await CreateNodeAsync("task", "Write tests");
+        question1Id = await CreateNodeAsync("question", "Q1");
 
-        await SetStatusAsync(_proj1Id, "open");
-        await SetStatusAsync(_proj2Id, "closed");
-        await SetStatusAsync(_task1Id, "open");
-        await SetStatusAsync(_task2Id, "closed");
-        await SetStatusAsync(_question1Id, "open");
+        await SetStatusAsync(proj1Id, "open");
+        await SetStatusAsync(proj2Id, "closed");
+        await SetStatusAsync(task1Id, "open");
+        await SetStatusAsync(task2Id, "closed");
+        await SetStatusAsync(question1Id, "open");
 
         // Links: org1 → proj1 → task1, task2; org1 → proj2 → question1
-        await LinkAsync(_org1Id, _proj1Id);
-        await LinkAsync(_org1Id, _proj2Id);
-        await LinkAsync(_proj1Id, _task1Id);
-        await LinkAsync(_proj1Id, _task2Id);
-        await LinkAsync(_proj2Id, _question1Id);
+        await LinkAsync(org1Id, proj1Id);
+        await LinkAsync(org1Id, proj2Id);
+        await LinkAsync(proj1Id, task1Id);
+        await LinkAsync(proj1Id, task2Id);
+        await LinkAsync(proj2Id, question1Id);
     }
 
     [OneTimeTearDown]
     public void TearDown()
     {
-        _client.Dispose();
-        _factory.Dispose();
+        factory.Dispose();
     }
 
     // -----------------------------------------------------------------------
@@ -94,51 +89,48 @@ public class NodePathQueryHttpTests
 
     async Task<long> CreateNodeAsync(string type, string name)
     {
-        StringContent body = new(JsonSerializer.Serialize(new { type, name }), Encoding.UTF8, "application/json");
-        HttpResponseMessage resp = await _client.PostAsync("/api/nodes", body);
-        resp.EnsureSuccessStatusCode();
-        using JsonDocument doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
-        return doc.RootElement.GetProperty("id").GetInt64();
+        NodeDetails created = await http.Post<NodeDetails, NodeDetails>(
+            $"{TestSetup.BaseUrl}/api/nodes",
+            new NodeDetails { Type = type, Name = name },
+            new HttpOptions());
+        return created.Id;
     }
 
     async Task SetStatusAsync(long id, string status)
     {
-        object[] ops = [new { op = "replace", path = "/status", value = status }];
-        StringContent body = new(JsonSerializer.Serialize(ops), Encoding.UTF8, "application/json");
-        HttpResponseMessage resp = await _client.PatchAsync($"/api/nodes/{id}", body);
-        resp.EnsureSuccessStatusCode();
+        PatchOperation[] ops = [new() { Op = "replace", Path = "/status", Value = status }];
+        await http.Send(new HttpRequestMessage(new HttpMethod("PATCH"), $"{TestSetup.BaseUrl}/api/nodes/{id}") {
+            Content = new StringContent(Json.WriteString(ops, JsonOptions.Camel), System.Text.Encoding.UTF8, "application/json")
+        });
     }
 
     async Task LinkAsync(long src, long tgt)
     {
-        StringContent body = new(JsonSerializer.Serialize(tgt), Encoding.UTF8, "application/json");
-        HttpResponseMessage resp = await _client.PostAsync($"/api/nodes/{src}/links", body);
-        resp.EnsureSuccessStatusCode();
+        await http.Send(new HttpRequestMessage(HttpMethod.Post, $"{TestSetup.BaseUrl}/api/nodes/{src}/links") {
+            Content = new StringContent(Json.WriteString(tgt), System.Text.Encoding.UTF8, "application/json")
+        });
     }
 
-    async Task<HttpResponseMessage> PathQueryAsync(string path, string extra = "")
-        => await _client.GetAsync($"/api/nodes?path={Uri.EscapeDataString(path)}{extra}");
+    Task<HttpResponseMessage> PathQueryAsync(string path, string extra = "")
+        => http.Send<HttpResponseMessage>(
+            new HttpRequestMessage(HttpMethod.Get, $"{TestSetup.BaseUrl}/api/nodes?path={Uri.EscapeDataString(path)}{extra}"),
+            new HttpOptions());
 
     static async Task<(List<long> ids, long? total)> ParseResultAsync(HttpResponseMessage resp)
     {
         resp.EnsureSuccessStatusCode();
         string json = await resp.Content.ReadAsStringAsync();
-        using JsonDocument doc = JsonDocument.Parse(json);
-        List<long> ids = [];
-        if (doc.RootElement.TryGetProperty("result", out JsonElement resultEl))
-        {
-            foreach (JsonElement el in resultEl.EnumerateArray())
-                if (el.TryGetProperty("id", out JsonElement idEl))
-                    ids.Add(idEl.GetInt64());
-        }
-        long? total = null;
-        if (doc.RootElement.TryGetProperty("total", out JsonElement totalEl) && totalEl.ValueKind == JsonValueKind.Number)
-            total = totalEl.GetInt64();
+        Page<NodeDetails> page = Json.Read<Page<NodeDetails>>(json);
+        List<long> ids = page.Result?.Select(n => n.Id).ToList() ?? [];
+        long? total = page.Total >= 0 ? page.Total : null;
         return (ids, total);
     }
 
-    static async Task<JsonDocument> ReadJsonAsync(HttpResponseMessage resp)
-        => JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+    static async Task<ErrorResponse> ReadErrorAsync(HttpResponseMessage resp)
+    {
+        string json = await resp.Content.ReadAsStringAsync();
+        return Json.Read<ErrorResponse>(json);
+    }
 
     // -----------------------------------------------------------------------
     // Single-hop — parity with existing ?type= / ?linkedto= filters
@@ -151,8 +143,8 @@ public class NodePathQueryHttpTests
         (List<long> ids, long? total) = await ParseResultAsync(resp);
 
         Assert.Multiple(() => {
-            Assert.That(ids, Does.Contain(_task1Id));
-            Assert.That(ids, Does.Contain(_task2Id));
+            Assert.That(ids, Does.Contain(task1Id));
+            Assert.That(ids, Does.Contain(task2Id));
             Assert.That(total, Is.GreaterThanOrEqualTo(2));
         });
     }
@@ -160,10 +152,10 @@ public class NodePathQueryHttpTests
     [Test]
     public async Task SingleHop_IdFilter_ReturnsExactNode()
     {
-        HttpResponseMessage resp = await PathQueryAsync($"[id:{_org1Id}]");
+        HttpResponseMessage resp = await PathQueryAsync($"[id:{org1Id}]");
         (List<long> ids, _) = await ParseResultAsync(resp);
 
-        Assert.That(ids, Is.EqualTo(new[] { _org1Id }));
+        Assert.That(ids, Is.EqualTo(new[] { org1Id }));
     }
 
     // -----------------------------------------------------------------------
@@ -177,8 +169,8 @@ public class NodePathQueryHttpTests
         (List<long> ids, _) = await ParseResultAsync(resp);
 
         Assert.Multiple(() => {
-            Assert.That(ids, Does.Contain(_proj1Id));
-            Assert.That(ids, Does.Contain(_proj2Id));
+            Assert.That(ids, Does.Contain(proj1Id));
+            Assert.That(ids, Does.Contain(proj2Id));
         });
     }
 
@@ -186,14 +178,14 @@ public class NodePathQueryHttpTests
     public async Task TwoHop_IdRooted_OrgToTasks_ReturnsLinkedProjects()
     {
         // [id:org1]/[type:project] is equivalent to linkedto=org1&type=project
-        HttpResponseMessage resp = await PathQueryAsync($"[id:{_org1Id}]/[type:project]");
+        HttpResponseMessage resp = await PathQueryAsync($"[id:{org1Id}]/[type:project]");
         (List<long> ids, _) = await ParseResultAsync(resp);
 
         Assert.Multiple(() => {
-            Assert.That(ids, Does.Contain(_proj1Id));
-            Assert.That(ids, Does.Contain(_proj2Id));
-            Assert.That(ids, Does.Not.Contain(_org1Id));
-            Assert.That(ids, Does.Not.Contain(_task1Id));
+            Assert.That(ids, Does.Contain(proj1Id));
+            Assert.That(ids, Does.Contain(proj2Id));
+            Assert.That(ids, Does.Not.Contain(org1Id));
+            Assert.That(ids, Does.Not.Contain(task1Id));
         });
     }
 
@@ -211,8 +203,8 @@ public class NodePathQueryHttpTests
         (List<long> ids, _) = await ParseResultAsync(resp);
 
         Assert.Multiple(() => {
-            Assert.That(ids, Does.Contain(_task1Id));
-            Assert.That(ids, Does.Not.Contain(_task2Id)); // closed
+            Assert.That(ids, Does.Contain(task1Id));
+            Assert.That(ids, Does.Not.Contain(task2Id)); // closed
         });
     }
 
@@ -227,8 +219,8 @@ public class NodePathQueryHttpTests
 
         // Both task1 (open) and task2 (closed) are linked to proj1 which is open
         Assert.Multiple(() => {
-            Assert.That(ids, Does.Contain(_task1Id));
-            Assert.That(ids, Does.Contain(_task2Id));
+            Assert.That(ids, Does.Contain(task1Id));
+            Assert.That(ids, Does.Contain(task2Id));
         });
     }
 
@@ -244,9 +236,9 @@ public class NodePathQueryHttpTests
         (List<long> ids, _) = await ParseResultAsync(resp);
 
         Assert.Multiple(() => {
-            Assert.That(ids, Does.Contain(_task1Id));
-            Assert.That(ids, Does.Contain(_task2Id));
-            Assert.That(ids, Does.Contain(_question1Id));
+            Assert.That(ids, Does.Contain(task1Id));
+            Assert.That(ids, Does.Contain(task2Id));
+            Assert.That(ids, Does.Contain(question1Id));
         });
     }
 
@@ -254,12 +246,12 @@ public class NodePathQueryHttpTests
     public async Task TwoHop_IdRooted_TypeOr_ReturnsMultipleTypes()
     {
         // [id:proj1]/[type:task|question] — proj1 links to tasks
-        HttpResponseMessage resp = await PathQueryAsync($"[id:{_proj1Id}]/[type:task|question]");
+        HttpResponseMessage resp = await PathQueryAsync($"[id:{proj1Id}]/[type:task|question]");
         (List<long> ids, _) = await ParseResultAsync(resp);
 
         Assert.Multiple(() => {
-            Assert.That(ids, Does.Contain(_task1Id));
-            Assert.That(ids, Does.Contain(_task2Id));
+            Assert.That(ids, Does.Contain(task1Id));
+            Assert.That(ids, Does.Contain(task2Id));
         });
     }
 
@@ -275,8 +267,8 @@ public class NodePathQueryHttpTests
         (List<long> ids, _) = await ParseResultAsync(resp);
 
         Assert.Multiple(() => {
-            Assert.That(ids, Does.Contain(_proj1Id));
-            Assert.That(ids, Does.Not.Contain(_proj2Id)); // OtherProject
+            Assert.That(ids, Does.Contain(proj1Id));
+            Assert.That(ids, Does.Not.Contain(proj2Id)); // OtherProject
         });
     }
 
@@ -288,10 +280,10 @@ public class NodePathQueryHttpTests
         (List<long> ids, _) = await ParseResultAsync(resp);
 
         Assert.Multiple(() => {
-            Assert.That(ids, Does.Contain(_proj1Id));   // status=open
-            Assert.That(ids, Does.Contain(_task1Id));   // status=open
-            Assert.That(ids, Does.Contain(_question1Id)); // status=open
-            Assert.That(ids, Does.Not.Contain(_task2Id)); // status=closed
+            Assert.That(ids, Does.Contain(proj1Id));   // status=open
+            Assert.That(ids, Does.Contain(task1Id));   // status=open
+            Assert.That(ids, Does.Contain(question1Id)); // status=open
+            Assert.That(ids, Does.Not.Contain(task2Id)); // status=closed
         });
     }
 
@@ -308,9 +300,9 @@ public class NodePathQueryHttpTests
 
         // Should include both projects (linked to org1), not org1 itself
         Assert.Multiple(() => {
-            Assert.That(ids, Does.Contain(_proj1Id));
-            Assert.That(ids, Does.Contain(_proj2Id));
-            Assert.That(ids, Does.Not.Contain(_org1Id));
+            Assert.That(ids, Does.Contain(proj1Id));
+            Assert.That(ids, Does.Contain(proj2Id));
+            Assert.That(ids, Does.Not.Contain(org1Id));
         });
     }
 
@@ -323,7 +315,9 @@ public class NodePathQueryHttpTests
     {
         // /api/nodes/path?path=... was the old (spec-violating) sub-route.
         // After the B1 fix it must be gone; requests must hit /api/nodes?path=...
-        HttpResponseMessage resp = await _client.GetAsync($"/api/nodes/path?path={Uri.EscapeDataString("[type:task]")}");
+        HttpResponseMessage resp = await http.Send<HttpResponseMessage>(
+            new HttpRequestMessage(HttpMethod.Get, $"{TestSetup.BaseUrl}/api/nodes/path?path={Uri.EscapeDataString("[type:task]")}"),
+            new HttpOptions());
         Assert.That((int) resp.StatusCode, Is.EqualTo(404),
             "The /api/nodes/path sub-route must not exist; use /api/nodes?path= instead.");
     }
@@ -354,12 +348,12 @@ public class NodePathQueryHttpTests
         // Since tasks (task1, task2) only link to proj1, the terminal hop [] returns proj1.
         HttpResponseMessage resp = await PathQueryAsync(
             "[type:organization,name:Pooshit]/[type:project]/[type:task]/[]");
-        Assert.That(resp.StatusCode, Is.EqualTo(System.Net.HttpStatusCode.OK),
+        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.OK),
             "4-hop subquery chain must execute as a single query without crashing.");
         (List<long> ids, long? total) = await ParseResultAsync(resp);
         // task1 and task2 are linked to proj1; proj1 is linked to org1.
         // Terminal [] from tasks reaches proj1 (undirected link).
-        Assert.That(ids, Does.Contain(_proj1Id),
+        Assert.That(ids, Does.Contain(proj1Id),
             "proj1 must appear as a neighbour of tasks reachable from org1/project.");
         Assert.That(total, Is.GreaterThanOrEqualTo(0));
     }
@@ -384,7 +378,9 @@ public class NodePathQueryHttpTests
     public async Task WindowedCount_ListEndpoint_ReturnsTrueTotal()
     {
         // Same guarantee for the regular list endpoint
-        HttpResponseMessage resp = await _client.GetAsync("/api/nodes?type=task");
+        HttpResponseMessage resp = await http.Send<HttpResponseMessage>(
+            new HttpRequestMessage(HttpMethod.Get, $"{TestSetup.BaseUrl}/api/nodes?type=task"),
+            new HttpOptions());
         Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         (_, long? total) = await ParseResultAsync(resp);
         Assert.That(total, Is.GreaterThanOrEqualTo(0),
@@ -406,9 +402,8 @@ public class NodePathQueryHttpTests
     public async Task ParseError_UnknownKey_ReturnsBadParameterCode()
     {
         HttpResponseMessage resp = await PathQueryAsync("[foo:bar]");
-        string json = await resp.Content.ReadAsStringAsync();
-        using JsonDocument doc = JsonDocument.Parse(json);
-        Assert.That(doc.RootElement.GetProperty("code").GetString(), Is.EqualTo("badparameter"));
+        ErrorResponse error = await ReadErrorAsync(resp);
+        Assert.That(error.Code, Is.EqualTo("badparameter"));
     }
 
     [Test]
@@ -422,10 +417,8 @@ public class NodePathQueryHttpTests
     public async Task ParseError_ErrorBody_ContainsColumnInfo()
     {
         HttpResponseMessage resp = await PathQueryAsync("[foo:bar]");
-        string json = await resp.Content.ReadAsStringAsync();
-        using JsonDocument doc = JsonDocument.Parse(json);
-        string text = doc.RootElement.GetProperty("text").GetString() ?? "";
-        Assert.That(text, Does.Contain("column").IgnoreCase);
+        ErrorResponse error = await ReadErrorAsync(resp);
+        Assert.That(error.Text, Does.Contain("column").IgnoreCase);
     }
 
     [Test]
@@ -433,10 +426,8 @@ public class NodePathQueryHttpTests
     {
         HttpResponseMessage resp = await PathQueryAsync("[status:!closed]");
         Assert.That((int) resp.StatusCode, Is.EqualTo(400));
-        string json = await resp.Content.ReadAsStringAsync();
-        using JsonDocument doc = JsonDocument.Parse(json);
-        string text = doc.RootElement.GetProperty("text").GetString() ?? "";
-        Assert.That(text, Does.Contain("reserved").IgnoreCase);
+        ErrorResponse error = await ReadErrorAsync(resp);
+        Assert.That(error.Text, Does.Contain("reserved").IgnoreCase);
     }
 
     [Test]
@@ -444,10 +435,8 @@ public class NodePathQueryHttpTests
     {
         HttpResponseMessage resp = await PathQueryAsync("![type:archived]");
         Assert.That((int) resp.StatusCode, Is.EqualTo(400));
-        string json = await resp.Content.ReadAsStringAsync();
-        using JsonDocument doc = JsonDocument.Parse(json);
-        string text = doc.RootElement.GetProperty("text").GetString() ?? "";
-        Assert.That(text, Does.Contain("reserved").IgnoreCase);
+        ErrorResponse error = await ReadErrorAsync(resp);
+        Assert.That(error.Text, Does.Contain("reserved").IgnoreCase);
     }
 
     // -----------------------------------------------------------------------
@@ -465,19 +454,16 @@ public class NodePathQueryHttpTests
     public async Task EmptyFirstHop_Alone_ReturnsBadParameterCode()
     {
         HttpResponseMessage resp = await PathQueryAsync("[]");
-        string json = await resp.Content.ReadAsStringAsync();
-        using JsonDocument doc = JsonDocument.Parse(json);
-        Assert.That(doc.RootElement.GetProperty("code").GetString(), Is.EqualTo("badparameter"));
+        ErrorResponse error = await ReadErrorAsync(resp);
+        Assert.That(error.Code, Is.EqualTo("badparameter"));
     }
 
     [Test]
     public async Task EmptyFirstHop_Alone_ErrorTextMentionsFirstHop()
     {
         HttpResponseMessage resp = await PathQueryAsync("[]");
-        string json = await resp.Content.ReadAsStringAsync();
-        using JsonDocument doc = JsonDocument.Parse(json);
-        string text = doc.RootElement.GetProperty("text").GetString() ?? "";
-        Assert.That(text, Does.Contain("first hop").IgnoreCase);
+        ErrorResponse error = await ReadErrorAsync(resp);
+        Assert.That(error.Text, Does.Contain("first hop").IgnoreCase);
     }
 
     [Test]
@@ -486,9 +472,8 @@ public class NodePathQueryHttpTests
         // []/[type:task] — first hop is unconstrained
         HttpResponseMessage resp = await PathQueryAsync("[]/[type:task]");
         Assert.That((int) resp.StatusCode, Is.EqualTo(400));
-        string json = await resp.Content.ReadAsStringAsync();
-        using JsonDocument doc = JsonDocument.Parse(json);
-        Assert.That(doc.RootElement.GetProperty("code").GetString(), Is.EqualTo("badparameter"));
+        ErrorResponse error = await ReadErrorAsync(resp);
+        Assert.That(error.Code, Is.EqualTo("badparameter"));
     }
 
     [Test]
@@ -497,9 +482,8 @@ public class NodePathQueryHttpTests
         // []/[type:project]/[type:task] — first hop is unconstrained
         HttpResponseMessage resp = await PathQueryAsync("[]/[type:project]/[type:task]");
         Assert.That((int) resp.StatusCode, Is.EqualTo(400));
-        string json = await resp.Content.ReadAsStringAsync();
-        using JsonDocument doc = JsonDocument.Parse(json);
-        Assert.That(doc.RootElement.GetProperty("code").GetString(), Is.EqualTo("badparameter"));
+        ErrorResponse error = await ReadErrorAsync(resp);
+        Assert.That(error.Code, Is.EqualTo("badparameter"));
     }
 
     [Test]
@@ -561,7 +545,7 @@ public class NodePathQueryHttpTests
 
         // We call the service directly to verify the CT is observed
         // (HTTP integration layer swallows the exception via ASP.NET Core's built-in handling)
-        using var scope = _factory.Services.CreateScope();
+        using IServiceScope scope = factory.Services.CreateScope();
         Backend.Services.Nodes.INodeService svc = scope.ServiceProvider
             .GetRequiredService<Backend.Services.Nodes.INodeService>();
 
@@ -598,8 +582,8 @@ public class NodePathQueryHttpTests
 
         // Just verify the response is successful and contains the task ids
         Assert.Multiple(() => {
-            Assert.That(ids, Does.Contain(_task1Id));
-            Assert.That(ids, Does.Contain(_task2Id));
+            Assert.That(ids, Does.Contain(task1Id));
+            Assert.That(ids, Does.Contain(task2Id));
         });
     }
 }

@@ -789,27 +789,13 @@ public class NodeServiceTests
     /// <summary>
     /// The <see cref="AsyncPageResponseWriter{T}"/> serialises to a JSON envelope:
     /// <c>{"result":[...],"total":N}</c>.
-    /// We parse it minimally to extract the items.
+    /// Deserialises via Pooshit.Json into a typed <see cref="Pooshit.AspNetCore.Services.Data.Page{T}"/>.
     /// </summary>
     static async Task<List<NodeDetails>> CollectPageFromStream(MemoryStream ms)
     {
         string json = await new StreamReader(ms).ReadToEndAsync();
-        using System.Text.Json.JsonDocument doc = System.Text.Json.JsonDocument.Parse(json);
-        List<NodeDetails> items = [];
-        if (doc.RootElement.TryGetProperty("result", out System.Text.Json.JsonElement resultEl))
-        {
-            foreach (System.Text.Json.JsonElement el in resultEl.EnumerateArray())
-            {
-                NodeDetails nd = new()
-                {
-                    Id = el.TryGetProperty("id", out System.Text.Json.JsonElement idEl) ? idEl.GetInt64() : 0,
-                    Name = el.TryGetProperty("name", out System.Text.Json.JsonElement nameEl) ? nameEl.GetString() : null,
-                    Type = el.TryGetProperty("type", out System.Text.Json.JsonElement typeEl) ? typeEl.GetString() : null,
-                    Status = el.TryGetProperty("status", out System.Text.Json.JsonElement statusEl) ? statusEl.GetString() : null,
-                };
-                items.Add(nd);
-            }
-        }
-        return items;
+        Pooshit.AspNetCore.Services.Data.Page<NodeDetails> page =
+            Pooshit.Json.Json.Read<Pooshit.AspNetCore.Services.Data.Page<NodeDetails>>(json);
+        return page.Result?.ToList() ?? [];
     }
 }
