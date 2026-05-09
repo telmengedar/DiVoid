@@ -286,19 +286,14 @@ public class NodeService(IEntityManager database) : INodeService
         NodeMapper mapper = new();
         filter.Fields ??= mapper.DefaultListFields;
 
-        if (filter.Count is null or > 500)
-            filter.Count = 500;
-
-        int limit = (int)filter.Count!.Value;
-        int offset = (int)(filter.Continue ?? 0L);
-
         LoadOperation<Node> operation = mapper.CreateOperation(database, filter.Fields);
-        operation.ApplyFilter(filter, mapper, ignoreLimits: true);
+        operation.ApplyFilter(filter, mapper);
         operation.Where(GenerateFilter(filter));
 
-        // Single query: COUNT(*) OVER () window function — mapper resolves join and maps to NodeDetails
+        // Single query: COUNT(*) OVER () window function — ApplyFilter already clamps count ≤500
+        // and applies limit/offset; WindowedFromOperation decorates with the window column.
         WindowResult<NodeDetails, long> windowed =
-            await mapper.PagedFromOperation(operation, limit, offset, CancellationToken.None, filter.Fields);
+            await mapper.WindowedFromOperation<long, Node>(operation, DB.CountOver(), CancellationToken.None, filter.Fields);
 
         return new AsyncPageResponseWriter<NodeDetails>(
             windowed.Items,
@@ -321,19 +316,14 @@ public class NodeService(IEntityManager database) : INodeService
 
         ct.ThrowIfCancellationRequested();
 
-        if (filter.Count is null or > 500)
-            filter.Count = 500;
-
-        int limit = (int)filter.Count!.Value;
-        int offset = (int)(filter.Continue ?? 0L);
-
         ComposedPath composed = ComposeHops(query, filter, mapper, ct);
 
         ct.ThrowIfCancellationRequested();
 
-        // Single query: COUNT(*) OVER () window function — mapper resolves join and maps to NodeDetails
+        // Single query: COUNT(*) OVER () window function — ApplyFilter (inside ComposeHops) already
+        // clamps count ≤500 and applies limit/offset; WindowedFromOperation decorates with the window column.
         WindowResult<NodeDetails, long> windowed =
-            await mapper.PagedFromOperation(composed.Terminal, limit, offset, ct, filter.Fields);
+            await mapper.WindowedFromOperation<long, Node>(composed.Terminal, DB.CountOver(), ct, filter.Fields);
 
         return new AsyncPageResponseWriter<NodeDetails>(
             windowed.Items,
