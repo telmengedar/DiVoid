@@ -37,10 +37,4 @@ public class NodeFilter : ListFilter
     /// when true, only return nodes with no status set (null or empty string)
     /// </summary>
     public bool NoStatus { get; set; }
-
-    /// <summary>
-    /// when <see langword="true"/>, omit the <c>total</c> field from the response and skip
-    /// the COUNT query.  Useful for large graphs where the count is not needed.
-    /// </summary>
-    public bool NoTotal { get; set; }
 }

@@ -8,6 +8,7 @@ using Pooshit.AspNetCore.Services.Patches;
 using Pooshit.Ocelot.Clients;
 using Pooshit.Ocelot.Entities;
 using Pooshit.Ocelot.Entities.Operations;
+using Pooshit.Ocelot.Entities.Operations.Prepared;
 using Pooshit.Ocelot.Expressions;
 using Pooshit.Ocelot.Fields;
 using Pooshit.Ocelot.Tokens;
@@ -215,17 +216,17 @@ public class NodeService(IEntityManager database) : INodeService
     }
 
     /// <summary>
-    /// result of composing hops: the terminal operation (for streaming results) and the
-    /// terminal predicate (for the count query, built separately to avoid re-traversal).
+    /// result of composing hops: the terminal <see cref="LoadOperation{Node}"/> ready for
+    /// paged execution.  The separate <c>TerminalPredicate</c> field is no longer needed
+    /// now that <c>ExecutePagedAsync</c> supplies the total in the same query.
     /// </summary>
     readonly record struct ComposedPath(
-        LoadOperation<Node> Terminal,
-        Expression<Func<Node, bool>> TerminalPredicate
+        LoadOperation<Node> Terminal
     );
 
     /// <summary>
-    /// chains N hops into a terminal <see cref="LoadOperation{Node}"/> plus a raw predicate
-    /// expression for the count query.
+    /// chains N hops into a terminal <see cref="LoadOperation{Node}"/> ready for
+    /// <c>ExecutePagedAsync</c>.
     ///
     /// Every hop — including all intermediate hops — is expressed as a server-side
     /// <c>IN (subquery)</c> predicate.  No intermediate id-sets are materialised; the
@@ -266,7 +267,7 @@ public class NodeService(IEntityManager database) : INodeService
             currentHopOp = database.Load<Node>(n => n.Id).Where(chainPredicate.Content);
         }
 
-        // The terminal operation uses the mapper join (Node + NodeType) and paging/sort
+        // The terminal operation uses the mapper join (Node + NodeType) and sort
         Expression<Func<Node, bool>> terminalPredicate = hops.Length == 1
             ? GenerateHopFilter(hops[0])
             : n => n.Id.In(currentHopOp);
@@ -275,11 +276,11 @@ public class NodeService(IEntityManager database) : INodeService
         terminal.ApplyFilter(filter, mapper);
         terminal.Where(terminalPredicate);
 
-        return new(terminal, terminalPredicate);
+        return new(terminal);
     }
 
     /// <inheritdoc />
-    public Task<AsyncPageResponseWriter<NodeDetails>> ListPaged(NodeFilter filter = null)
+    public async Task<AsyncPageResponseWriter<NodeDetails>> ListPaged(NodeFilter filter = null)
     {
         filter ??= new();
         NodeMapper mapper = new();
@@ -287,30 +288,22 @@ public class NodeService(IEntityManager database) : INodeService
 
         LoadOperation<Node> operation = mapper.CreateOperation(database, filter.Fields);
         operation.ApplyFilter(filter, mapper);
+        operation.Where(GenerateFilter(filter));
 
-        Expression<Func<Node, bool>> predicate = GenerateFilter(filter);
-        operation.Where(predicate);
+        // Single query: COUNT(*) OVER () window function — ApplyFilter already clamps count ≤500
+        // and applies limit/offset; WindowedFromOperation decorates with the window column.
+        WindowResult<NodeDetails, long> windowed =
+            await mapper.WindowedFromOperation<long, Node>(operation, DB.CountOver(), CancellationToken.None, filter.Fields);
 
-        if (filter.NoTotal)
-        {
-            // -1 signals to callers that the total was not computed.
-            // We cannot pass null — AsyncPageResponseWriter requires a delegate.
-            return Task.FromResult(new AsyncPageResponseWriter<NodeDetails>(
-                mapper.EntitiesFromOperation(operation, filter.Fields),
-                () => Task.FromResult(-1L),
-                filter.Continue
-            ));
-        }
-
-        return Task.FromResult(new AsyncPageResponseWriter<NodeDetails>(
-            mapper.EntitiesFromOperation(operation, filter.Fields),
-            () => database.Load<Node>(DB.Count()).Where(predicate).ExecuteScalarAsync<long>(),
+        return new AsyncPageResponseWriter<NodeDetails>(
+            windowed.Items,
+            async () => await windowed.WindowValue,
             filter.Continue
-        ));
+        );
     }
 
     /// <inheritdoc />
-    public Task<AsyncPageResponseWriter<NodeDetails>> ListPagedByPath(NodePathFilter filter, CancellationToken ct)
+    public async Task<AsyncPageResponseWriter<NodeDetails>> ListPagedByPath(NodePathFilter filter, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -325,27 +318,18 @@ public class NodeService(IEntityManager database) : INodeService
 
         ComposedPath composed = ComposeHops(query, filter, mapper, ct);
 
-        if (filter.NoTotal)
-        {
-            // -1 signals that total was not computed (cannot pass null to AsyncPageResponseWriter)
-            return Task.FromResult(new AsyncPageResponseWriter<NodeDetails>(
-                mapper.EntitiesFromOperation(composed.Terminal, filter.Fields),
-                () => Task.FromResult(-1L),
-                filter.Continue
-            ));
-        }
+        ct.ThrowIfCancellationRequested();
 
-        // Capture predicate for count — built once, reused in the lambda
-        Expression<Func<Node, bool>> countPred = composed.TerminalPredicate;
+        // Single query: COUNT(*) OVER () window function — ApplyFilter (inside ComposeHops) already
+        // clamps count ≤500 and applies limit/offset; WindowedFromOperation decorates with the window column.
+        WindowResult<NodeDetails, long> windowed =
+            await mapper.WindowedFromOperation<long, Node>(composed.Terminal, DB.CountOver(), ct, filter.Fields);
 
-        return Task.FromResult(new AsyncPageResponseWriter<NodeDetails>(
-            mapper.EntitiesFromOperation(composed.Terminal, filter.Fields),
-            () => {
-                ct.ThrowIfCancellationRequested();
-                return database.Load<Node>(DB.Count()).Where(countPred).ExecuteScalarAsync<long>();
-            },
+        return new AsyncPageResponseWriter<NodeDetails>(
+            windowed.Items,
+            async () => await windowed.WindowValue,
             filter.Continue
-        ));
+        );
     }
 
     /// <inheritdoc />

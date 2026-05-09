@@ -1,3 +1,4 @@
+using Pooshit.Ocelot.Clients;
 using Pooshit.Ocelot.Entities;
 using Pooshit.Ocelot.Entities.Operations;
 using Pooshit.Ocelot.Fields;
@@ -35,7 +36,6 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
                                                         DB.Property<Node>(n => n.Status, "node"),
                                                         (n, v) => n.Status = v);
     }
-
 
     /// <inheritdoc />
     public override LoadOperation<Node> CreateOperation(IEntityManager database, params IDBField[] fields)
