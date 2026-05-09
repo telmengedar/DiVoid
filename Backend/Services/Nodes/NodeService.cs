@@ -38,13 +38,13 @@ public class NodeService(IEntityManager database) : INodeService
                 Type = node.Type
             };
 
-        node.Id = await database.Insert<Node>()
-                              .Columns(n => n.TypeId, n => n.Name)
-                              .Values(type.Id, node.Name)
+        long nodeId = await database.Insert<Node>()
+                              .Columns(n => n.TypeId, n => n.Name, n => n.Status)
+                              .Values(type.Id, node.Name, node.Status)
                               .ReturnID()
                               .ExecuteAsync(transaction);
         transaction.Commit();
-        return node;
+        return await GetNodeById(nodeId);
     }
 
     /// <inheritdoc />
