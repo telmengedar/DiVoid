@@ -1,0 +1,41 @@
+# Build artifacts — excluded to keep context lean and avoid stale binaries
+**/bin/
+**/obj/
+
+# Git metadata
+.git/
+.github/
+
+# SQLite development database — never bake into the image
+**/*.db3
+**/*.db
+**/*.db3-shm
+**/*.db3-wal
+
+# Per-environment secrets and local overrides — must never end up in a layer
+**/appsettings.Secrets.json
+**/appsettings.Development.json
+
+# IDE / tooling folders
+.vs/
+.idea/
+.vscode/
+
+# Test results and coverage
+TestResults/
+coverage/
+*.trx
+*.coverage
+*.coveragexml
+
+# NuGet artifacts
+*.nupkg
+*.snupkg
+artifacts/
+
+# Documentation (harmless but keeps context lean)
+docs/
+
+# Agent scratch directories
+_tmp_inspect/
+.nuget-inspect/
