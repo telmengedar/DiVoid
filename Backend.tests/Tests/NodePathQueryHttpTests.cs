@@ -365,37 +365,30 @@ public class NodePathQueryHttpTests
     }
 
     // -----------------------------------------------------------------------
-    // nototal=true
+    // Windowed-count pagination — total is always a real non-negative value
     // -----------------------------------------------------------------------
 
     [Test]
-    public async Task NoTotal_True_SkipsCountQuery()
+    public async Task WindowedCount_PathEndpoint_ReturnsTrueTotal()
     {
-        // nototal=true signals the service to skip the COUNT query.
-        // AsyncPageResponseWriter requires a delegate so we pass () => -1L as sentinel.
-        // The response total will be -1, not null. The COUNT database call is skipped.
-        HttpResponseMessage resp = await PathQueryAsync("[type:task]", "&nototal=true");
+        // Ocelot 0.18 uses COUNT(*) OVER () — total is computed in the same query
+        // as the page.  It must be a real count (>= 0), never the old -1 sentinel.
+        HttpResponseMessage resp = await PathQueryAsync("[type:task]");
         Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        string json = await resp.Content.ReadAsStringAsync();
-        using JsonDocument doc = JsonDocument.Parse(json);
-        // result array must still be present
-        Assert.That(doc.RootElement.TryGetProperty("result", out _), Is.True);
-        // total is -1 (the sentinel value indicating "not computed")
-        if (doc.RootElement.TryGetProperty("total", out JsonElement totalEl))
-            Assert.That(totalEl.GetInt64(), Is.EqualTo(-1L));
+        (_, long? total) = await ParseResultAsync(resp);
+        Assert.That(total, Is.GreaterThanOrEqualTo(0),
+            "total must be a real count from the windowed-count query, not a sentinel");
     }
 
     [Test]
-    public async Task NoTotal_True_ExistingListEndpoint_SkipsCountQuery()
+    public async Task WindowedCount_ListEndpoint_ReturnsTrueTotal()
     {
-        // nototal applies to the regular list endpoint too
-        HttpResponseMessage resp = await _client.GetAsync("/api/nodes?type=task&nototal=true");
+        // Same guarantee for the regular list endpoint
+        HttpResponseMessage resp = await _client.GetAsync("/api/nodes?type=task");
         Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        string json = await resp.Content.ReadAsStringAsync();
-        using JsonDocument doc = JsonDocument.Parse(json);
-        Assert.That(doc.RootElement.TryGetProperty("result", out _), Is.True);
-        if (doc.RootElement.TryGetProperty("total", out JsonElement totalEl))
-            Assert.That(totalEl.GetInt64(), Is.EqualTo(-1L));
+        (_, long? total) = await ParseResultAsync(resp);
+        Assert.That(total, Is.GreaterThanOrEqualTo(0),
+            "total must be a real count from the windowed-count query, not a sentinel");
     }
 
     // -----------------------------------------------------------------------
