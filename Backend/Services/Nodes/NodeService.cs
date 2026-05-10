@@ -68,6 +68,9 @@ public class NodeService(IEntityManager database) : INodeService
         if (node == null)
             throw new NotFoundException<Node>(nodeId);
 
+        if (node.Content == null)
+            throw new NotFoundException<Node>($"Node '{nodeId}' has no content");
+
         return (node.ContentType, new MemoryStream(node.Content));
     }
 
