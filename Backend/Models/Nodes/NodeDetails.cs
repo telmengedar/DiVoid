@@ -24,4 +24,10 @@ public class NodeDetails
     /// lifecycle status of the node (e.g. "open", "closed", "in-progress")
     /// </summary>
     public string Status { get; set; }
+
+    /// <summary>
+    /// MIME content type of the node's blob content, if any (e.g. "text/markdown", "application/json", "image/png").
+    /// Absent when the node has no content.
+    /// </summary>
+    public string ContentType { get; set; }
 }
