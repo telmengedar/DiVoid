@@ -140,7 +140,9 @@ Per-resource authorization (e.g., "this key can only edit nodes under project X"
 
 ## D. Authentication handler design
 
-**Decision: ASP.NET Core `AuthenticationHandler<AuthenticationSchemeOptions>` registered as a custom scheme named `ApiKey`. The scheme is set as the default authentication and challenge scheme in `Startup`. A fallback authorization policy requires an authenticated user, so any endpoint without an explicit `[AllowAnonymous]` is protected by default.**
+> **Update — 2026-05-12.** A second authentication scheme (`JwtBearer`) has been added alongside `ApiKey` to support Keycloak-issued OIDC access tokens from the planned web frontend. The `ApiKey` scheme is no longer the default authenticate scheme; `JwtBearer` is the default and `ApiKey` is an additional scheme. Both schemes are listed in every authorization policy so that either kind of caller is accepted. See `docs/architecture/keycloak-user-auth.md` and DiVoid documentation node 192 for the full design. This section describes the `ApiKey` scheme only; the JWT scheme is in the linked doc.
+
+**Decision: ASP.NET Core `AuthenticationHandler<AuthenticationSchemeOptions>` registered as a custom scheme named `ApiKey`. A fallback authorization policy requires an authenticated user, so any endpoint without an explicit `[AllowAnonymous]` is protected by default.**
 
 Header format:
 
