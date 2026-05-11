@@ -1,7 +1,9 @@
 using System.Linq.Expressions;
+using System.Text;
 using Backend.Extensions;
 using Backend.Models.Nodes;
 using Backend.Query;
+using Backend.Services.Embeddings;
 using Pooshit.AspNetCore.Services.Errors.Exceptions;
 using Pooshit.AspNetCore.Services.Formatters.DataStream;
 using Pooshit.AspNetCore.Services.Patches;
@@ -16,9 +18,10 @@ using Pooshit.Ocelot.Tokens;
 namespace Backend.Services.Nodes;
 
 /// <inheritdoc />
-public class NodeService(IEntityManager database) : INodeService
+public class NodeService(IEntityManager database, IEmbeddingCapability embeddingCapability) : INodeService
 {
     readonly IEntityManager database = database;
+    readonly IEmbeddingCapability embeddingCapability = embeddingCapability;
 
     /// <inheritdoc />
     public async Task<NodeDetails> CreateNode(NodeDetails node)
@@ -356,14 +359,36 @@ public class NodeService(IEntityManager database) : INodeService
     }
 
     /// <inheritdoc />
-    public async Task UploadContent(long nodeId, string contentType, Stream data)
+    public async Task UploadContent(long nodeId, string contentType, Stream data, CancellationToken ct = default)
     {
         byte[] blob = await data.ToByteArray();
+        using Transaction transaction = database.Transaction();
+
         if (await database.Update<Node>()
-                   .Set(n => n.ContentType == contentType, n => n.Content == blob)
-                   .Where(n => n.Id == nodeId)
-                   .ExecuteAsync() == 0)
+                          .Set(n => n.ContentType == contentType, n => n.Content == blob)
+                          .Where(n => n.Id == nodeId)
+                          .ExecuteAsync(transaction) == 0)
             throw new NotFoundException<Node>(nodeId);
+
+        if (embeddingCapability.IsEnabled) {
+            ct.ThrowIfCancellationRequested();
+            if (TextContentTypePredicate.IsText(contentType)) {
+                string text = Encoding.UTF8.GetString(blob);
+                await database.Update<Node>()
+                              .Set(n => n.Embedding == DB.CustomFunction("embedding",
+                                                                          DB.Constant(TextContentTypePredicate.EmbeddingModel),
+                                                                          DB.Constant(text)).Type<float[]>())
+                              .Where(n => n.Id == nodeId)
+                              .ExecuteAsync(transaction);
+            } else {
+                await database.Update<Node>()
+                              .Set(n => n.Embedding == (float[]) null)
+                              .Where(n => n.Id == nodeId)
+                              .ExecuteAsync(transaction);
+            }
+        }
+
+        transaction.Commit();
     }
 
     /// <inheritdoc />

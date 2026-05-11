@@ -1,4 +1,5 @@
 using Backend.Models.Nodes;
+using Backend.Services.Embeddings;
 using Backend.Services.Nodes;
 using Backend.tests.Fixtures;
 using Pooshit.AspNetCore.Services.Errors.Exceptions;
@@ -9,7 +10,12 @@ namespace Backend.tests.Tests;
 [TestFixture]
 public class NodeServiceTests
 {
-    static NodeService MakeService(DatabaseFixture fixture) => new(fixture.EntityManager);
+    /// <summary>
+    /// embedding is disabled in unit tests — SQLite does not have the embedding() function
+    /// </summary>
+    static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
+
+    static NodeService MakeService(DatabaseFixture fixture) => new(fixture.EntityManager, DisabledCapability);
 
     // -----------------------------------------------------------------------
     // Helpers

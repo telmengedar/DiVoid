@@ -102,17 +102,19 @@ namespace Backend.Controllers.V1
         }
 
         /// <summary>
-        /// uploads data for a node
+        /// uploads data for a node.
+        /// on Postgres: also generates a vector embedding for text content types,
+        /// or clears the embedding for non-text content types.
+        /// on SQLite: content is written; embedding is not touched.
         /// </summary>
         /// <param name="nodeId">id of node for which to upload data</param>
-        /// <param name="contentType">content type of data</param>
-        /// <param name="data">data to upload</param>
+        /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
         [HttpPost("{nodeId:long}/content")]
         [Authorize(Policy = "write")]
-        public Task UploadContent(long nodeId)
+        public Task UploadContent(long nodeId, CancellationToken ct)
         {
             logger.LogInformation("Updating content of node '{nodeId}'", nodeId);
-            return nodeService.UploadContent(nodeId, Request.ContentType, Request.Body);
+            return nodeService.UploadContent(nodeId, Request.ContentType, Request.Body, ct);
         }
 
         /// <summary>
