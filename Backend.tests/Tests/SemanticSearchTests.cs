@@ -3,16 +3,25 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Threading.Tasks;
+using Backend.Extensions;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
 using Backend.Services.Nodes;
 using Backend.tests.Fixtures;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.Sqlite;
 using NUnit.Framework;
 using Pooshit.AspNetCore.Services.Data;
 using Pooshit.AspNetCore.Services.Errors;
 using Pooshit.Http;
 using Pooshit.Json;
+using Pooshit.Ocelot.Clients;
+using Pooshit.Ocelot.Entities;
+using Pooshit.Ocelot.Entities.Operations;
+using Pooshit.Ocelot.Entities.Operations.Prepared;
+using Pooshit.Ocelot.Fields;
+using Pooshit.Ocelot.Info;
+using Pooshit.Ocelot.Tokens;
 
 namespace Backend.tests.Tests;
 
@@ -94,12 +103,12 @@ public class SemanticSearchTests
     // -----------------------------------------------------------------------
 
     [Test]
-    public void ListPaged_QueryPopulated_CapabilityDisabled_ThrowsInvalidOperationException()
+    public void ListPaged_QueryPopulated_CapabilityDisabled_ThrowsSemanticSearchUnavailableException()
     {
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture, DisabledCapability);
 
-        Assert.ThrowsAsync<InvalidOperationException>(
+        Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPaged(new NodeFilter { Query = "find something useful", Count = 10 }));
     }
 
@@ -109,7 +118,7 @@ public class SemanticSearchTests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture, DisabledCapability);
 
-        InvalidOperationException ex = Assert.ThrowsAsync<InvalidOperationException>(
+        SemanticSearchUnavailableException ex = Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPaged(new NodeFilter { Query = "find something", Count = 10 }));
 
         Assert.That(ex!.Message, Does.Contain("Postgres").IgnoreCase.Or.Contain("embedding function").IgnoreCase,
@@ -117,13 +126,13 @@ public class SemanticSearchTests
     }
 
     [Test]
-    public void ListPagedByPath_QueryPopulated_CapabilityDisabled_ThrowsInvalidOperationException()
+    public void ListPagedByPath_QueryPopulated_CapabilityDisabled_ThrowsSemanticSearchUnavailableException()
     {
         // Capability gate must fire on query regardless of whether Path is also present (arch doc §10).
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture, DisabledCapability);
 
-        Assert.ThrowsAsync<InvalidOperationException>(
+        Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPagedByPath(
                 new NodePathFilter { Path = "[type:task]", Query = "find something", Count = 10 },
                 CancellationToken.None));
@@ -134,12 +143,12 @@ public class SemanticSearchTests
     // -----------------------------------------------------------------------
 
     [Test]
-    public void ListPaged_MinSimilarityWithoutQuery_ThrowsInvalidOperationException()
+    public void ListPaged_MinSimilarityWithoutQuery_ThrowsSemanticSearchUnavailableException()
     {
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture, DisabledCapability);
 
-        Assert.ThrowsAsync<InvalidOperationException>(
+        Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPaged(new NodeFilter { MinSimilarity = 0.5f, Count = 10 }));
     }
 
@@ -149,7 +158,7 @@ public class SemanticSearchTests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture, DisabledCapability);
 
-        InvalidOperationException ex = Assert.ThrowsAsync<InvalidOperationException>(
+        SemanticSearchUnavailableException ex = Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPaged(new NodeFilter { MinSimilarity = 0.7f, Count = 10 }));
 
         Assert.That(ex!.Message, Does.Contain("query").IgnoreCase,
@@ -157,12 +166,12 @@ public class SemanticSearchTests
     }
 
     [Test]
-    public void ListPagedByPath_MinSimilarityWithoutQuery_ThrowsInvalidOperationException()
+    public void ListPagedByPath_MinSimilarityWithoutQuery_ThrowsSemanticSearchUnavailableException()
     {
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture, DisabledCapability);
 
-        Assert.ThrowsAsync<InvalidOperationException>(
+        Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPagedByPath(
                 new NodePathFilter { Path = "[type:task]", MinSimilarity = 0.5f, Count = 10 },
                 CancellationToken.None));
@@ -374,11 +383,82 @@ public class SemanticSearchTests
     }
 
     // -----------------------------------------------------------------------
-    // NOTE: The following test scenarios are deferred to Postgres smoke test
-    // because they require actual embedding() execution or the IDbClient mock
-    // harness (DiVoid task #126, currently open):
+    // 8. ORDER BY sort-override — construction-level assertion (no DB needed)
     //
-    //   - ORDER BY similarity DESC, id ASC shape when Query is present
+    // Ocelot's LoadOperation.OrderBy(params OrderByCriteria[]) is a simple
+    // assignment: orderbycriterias = fields.  A second OrderBy call therefore
+    // replaces the first completely.  ApplySemanticSearch calls OrderBy after
+    // ApplyFilter has already called it for the caller-supplied ?sort=, so the
+    // similarity+id pair wins the single ORDER BY slot.
+    //
+    // This test verifies the replace-not-append behaviour by building the
+    // operation tree the same way ListPaged does, then rendering it to SQL
+    // via IDatabaseOperation.Prepare + OperationPreparator and inspecting
+    // the ORDER BY token sequence.
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public void SemanticSearch_SortOverride_SimilarityWinsOrderBy_WhenQueryAndSortBothPresent()
+    {
+        // Verify that Ocelot's OrderBy() replaces, not appends, so that
+        // ApplySemanticSearch's OrderBy call wins over ApplyFilter's call.
+        //
+        // We use a plain LoadOperation<Node> over a Node-only query (no JOIN, no
+        // Postgres-specific VCos/VCast columns) so that SQLiteInfo.Prepare can
+        // render the full SQL without hitting the Postgres-only embedding() path.
+        // The ORDER BY field tokens are raw DB.Column tokens rather than the full
+        // FieldMapping.Field references used in production, but the replace-not-append
+        // behaviour we are testing lives entirely in LoadOperation.OrderBy and is
+        // independent of which field tokens are used.
+        using SqliteConnection conn = new("Data Source=:memory:");
+        conn.Open();
+        IEntityManager database = new EntityManager(ClientFactory.Create(conn, new SQLiteInfo()));
+
+        LoadOperation<Node> operation = database.Load<Node>(n => n.Id, n => n.Name);
+
+        // Step 1 — ApplyFilter equivalent: set sort = "name" (simulates ?sort=name)
+        operation.OrderBy(new OrderByCriteria(DB.Column("name"), ascending: true));
+
+        // Step 2 — ApplySemanticSearch equivalent: replace with similarity DESC, id ASC
+        operation.OrderBy(
+            new OrderByCriteria(DB.Column("similarity"), ascending: false),
+            new OrderByCriteria(DB.Column("id"), ascending: true));
+
+        // Render to SQL via the public IDatabaseOperation / OperationPreparator surface
+        OperationPreparator preparator = new();
+        ((IDatabaseOperation) operation).Prepare(preparator);
+
+        // Collect text tokens — parameter tokens are not relevant here
+        string sql = string.Join(" ", preparator.Tokens
+            .OfType<CommandTextToken>()
+            .Select(t => t.Text));
+
+        // Locate the ORDER BY section
+        int orderByIndex = sql.IndexOf("ORDER BY", StringComparison.OrdinalIgnoreCase);
+        Assert.That(orderByIndex, Is.GreaterThan(-1), "SQL must contain an ORDER BY clause");
+
+        string orderBySection = sql[(orderByIndex + "ORDER BY".Length)..];
+
+        // similarity must appear in the ORDER BY clause
+        Assert.That(orderBySection, Does.Contain("similarity").IgnoreCase,
+            "ORDER BY must reference similarity when Query is present");
+
+        // DESC must follow (similarity is ordered descending)
+        Assert.That(orderBySection, Does.Contain("DESC"),
+            "similarity must be ordered DESC");
+
+        // name must NOT appear in the ORDER BY clause —
+        // this is the core assertion: LoadOperation.OrderBy replaces, not appends.
+        // If OrderBy appended, name would still be present here and the design promise
+        // ("similarity wins the single ORDER BY slot") would be broken.
+        Assert.That(orderBySection, Does.Not.Contain("name").IgnoreCase,
+            "caller-supplied ?sort=name must be overridden; name must not appear in ORDER BY when Query is present");
+    }
+
+    // -----------------------------------------------------------------------
+    // NOTE: The following test scenarios are deferred to Postgres smoke test
+    // because they require actual embedding() execution:
+    //
     //   - Embedding IS NOT NULL predicate when Query is present
     //   - MinSimilarity floor predicate (>= 0.7 etc.) in SQL
     //   - Path-mode + Query compound operation SQL shape

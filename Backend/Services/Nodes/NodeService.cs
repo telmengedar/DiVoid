@@ -337,11 +337,11 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         // guard: minSimilarity without query is a caller error
         if (!isSemantic && filter.MinSimilarity.HasValue)
-            throw new InvalidOperationException("minSimilarity requires query");
+            throw new SemanticSearchUnavailableException("minSimilarity requires query");
 
         // guard: semantic search requires Postgres (the embedding() function)
         if (isSemantic && !embeddingCapability.IsEnabled)
-            throw new InvalidOperationException(
+            throw new SemanticSearchUnavailableException(
                 "Semantic search requires Postgres; this deployment does not support the embedding function.");
 
         NodeMapper mapper = new(filter);
@@ -377,11 +377,11 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         // guard: minSimilarity without query is a caller error
         if (!isSemantic && filter.MinSimilarity.HasValue)
-            throw new InvalidOperationException("minSimilarity requires query");
+            throw new SemanticSearchUnavailableException("minSimilarity requires query");
 
         // guard: semantic search requires Postgres (the embedding() function)
         if (isSemantic && !embeddingCapability.IsEnabled)
-            throw new InvalidOperationException(
+            throw new SemanticSearchUnavailableException(
                 "Semantic search requires Postgres; this deployment does not support the embedding function.");
 
         NodeMapper mapper = new(filter);
