@@ -1,8 +1,10 @@
+using Backend.Services.Embeddings;
 using Pooshit.Ocelot.Clients;
 using Pooshit.Ocelot.Entities;
 using Pooshit.Ocelot.Entities.Operations;
 using Pooshit.Ocelot.Fields;
 using Pooshit.Ocelot.Tokens;
+using Pooshit.Ocelot.Tokens.Values;
 
 namespace Backend.Models.Nodes;
 
@@ -11,17 +13,30 @@ namespace Backend.Models.Nodes;
 /// </summary>
 public class NodeMapper : FieldMapper<NodeDetails, Node>
 {
+    readonly NodeFilter filter;
 
     /// <summary>
-    /// creates a new <see cref="NodeMapper"/>
+    /// creates a new <see cref="NodeMapper"/> for standard list mode (no semantic search)
     /// </summary>
     public NodeMapper()
-    : base(Mappings()) { }
+    : this(null) { }
+
+    /// <summary>
+    /// creates a new <see cref="NodeMapper"/> optionally configured for semantic search.
+    /// when <paramref name="filter"/> carries a non-empty <c>Query</c>, the
+    /// <c>similarity</c> field-mapping is included in <see cref="Mappings()"/>.
+    /// </summary>
+    /// <param name="filter">the inbound node filter; null is treated as standard list mode</param>
+    public NodeMapper(NodeFilter filter)
+    : base(Mappings(filter))
+    {
+        this.filter = filter;
+    }
 
     /// <inheritdoc />
     public override string[] DefaultListFields => ["id", "type", "name", "status", "contentType"];
 
-    static IEnumerable<FieldMapping<NodeDetails>> Mappings()
+    static IEnumerable<FieldMapping<NodeDetails>> Mappings(NodeFilter filter = null)
     {
         yield return new FieldMapping<NodeDetails, long>("id",
                                                         DB.Property<Node>(n => n.Id, "node"),
@@ -38,6 +53,24 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
         yield return new FieldMapping<NodeDetails, string>("contentType",
                                                         DB.Property<Node>(n => n.ContentType, "node"),
                                                         (n, v) => n.ContentType = v);
+
+        if (!string.IsNullOrWhiteSpace(filter?.Query)) {
+            // similarity = 1.0 - cosineDistance(queryEmbedding, nodeEmbedding)
+            // DB.VCos compiles to pgvector's <=> (cosine distance: smaller = more similar).
+            // Both sides are cast to vector so Postgres can invoke the <=> operator.
+            // The outer Float cast makes the result a plain float for the .Single projection.
+            // Shape taken verbatim from mamgo-backend CampaignItemTargetMapper.cs:171-174.
+            string queryText = filter.Query;
+            yield return new FieldMapping<NodeDetails, float>("similarity",
+                t => 1.0f - DB.Cast(
+                    DB.VCos(
+                        DB.Value<object>(v => DB.Cast(DB.CustomFunction("embedding",
+                                                        DB.Constant(TextContentTypePredicate.EmbeddingModel),
+                                                        DB.Constant(queryText)), CastType.Vector)),
+                        DB.Value<object>(v => DB.Cast(DB.Property<Node>(n => n.Embedding, "node"), CastType.Vector))),
+                    CastType.Float).Single,
+                (n, v) => n.Similarity = v);
+        }
     }
 
     /// <inheritdoc />

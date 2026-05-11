@@ -37,4 +37,11 @@ public class NodeFilter : ListFilter
     /// when true, only return nodes with no status set (null or empty string)
     /// </summary>
     public bool NoStatus { get; set; }
+
+    /// <summary>
+    /// minimum cosine similarity floor (0–1) for semantic search results.
+    /// only meaningful when <see cref="Pooshit.AspNetCore.Services.Data.ListFilter.Query"/> is also supplied;
+    /// supplying <c>minSimilarity</c> without <c>query</c> returns HTTP 400.
+    /// </summary>
+    public float? MinSimilarity { get; set; }
 }

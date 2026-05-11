@@ -30,4 +30,11 @@ public class NodeDetails
     /// Absent when the node has no content.
     /// </summary>
     public string ContentType { get; set; }
+
+    /// <summary>
+    /// cosine similarity score in the range [0, 1] (1.0 = identical direction).
+    /// present only when the listing was triggered by a <c>?query=</c> semantic search.
+    /// null — and omitted from the JSON response — when no <c>query</c> was supplied.
+    /// </summary>
+    public float? Similarity { get; set; }
 }
