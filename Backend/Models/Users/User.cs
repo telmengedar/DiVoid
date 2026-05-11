@@ -38,4 +38,13 @@ public class User {
     /// timestamp when the user was created
     /// </summary>
     public DateTime CreatedAt { get; set; }
+
+    /// <summary>
+    /// JSON-encoded array of permissions for Keycloak-authenticated requests
+    /// (same encoding as <see cref="Backend.Models.Auth.ApiKey.Permissions"/>).
+    /// Null/empty for users who only authenticate via API keys.
+    /// Allowed values: admin, write, read.
+    /// </summary>
+    [AllowPatch]
+    public string Permissions { get; set; }
 }
