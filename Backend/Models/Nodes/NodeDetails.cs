@@ -1,5 +1,3 @@
-using System.Text.Json.Serialization;
-
 namespace Backend.Models.Nodes;
 
 /// <summary>
@@ -38,6 +36,5 @@ public class NodeDetails
     /// present only when the listing was triggered by a <c>?query=</c> semantic search.
     /// null — and omitted from the JSON response — when no <c>query</c> was supplied.
     /// </summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public float? Similarity { get; set; }
 }

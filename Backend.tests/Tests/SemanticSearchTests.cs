@@ -241,11 +241,11 @@ public class SemanticSearchTests
     [Test]
     public void NodeDetails_Similarity_Null_OmittedFromJson()
     {
-        // When Similarity is null it must be omitted from the response JSON
-        // (JsonIgnore(Condition = WhenWritingNull)).
+        // When Similarity is null it must be omitted from the response JSON.
+        // Pooshit.Json omits null fields by default — no attribute required.
         NodeDetails details = new() { Id = 1, Name = "test", Type = "task" };
         // Similarity is null by default
-        string json = System.Text.Json.JsonSerializer.Serialize(details);
+        string json = Json.WriteString(details);
         Assert.That(json, Does.Not.Contain("similarity").IgnoreCase,
             "null Similarity must not appear in serialized JSON");
     }
@@ -254,7 +254,7 @@ public class SemanticSearchTests
     public void NodeDetails_Similarity_Present_IncludedInJson()
     {
         NodeDetails details = new() { Id = 1, Name = "test", Type = "task", Similarity = 0.87f };
-        string json = System.Text.Json.JsonSerializer.Serialize(details);
+        string json = Json.WriteString(details);
         Assert.That(json, Does.Contain("similarity").IgnoreCase,
             "non-null Similarity must appear in serialized JSON");
     }
