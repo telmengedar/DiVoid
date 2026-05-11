@@ -8,6 +8,7 @@ using System.Text.Encodings.Web;
 using System.Threading.Tasks;
 using Backend.Auth;
 using Backend.Models.Auth;
+using Backend.Models.Users;
 using Backend.Services.Auth;
 using Backend.tests.Fixtures;
 using Microsoft.AspNetCore.Authentication;
@@ -41,7 +42,7 @@ public class AuthHandlerTests
 
     static async Task<long> CreateUser(DatabaseFixture fixture, bool enabled = true)
     {
-        return await fixture.EntityManager.Insert<Backend.Services.Users.User>()
+        return await fixture.EntityManager.Insert<User>()
                             .Columns(u => u.Name, u => u.Enabled, u => u.CreatedAt)
                             .Values("test-user", enabled, DateTime.UtcNow)
                             .ReturnID()

@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Pooshit.AspNetCore.Services.Data;
 using Pooshit.AspNetCore.Services.Errors.Exceptions;
 using Pooshit.AspNetCore.Services.Patches;
+using Backend.Models.Users;
 
 namespace Backend.tests.Tests;
 
@@ -103,7 +104,7 @@ public class ApiKeyServiceTests
         ApiKeyService svc = MakeService(fixture);
 
         // Create a user row so GetApiKey can join-check user.Enabled
-        long userId = await fixture.EntityManager.Insert<Backend.Services.Users.User>()
+        long userId = await fixture.EntityManager.Insert<User>()
                                    .Columns(u => u.Name, u => u.Enabled, u => u.CreatedAt)
                                    .Values("test", true, DateTime.UtcNow)
                                    .ReturnID()
@@ -206,7 +207,7 @@ public class ApiKeyServiceTests
         using DatabaseFixture fixture = new();
         ApiKeyService svc = MakeService(fixture);
 
-        long userId = await fixture.EntityManager.Insert<Backend.Services.Users.User>()
+        long userId = await fixture.EntityManager.Insert<User>()
                                    .Columns(u => u.Name, u => u.Enabled, u => u.CreatedAt)
                                    .Values("test", true, DateTime.UtcNow)
                                    .ReturnID()
@@ -235,7 +236,7 @@ public class ApiKeyServiceTests
         using DatabaseFixture fixture = new();
         ApiKeyService svc = MakeService(fixture);
 
-        long userId = await fixture.EntityManager.Insert<Backend.Services.Users.User>()
+        long userId = await fixture.EntityManager.Insert<User>()
                                    .Columns(u => u.Name, u => u.Enabled, u => u.CreatedAt)
                                    .Values("disabled-user", true, DateTime.UtcNow)
                                    .ReturnID()
@@ -244,7 +245,7 @@ public class ApiKeyServiceTests
         ApiKeyDetails created = await svc.CreateApiKey(new ApiKeyParameters { UserId = userId, Permissions = ["read"] });
 
         // Disable the parent user
-        await fixture.EntityManager.Update<Backend.Services.Users.User>()
+        await fixture.EntityManager.Update<User>()
                      .Set(u => u.Enabled == false)
                      .Where(u => u.Id == userId)
                      .ExecuteAsync();
@@ -264,7 +265,7 @@ public class ApiKeyServiceTests
         using DatabaseFixture fixture = new();
         ApiKeyService svc = MakeService(fixture);
 
-        long userId = await fixture.EntityManager.Insert<Backend.Services.Users.User>()
+        long userId = await fixture.EntityManager.Insert<User>()
                                    .Columns(u => u.Name, u => u.Enabled, u => u.CreatedAt)
                                    .Values("test", true, DateTime.UtcNow)
                                    .ReturnID()

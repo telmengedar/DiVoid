@@ -1,12 +1,13 @@
 using Pooshit.AspNetCore.Services.Patches;
 using Pooshit.Ocelot.Entities.Attributes;
 
-namespace Backend.Services.Users;
+namespace Backend.Models.Users;
 
 /// <summary>
 /// user of system
 /// </summary>
 [AllowPatch]
+[Table("divoid_user")]
 public class User {
 
     /// <summary>

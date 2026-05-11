@@ -1,6 +1,6 @@
 using Backend.Models.Auth;
 using Backend.Models.Nodes;
-using Backend.Services.Users;
+using Backend.Models.Users;
 using Pooshit.Ocelot.Clients;
 using Pooshit.Ocelot.Entities;
 using Pooshit.Ocelot.Schemas;

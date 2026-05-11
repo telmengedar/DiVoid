@@ -1,4 +1,5 @@
 using Backend.Init;
+using Backend.Models.Users;
 using Backend.tests.Fixtures;
 using Pooshit.Ocelot.Schemas;
 
@@ -26,7 +27,7 @@ public class DatabaseModelServiceTests
                                           .ExecuteScalarAsync<long>();
         long apiKeyCount = await fixture.EntityManager.Load<Backend.Models.Auth.ApiKey>(Pooshit.Ocelot.Tokens.DB.Count())
                                         .ExecuteScalarAsync<long>();
-        long userCount = await fixture.EntityManager.Load<Backend.Services.Users.User>(Pooshit.Ocelot.Tokens.DB.Count())
+        long userCount = await fixture.EntityManager.Load<User>(Pooshit.Ocelot.Tokens.DB.Count())
                                       .ExecuteScalarAsync<long>();
 
         Assert.Multiple(() => {

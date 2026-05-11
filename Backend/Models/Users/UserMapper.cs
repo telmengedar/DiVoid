@@ -1,5 +1,4 @@
 using Pooshit.Ocelot.Fields;
-using Backend.Services.Users;
 
 namespace Backend.Models.Users;
 

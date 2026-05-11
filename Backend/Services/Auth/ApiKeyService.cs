@@ -4,7 +4,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Backend.Extensions;
 using Backend.Models.Auth;
-using Backend.Services.Users;
+using Backend.Models.Users;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Pooshit.AspNetCore.Services.Data;
