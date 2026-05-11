@@ -345,7 +345,9 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                 "Semantic search requires Postgres; this deployment does not support the embedding function.");
 
         NodeMapper mapper = new(filter);
-        filter.Fields ??= mapper.DefaultListFields;
+        filter.Fields ??= isSemantic
+            ? [.. mapper.DefaultListFields, "similarity"]
+            : mapper.DefaultListFields;
 
         LoadOperation<Node> operation = mapper.CreateOperation(database, filter.Fields);
         operation.ApplyFilter(filter, mapper);
@@ -385,7 +387,9 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                 "Semantic search requires Postgres; this deployment does not support the embedding function.");
 
         NodeMapper mapper = new(filter);
-        filter.Fields ??= mapper.DefaultListFields;
+        filter.Fields ??= isSemantic
+            ? [.. mapper.DefaultListFields, "similarity"]
+            : mapper.DefaultListFields;
 
         // Parse throws PathQueryParseException on syntax/constraint violations (→ HTTP 400)
         PathQuery query = PathQueryParser.Parse(filter.Path);
