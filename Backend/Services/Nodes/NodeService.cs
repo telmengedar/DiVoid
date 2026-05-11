@@ -241,8 +241,12 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// Pattern mirrors the existing <c>linkedto</c> filter at <c>NodeService.cs:175-181</c>:
     /// each hop is a <see cref="LoadOperation{Node}"/> whose predicate wraps the previous
     /// hop's id-subquery via a Union-of-two-<see cref="NodeLink"/>-directions subquery.
+    ///
+    /// When <paramref name="filter"/> carries a non-empty <c>Query</c> the terminal
+    /// operation receives the same similarity ordering and predicates as plain-list mode
+    /// (see <see cref="ApplySemanticSearch"/>).
     /// </summary>
-    ComposedPath ComposeHops(PathQuery query, NodePathFilter filter, NodeMapper mapper, CancellationToken ct)
+    ComposedPath ComposeHops(PathQuery query, NodePathFilter filter, NodeMapper mapper, bool isSemantic, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -282,19 +286,73 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         terminal.ApplyFilter(filter, mapper);
         terminal.Where(terminalPredicate);
 
+        if (isSemantic)
+            ApplySemanticSearch(terminal, filter, mapper);
+
         return new(terminal);
+    }
+
+    /// <summary>
+    /// applies semantic-search ordering and predicates to a <paramref name="operation"/> when
+    /// <paramref name="filter"/> carries a non-empty <c>Query</c>.
+    ///
+    /// Both plain-list (<see cref="ListPaged"/>) and path-query (<see cref="ListPagedByPath"/>)
+    /// terminal operations go through this helper so the similarity treatment is identical in
+    /// both modes (per architectural doc §10).
+    ///
+    /// When <c>Query</c> is present this method:
+    /// <list type="bullet">
+    ///   <item>appends <c>WHERE n.Embedding IS NOT NULL</c> to exclude un-embedded nodes</item>
+    ///   <item>appends <c>WHERE similarity &gt;= MinSimilarity</c> when a floor is supplied</item>
+    ///   <item>removes any sort that <see cref="FilterExtensions.ApplyFilter{T,TEntity}"/> may have added and
+    ///         replaces it with <c>ORDER BY similarity DESC, id ASC</c></item>
+    /// </list>
+    /// </summary>
+    void ApplySemanticSearch(LoadOperation<Node> operation, NodeFilter filter, NodeMapper mapper)
+    {
+        // exclude nodes without an embedding — they have no vector signal to rank on
+        operation.Where(n => n.Embedding != null);
+
+        // optional caller-supplied similarity floor; .Single is the typed float placeholder
+        // for use in lambda expressions (IDBField pattern from mamgo CampaignItemTargetService)
+        if (filter.MinSimilarity.HasValue)
+        {
+            float floor = filter.MinSimilarity.Value;
+            operation.Where(n => mapper["similarity"].Field.Single >= floor);
+        }
+
+        // similarity DESC, id ASC — replaces any sort that ApplyFilter may have set.
+        // ascending=false → DESC, ascending=true → ASC (OrderByCriteria convention)
+        operation.OrderBy(
+            new OrderByCriteria(mapper["similarity"].Field, ascending: false),
+            new OrderByCriteria(mapper["id"].Field, ascending: true));
     }
 
     /// <inheritdoc />
     public async Task<AsyncPageResponseWriter<NodeDetails>> ListPaged(NodeFilter filter = null)
     {
         filter ??= new();
-        NodeMapper mapper = new();
+
+        bool isSemantic = !string.IsNullOrWhiteSpace(filter.Query);
+
+        // guard: minSimilarity without query is a caller error
+        if (!isSemantic && filter.MinSimilarity.HasValue)
+            throw new InvalidOperationException("minSimilarity requires query");
+
+        // guard: semantic search requires Postgres (the embedding() function)
+        if (isSemantic && !embeddingCapability.IsEnabled)
+            throw new InvalidOperationException(
+                "Semantic search requires Postgres; this deployment does not support the embedding function.");
+
+        NodeMapper mapper = new(filter);
         filter.Fields ??= mapper.DefaultListFields;
 
         LoadOperation<Node> operation = mapper.CreateOperation(database, filter.Fields);
         operation.ApplyFilter(filter, mapper);
         operation.Where(GenerateFilter(filter));
+
+        if (isSemantic)
+            ApplySemanticSearch(operation, filter, mapper);
 
         // Single query: COUNT(*) OVER () window function — ApplyFilter already clamps count ≤500
         // and applies limit/offset; WindowedFromOperation decorates with the window column.
@@ -314,7 +372,19 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         ct.ThrowIfCancellationRequested();
 
         filter ??= new();
-        NodeMapper mapper = new();
+
+        bool isSemantic = !string.IsNullOrWhiteSpace(filter.Query);
+
+        // guard: minSimilarity without query is a caller error
+        if (!isSemantic && filter.MinSimilarity.HasValue)
+            throw new InvalidOperationException("minSimilarity requires query");
+
+        // guard: semantic search requires Postgres (the embedding() function)
+        if (isSemantic && !embeddingCapability.IsEnabled)
+            throw new InvalidOperationException(
+                "Semantic search requires Postgres; this deployment does not support the embedding function.");
+
+        NodeMapper mapper = new(filter);
         filter.Fields ??= mapper.DefaultListFields;
 
         // Parse throws PathQueryParseException on syntax/constraint violations (→ HTTP 400)
@@ -322,7 +392,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         ct.ThrowIfCancellationRequested();
 
-        ComposedPath composed = ComposeHops(query, filter, mapper, ct);
+        ComposedPath composed = ComposeHops(query, filter, mapper, isSemantic, ct);
 
         ct.ThrowIfCancellationRequested();
 

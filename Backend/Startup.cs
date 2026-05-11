@@ -77,6 +77,7 @@ public class Startup
         services.AddTransient<IErrorHandler, PropertyNotFoundExceptionHandler>();
         services.AddTransient<IErrorHandler, NotSupportedExceptionHandler>();
         services.AddTransient<IErrorHandler, PathQueryParseExceptionHandler>();
+        services.AddTransient<IErrorHandler, InvalidOperationExceptionHandler>();
         services.AddLogging(options =>
         {
             options.ClearProviders();
