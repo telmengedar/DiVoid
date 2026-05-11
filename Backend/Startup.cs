@@ -10,8 +10,10 @@ using Backend.Services.Nodes;
 using Backend.Services.Users;
 using mamgo.services.Binding;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.IdentityModel.Tokens;
 using Pooshit.AspNetCore.Services.Errors.Exceptions;
 using Pooshit.AspNetCore.Services.Errors.Handlers;
 using Pooshit.AspNetCore.Services.Extensions;
@@ -102,18 +104,87 @@ public class Startup
         services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
         if (AuthEnabled) {
-            services.AddAuthentication(ApiKeyAuthenticationHandler.SchemeName)
-                    .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
-                        ApiKeyAuthenticationHandler.SchemeName, null);
+            // Fail-closed: Keycloak:Audience must be set when auth is enabled.
+            // An empty audience would cause the JwtBearer handler to accept tokens
+            // intended for other Keycloak clients.
+            string audience = Configuration["Keycloak:Audience"] ?? "";
+            if (string.IsNullOrWhiteSpace(audience))
+                throw new MissingAudienceException(
+                    "Keycloak:Audience is empty. The service will not start with Auth:Enabled=true without a configured audience. " +
+                    "Set Keycloak:Audience to the DiVoid Keycloak client_id in the environment-specific appsettings override.");
+
+            string authority = Configuration["Keycloak:Authority"] ?? "https://auth.mamgo.io/realms/master";
+            bool requireHttpsMetadata = Configuration.GetValue("Keycloak:RequireHttpsMetadata", false);
+
+            services.AddAuthentication(options => {
+                // JwtBearer is the default: it is tried first on every request.
+                // API-key tokens do not look like JWTs (no three-segment base64url form)
+                // so JwtBearer returns NoResult for them and the fallback policy
+                // then tries the ApiKey scheme.
+                options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+            })
+            .AddJwtBearer(options => {
+                options.Authority = authority;
+                options.RequireHttpsMetadata = requireHttpsMetadata;
+
+                // IMPORTANT: never log raw JWT contents — only issuer, audience, and
+                // the resolved DiVoid userId should appear in logs.
+                options.TokenValidationParameters = new TokenValidationParameters {
+                    ValidateIssuer = true,
+                    ValidIssuer = authority,
+                    ValidateAudience = true,
+                    ValidAudience = audience,
+                    ValidateLifetime = true,
+                    ClockSkew = TimeSpan.FromMinutes(2),
+                    ValidateIssuerSigningKey = true,
+                    RequireSignedTokens = true,
+                    RequireExpirationTime = true
+                };
+
+                // Abstain (NoResult) for tokens that do not look like JWTs.
+                // A valid JWT compact serialization has exactly 2 dots (header.payload.signature).
+                // API-key tokens have the form "<keyId>.<secret>" — exactly 1 dot — and must be
+                // routed to the ApiKey scheme instead of failing JwtBearer validation with an error.
+                // Clearing ctx.Token causes JwtBearerHandler to return NoResult, giving ApiKey
+                // a chance. See design doc section 6.3.
+                options.Events = new JwtBearerEvents {
+                    OnMessageReceived = ctx => {
+                        string token = ctx.Token ?? "";
+                        // Count dots; a JWT needs exactly 2 (compact serialization: h.p.s)
+                        int dotCount = 0;
+                        foreach (char c in token) {
+                            if (c == '.') dotCount++;
+                        }
+                        if (dotCount != 2)
+                            ctx.Token = string.Empty; // causes handler to return NoResult
+                        return Task.CompletedTask;
+                    }
+                };
+            })
+            .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
+                ApiKeyAuthenticationHandler.SchemeName, null);
+
+            services.AddTransient<IClaimsTransformation, KeycloakClaimsTransformation>();
 
             services.AddAuthorization(options => {
-                options.AddPolicy("admin", p => p.AddRequirements(new PermissionRequirement("admin")));
-                options.AddPolicy("write",  p => p.AddRequirements(new PermissionRequirement("write")));
-                options.AddPolicy("read",   p => p.AddRequirements(new PermissionRequirement("read")));
+                // All named policies include both authentication schemes so the authorization
+                // middleware tries JwtBearer first, then ApiKey, for every protected endpoint.
+                // Without this, endpoints with [Authorize(Policy="read")] only invoke the
+                // DefaultAuthenticateScheme (JwtBearer) and API-key callers get 401.
+                options.AddPolicy("admin", p => p
+                    .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, ApiKeyAuthenticationHandler.SchemeName)
+                    .AddRequirements(new PermissionRequirement("admin")));
+                options.AddPolicy("write",  p => p
+                    .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, ApiKeyAuthenticationHandler.SchemeName)
+                    .AddRequirements(new PermissionRequirement("write")));
+                options.AddPolicy("read",   p => p
+                    .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, ApiKeyAuthenticationHandler.SchemeName)
+                    .AddRequirements(new PermissionRequirement("read")));
 
-                // Fallback: require authentication on every endpoint without explicit [AllowAnonymous]
+                // Fallback: require authentication on every endpoint without explicit [AllowAnonymous].
                 options.FallbackPolicy = new AuthorizationPolicyBuilder()
-                    .AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName)
+                    .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, ApiKeyAuthenticationHandler.SchemeName)
                     .RequireAuthenticatedUser()
                     .Build();
             });
