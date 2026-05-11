@@ -1,11 +1,13 @@
 using System;
-using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Backend.Models.Nodes;
 using Microsoft.Extensions.Logging;
 using Pooshit.Ocelot.Entities;
+using Pooshit.Ocelot.Entities.Operations;
+using Pooshit.Ocelot.Expressions;
+using Pooshit.Ocelot.Fields;
 using Pooshit.Ocelot.Tokens;
 
 namespace Backend.Services.Embeddings;
@@ -29,8 +31,24 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
     readonly ILogger<EmbeddingBackfillService> logger = logger;
 
     /// <summary>
-    /// runs the backfill.  each qualifying node is updated in its own short transaction
-    /// so that a single failure does not abort the entire batch.
+    /// builds the SQL predicate that selects candidate nodes: unembedded, non-null
+    /// content, and a content-type that qualifies as embeddable text.
+    /// text/* OR the application/* allowlist from <see cref="TextContentTypePredicate.ApplicationTextTypes"/>.
+    /// </summary>
+    static PredicateExpression<Node> CandidatePredicate() {
+        PredicateExpression<Node> typePredicate = null;
+        typePredicate |= n => n.ContentType.Like("text/%");
+        typePredicate |= n => n.ContentType.In(TextContentTypePredicate.ApplicationTextTypes);
+
+        PredicateExpression<Node> predicate = null;
+        predicate &= n => n.Embedding == null;
+        predicate &= n => n.Content != null;
+        predicate &= typePredicate;
+        return predicate;
+    }
+
+    /// <summary>
+    /// runs the backfill.
     /// </summary>
     /// <param name="ct">cancellation token</param>
     public async Task RunAsync(CancellationToken ct = default) {
@@ -42,54 +60,37 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
         logger.LogInformation("event=backfill.start");
         DateTimeOffset started = DateTimeOffset.UtcNow;
 
-        // Collect all candidate nodes: unembedded, content-bearing.
-        // We filter on Embedding IS NULL in SQL to avoid loading already-embedded rows;
-        // Content != null and TextContentTypePredicate checks are applied in-process
-        // because byte[] IS NOT NULL and the content-type allowlist cannot be expressed
-        // as Ocelot predicate expressions.
-        List<Node> candidates = new();
-        IAsyncEnumerable<Node> stream = database.Load<Node>(n => n.Id, n => n.ContentType, n => n.Content)
-                                                .Where(n => n.Embedding == null)
-                                                .ExecuteEntitiesAsync();
-        await foreach (Node candidate in stream) {
-            ct.ThrowIfCancellationRequested();
-            candidates.Add(candidate);
-        }
-
-        int total = candidates.Count;
-        int embedded = 0;
-        int skipped = 0;
+        long total = await database.Load<Node>(DB.Count())
+                                   .Where(CandidatePredicate().Content)
+                                   .ExecuteScalarAsync<long>();
 
         logger.LogInformation("event=backfill.candidates total={Total}", total);
 
-        foreach (Node node in candidates) {
-            ct.ThrowIfCancellationRequested();
+        int embedded = 0;
 
-            if (node.Content == null || !TextContentTypePredicate.IsText(node.ContentType)) {
-                skipped++;
-                continue;
-            }
+        await foreach (Node node in database.Load<Node>(n => n.Id, n => n.ContentType, n => n.Content)
+                                            .Where(CandidatePredicate().Content)
+                                            .ExecuteEntitiesAsync()) {
+            ct.ThrowIfCancellationRequested();
 
             string text = Encoding.UTF8.GetString(node.Content);
 
-            using Pooshit.Ocelot.Clients.Transaction transaction = database.Transaction();
             await database.Update<Node>()
                           .Set(n => n.Embedding == DB.CustomFunction("embedding",
                                                                       DB.Constant(TextContentTypePredicate.EmbeddingModel),
                                                                       DB.Constant(text)).Type<float[]>())
                           .Where(n => n.Id == node.Id)
-                          .ExecuteAsync(transaction);
-            transaction.Commit();
+                          .ExecuteAsync();
 
             embedded++;
 
             if (embedded % ProgressInterval == 0)
-                logger.LogInformation("event=backfill.progress embedded={Embedded} skipped={Skipped} of={Total}", embedded, skipped, total);
+                logger.LogInformation("event=backfill.progress embedded={Embedded} of={Total}", embedded, total);
         }
 
         TimeSpan elapsed = DateTimeOffset.UtcNow - started;
         logger.LogInformation(
-            "event=backfill.complete embedded={Embedded} skipped={Skipped} total={Total} elapsed={Elapsed}",
-            embedded, skipped, total, elapsed);
+            "event=backfill.complete embedded={Embedded} total={Total} elapsed={Elapsed}",
+            embedded, total, elapsed);
     }
 }
