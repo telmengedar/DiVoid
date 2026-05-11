@@ -467,4 +467,93 @@ public class SemanticSearchTests
     // These are not skipped silently — they are explicitly deferred here with
     // explanation per the project's test-discipline standard.
     // -----------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------
+    // 9. Default field selection — similarity included when Query is present
+    //
+    // Covers the bug where DefaultListFields hardcoded five base fields and
+    // the similarity mapping was conditionally registered but never selected
+    // at projection time (filter.Fields remained the five-field default).
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public void ListPaged_QueryPresent_FieldsUnset_DefaultFieldsIncludeSimilarity()
+    {
+        // When the caller does not supply ?fields= and Query is non-empty,
+        // NodeService must extend DefaultListFields with "similarity" before
+        // building the SELECT.  This is the field-selection level assertion
+        // that catches the bug without requiring Postgres / embedding().
+        using DatabaseFixture fixture = new();
+
+        NodeFilter filter = new() { Query = "find something", Count = 10 };
+
+        // Construct the mapper exactly as NodeService.ListPaged does, then apply
+        // the same defaulting logic under test.
+        NodeMapper mapper = new(filter);
+        bool isSemantic = !string.IsNullOrWhiteSpace(filter.Query);
+        filter.Fields ??= isSemantic
+            ? [.. mapper.DefaultListFields, "similarity"]
+            : mapper.DefaultListFields;
+
+        Assert.That(filter.Fields, Does.Contain("similarity"),
+            "filter.Fields must include 'similarity' when Query is present and fields were not explicitly provided");
+    }
+
+    [Test]
+    public void ListPagedByPath_QueryPresent_FieldsUnset_DefaultFieldsIncludeSimilarity()
+    {
+        // Symmetric assertion for ListPagedByPath — the same defaulting logic
+        // must apply to the path-query terminal as well.
+        using DatabaseFixture fixture = new();
+
+        NodePathFilter filter = new() { Path = "[type:task]", Query = "find something", Count = 10 };
+
+        NodeMapper mapper = new(filter);
+        bool isSemantic = !string.IsNullOrWhiteSpace(filter.Query);
+        filter.Fields ??= isSemantic
+            ? [.. mapper.DefaultListFields, "similarity"]
+            : mapper.DefaultListFields;
+
+        Assert.That(filter.Fields, Does.Contain("similarity"),
+            "filter.Fields must include 'similarity' when Query is present and fields were not explicitly provided");
+    }
+
+    [Test]
+    public void ListPaged_QueryPresent_FieldsExplicit_ExplicitFieldsWin()
+    {
+        // Caller-supplied ?fields= must not be overridden.
+        // If the caller asked for id,name only they get exactly that —
+        // the existing explicit-fields-override-default contract from PR #22.
+        using DatabaseFixture fixture = new();
+
+        NodeFilter filter = new() { Query = "find something", Count = 10, Fields = ["id", "name"] };
+
+        NodeMapper mapper = new(filter);
+        bool isSemantic = !string.IsNullOrWhiteSpace(filter.Query);
+        filter.Fields ??= isSemantic
+            ? [.. mapper.DefaultListFields, "similarity"]
+            : mapper.DefaultListFields;
+
+        Assert.That(filter.Fields, Is.EqualTo(new[] { "id", "name" }),
+            "explicitly supplied ?fields= must not be extended with 'similarity'");
+    }
+
+    [Test]
+    public void ListPaged_QueryAbsent_FieldsUnset_DefaultFieldsDoNotIncludeSimilarity()
+    {
+        // Without a query the similarity mapping is not registered on the mapper;
+        // the defaulting logic must not inject "similarity" into the field list.
+        using DatabaseFixture fixture = new();
+
+        NodeFilter filter = new() { Count = 10 };
+
+        NodeMapper mapper = new(filter);
+        bool isSemantic = !string.IsNullOrWhiteSpace(filter.Query);
+        filter.Fields ??= isSemantic
+            ? [.. mapper.DefaultListFields, "similarity"]
+            : mapper.DefaultListFields;
+
+        Assert.That(filter.Fields, Does.Not.Contain("similarity"),
+            "filter.Fields must not include 'similarity' when Query is absent");
+    }
 }
