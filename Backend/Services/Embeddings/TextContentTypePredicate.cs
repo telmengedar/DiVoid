@@ -13,6 +13,20 @@ public static class TextContentTypePredicate {
     public const string EmbeddingModel = "gemini-embedding-001";
 
     /// <summary>
+    /// application/* MIME types that qualify as embeddable text.
+    /// exposed so callers can build SQL-side IN predicates without
+    /// duplicating the allowlist.
+    /// </summary>
+    public static readonly string[] ApplicationTextTypes = [
+        "application/json",
+        "application/xml",
+        "application/x-yaml",
+        "application/yaml",
+        "application/javascript",
+        "application/x-sh"
+    ];
+
+    /// <summary>
     /// returns true when <paramref name="contentType"/> denotes textual data that
     /// should be embedded.  handles charset suffixes (e.g. "text/plain; charset=utf-8")
     /// by stripping the part after the first semicolon before matching.
