@@ -22,6 +22,7 @@
     <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
     <PackageReference Include="Pooshit.Http" Version="0.7.8-preview" />
     <PackageReference Include="Pooshit.Json" Version="0.3.40-preview" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.0.1" />
   </ItemGroup>
 
   <ItemGroup>
