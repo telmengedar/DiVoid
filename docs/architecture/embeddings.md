@@ -313,7 +313,7 @@ The previous design (catch all failures, log Warning, content always succeeds) w
 
 **Mechanism.** First check the capability flag — if SQLite, exit with a clear "backfill is Postgres-only" message. Otherwise iterate `Node` rows where `Embedding IS NULL AND Content IS NOT NULL AND TextContentTypePredicate(ContentType)`. For each, issue the same `UPDATE Embedding = embedding(...)` used by the live path, in its own short transaction so a single failure does not abort the batch. Log progress periodically. Safe to re-run because the predicate filters out anything already embedded.
 
-**Exposure.** Either as an admin-policy-gated `POST /api/admin/embeddings/backfill` endpoint, or as a `dotnet run -- backfill-embeddings` console mode if the project already has a CLI surface for admin operations (cf. `CliCreateAdminTests` — there is precedent). John picks the exposure based on what matches existing patterns; the *service* itself is the deliverable.
+**Exposure.** Implemented as `dotnet run --project Backend -- backfill-embeddings`, wired into the existing `CliDispatcher` alongside `create-admin`. The CLI pattern is already established and keeps admin operations off the HTTP surface. Invoke: `dotnet run --project Backend -- backfill-embeddings` (against the live Postgres configuration in `appsettings.json` / environment variables). On SQLite it exits immediately with a "capability disabled" log line.
 
 **Trade-off:** Adds one new endpoint or CLI verb. Worth it.
 
@@ -411,18 +411,18 @@ These do not gate implementation but should be answered before search starts.
 
 ## 14. Implementation Guidance for the Next Agent
 
-Build in this order. Each step is self-contained enough to land independently if needed; John may bundle.
+Build in this order. Each step is self-contained enough to land independently if needed.
+
+**Note (post-split):** This work shipped as two PRs. Steps 1–5 and step 7 landed in **PR A** (`feat/embeddings-on-content-write`, PR #23). Step 6 landed in **PR B** (`feat/embeddings-backfill-cli`). PR B depends on PR A; it was branched from PR A and targets `main` once PR A is merged.
 
 1. **Verify the Postgres column type.** Inspect `SchemaService.CreateOrUpdateSchema<Node>` against a real Postgres instance to confirm what `float[] [Size(3072)]` maps to. Record the finding in this doc's Decision 7 footnote so the search-side task picks it up. (No code change unless the type is wrong.)
-2. **Introduce the capability flag.** Add a small singleton (`IEmbeddingCapability` with `bool IsEnabled` or equivalent) registered in `Startup.ConfigureServices` based on `Database:Type` — `true` for Postgres, `false` for SQLite. Mirrors how `DatabaseExtensions.cs` already branches.
-3. **Add the predicate.** Implement `TextContentTypePredicate` as a static helper. Unit-test it against the allowlist in §11 Decision 3 and a representative set of negatives. Includes the strip-charset-suffix logic.
-4. **Modify `NodeService.UploadContent`.** Inject `IEmbeddingCapability`. Add the gating `if (capability.IsEnabled)` per §6. Inside the Postgres branch: if text content → issue the embedding UPDATE (no try/catch); else → issue the clear-to-null UPDATE. Plumb a `CancellationToken` parameter (cf. mainline pattern in `ListPagedByPath`).
-5. **Update integration tests** per §11 Decision 10. Most existing tests need no change — they run on SQLite, which now means the embedding step simply doesn't execute. Add the new positive/negative tests called out above.
-6. **Add `EmbeddingBackfillService`** per §11 Decision 6. Capability-flag-guarded; Postgres-only. Iterate the qualifying-and-unembedded set, issue the same UPDATE per node in its own transaction. Expose via the form that matches project precedent. Unit-test the SQLite-exit-cleanly path.
-7. **(Optional, see §13.1)** Extract the model identifier to a single shared constant.
-8. **Smoke against a real Postgres** before opening the PR. Verify end-to-end: upload a markdown blob, confirm `Embedding` is populated with a 3072-dim vector. Also verify the loud-failure path: a deliberately broken function call should produce a 500 (this can be a one-off manual check, not committed). This is not in CI; it's a manual pre-PR check.
-
-The PR should be a single feature PR per the global one-feature-one-PR rule. The backfill service is part of the same feature ("automatic embedding generation"), not a separate one — they ship together.
+2. **Introduce the capability flag.** Add a small singleton (`IEmbeddingCapability` with `bool IsEnabled` or equivalent) registered in `Startup.ConfigureServices` based on `Database:Type` — `true` for Postgres, `false` for SQLite. Mirrors how `DatabaseExtensions.cs` already branches. **(PR A)**
+3. **Add the predicate.** Implement `TextContentTypePredicate` as a static helper. Unit-test it against the allowlist in §11 Decision 3 and a representative set of negatives. Includes the strip-charset-suffix logic. **(PR A)**
+4. **Modify `NodeService.UploadContent`.** Inject `IEmbeddingCapability`. Add the gating `if (capability.IsEnabled)` per §6. Inside the Postgres branch: if text content → issue the embedding UPDATE (no try/catch); else → issue the clear-to-null UPDATE. Plumb a `CancellationToken` parameter (cf. mainline pattern in `ListPagedByPath`). **(PR A)**
+5. **Update integration tests** per §11 Decision 10. Most existing tests need no change — they run on SQLite, which now means the embedding step simply doesn't execute. Add the new positive/negative tests called out above. **(PR A)**
+6. **Add `EmbeddingBackfillService`** per §11 Decision 6. Capability-flag-guarded; Postgres-only. Iterate the qualifying-and-unembedded set, issue the same UPDATE per node in its own transaction. Expose via the existing `CliDispatcher` pattern as the `backfill-embeddings` verb. Unit-test the SQLite-exit-cleanly path. **(PR B)**
+7. **(Optional, see §13.1)** Extract the model identifier to a single shared constant. **(PR A — done in `TextContentTypePredicate.EmbeddingModel`)**
+8. **Smoke against a real Postgres** before merging. Verify end-to-end: upload a markdown blob, confirm `Embedding` is populated with a 3072-dim vector. Run `backfill-embeddings` against the online instance to embed the 174 pre-existing nodes. This is not in CI; it is a manual post-merge check for Toni.
 
 ---
 

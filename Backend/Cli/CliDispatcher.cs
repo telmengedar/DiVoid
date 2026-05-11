@@ -4,6 +4,7 @@ using Backend.Extensions.Startup;
 using Backend.Models.Auth;
 using Backend.Models.Users;
 using Backend.Services.Auth;
+using Backend.Services.Embeddings;
 using Backend.Services.Users;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -26,10 +27,55 @@ public static class CliDispatcher {
             case "create-admin":
                 await CreateAdminAsync(args[1..]);
                 break;
+            case "backfill-embeddings":
+                await BackfillEmbeddingsAsync();
+                break;
             default:
-                Console.Error.WriteLine($"Unknown verb '{verb}'. Supported verbs: create-admin");
+                Console.Error.WriteLine($"Unknown verb '{verb}'. Supported verbs: create-admin, backfill-embeddings");
                 Environment.Exit(1);
                 break;
+        }
+    }
+
+    static async Task BackfillEmbeddingsAsync() {
+        IServiceCollection services = new ServiceCollection();
+
+        IConfiguration configuration = new ConfigurationBuilder()
+            .AddJsonFile("appsettings.json", optional: true)
+            .AddEnvironmentVariables()
+            .Build();
+
+        services.AddSingleton(configuration);
+        services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Information));
+        services.ConfigureDatabaseService(configuration);
+
+        bool embeddingEnabled = configuration["Database:Type"] != "Sqlite";
+        services.AddSingleton<IEmbeddingCapability>(new EmbeddingCapability(embeddingEnabled));
+        services.AddTransient<EmbeddingBackfillService>();
+
+        await using ServiceProvider provider = services.BuildServiceProvider();
+
+        // Ensure schema exists
+        Init.DatabaseModelService schemaSvc = new(provider.GetRequiredService<Pooshit.Ocelot.Entities.IEntityManager>());
+        try {
+            await schemaSvc.StartAsync(default);
+        } catch (Exception ex) {
+            Console.Error.WriteLine($"error: failed to initialise database schema: {ex.Message}");
+            Environment.Exit(1);
+            return;
+        }
+
+        EmbeddingBackfillService backfill = provider.GetRequiredService<EmbeddingBackfillService>();
+        ILogger logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("CliDispatcher");
+
+        try {
+            await backfill.RunAsync();
+            logger.LogInformation("event=cli.backfill-embeddings exitCode=0");
+            Environment.Exit(0);
+        } catch (Exception ex) {
+            Console.Error.WriteLine($"error: {ex.Message}");
+            logger.LogError(ex, "event=cli.backfill-embeddings exitCode=1");
+            Environment.Exit(1);
         }
     }
 
