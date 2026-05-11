@@ -56,12 +56,16 @@ public interface INodeService
     Task<NodeDetails> Patch(long nodeId, params PatchOperation[] patches);
 
     /// <summary>
-    /// uploads data for a node
+    /// uploads data for a node.
+    /// on Postgres: also generates and stores a vector embedding for text content,
+    /// or clears the embedding for non-text content.
+    /// on SQLite: content is written; embedding is not touched.
     /// </summary>
     /// <param name="nodeId">id of node for which to upload data</param>
     /// <param name="contentType">content type of data</param>
     /// <param name="data">data to upload</param>
-    Task UploadContent(long nodeId, string contentType, Stream data);
+    /// <param name="ct">cancellation token</param>
+    Task UploadContent(long nodeId, string contentType, Stream data, CancellationToken ct = default);
 
     /// <summary>
     /// deletes an existing node

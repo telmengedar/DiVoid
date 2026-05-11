@@ -5,6 +5,7 @@ using Backend.Extensions.Startup;
 using Backend.Formatters;
 using Backend.Init;
 using Backend.Services.Auth;
+using Backend.Services.Embeddings;
 using Backend.Services.Nodes;
 using Backend.Services.Users;
 using mamgo.services.Binding;
@@ -89,6 +90,9 @@ public class Startup
         }).AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
         services.ConfigureDatabaseService(Configuration);
+
+        bool embeddingEnabled = Configuration["Database:Type"] != "Sqlite";
+        services.AddSingleton<IEmbeddingCapability>(new EmbeddingCapability(embeddingEnabled));
 
         services.AddTransient<INodeService, NodeService>();
         services.AddTransient<IKeyGenerator, KeyGenerator>();
