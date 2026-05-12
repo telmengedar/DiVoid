@@ -12,7 +12,7 @@
 
 import { type ReactNode } from 'react';
 import { AuthProvider as OidcAuthProvider } from 'react-oidc-context';
-import { WebStorageStateStore } from 'oidc-client-ts';
+import { WebStorageStateStore, InMemoryWebStorage } from 'oidc-client-ts';
 import {
   KEYCLOAK_AUTHORITY,
   KEYCLOAK_CLIENT_ID,
@@ -38,10 +38,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
       scope="openid profile email"
       // PKCE S256 (oidc-client-ts default; explicit for clarity)
       response_type="code"
-      // In-memory storage for tokens — no localStorage leak.
-      // userStore uses sessionStorage only for OIDC state (nonce/verifier), which is
-      // short-lived and required for the redirect dance.
-      userStore={new WebStorageStateStore({ store: window.sessionStorage })}
+      // userStore: persists the User object (access token, refresh token, id token).
+      // InMemoryWebStorage keeps tokens in JS memory only — never written to localStorage
+      // or sessionStorage. Reload = logged out (forced re-auth via SSO cookie). §9.2.
+      userStore={new WebStorageStateStore({ store: new InMemoryWebStorage() })}
+      // stateStore: persists OIDC interaction state (nonce, state param, PKCE code_verifier).
+      // sessionStorage is correct here — state must survive the redirect dance but must NOT
+      // persist across browser restarts or tabs. Cleared when tab closes. §9.2.
+      stateStore={new WebStorageStateStore({ store: window.sessionStorage })}
       // Silent refresh: attempt via refresh-token grant 30s before expiry.
       // automaticSilentRenew=true makes oidc-client-ts schedule this automatically.
       automaticSilentRenew={true}
