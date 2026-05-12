@@ -41,7 +41,7 @@ Each Keycloak principal who is permitted to use DiVoid carries a custom user att
 | A1 | Keycloak issuer URL is `https://auth.mamgo.io/realms/master`; the `iss` claim in tokens matches that exact string. | High | Confirm with one real token. |
 | A2 | The Keycloak `DiVoid` client is configured to emit the `UserId` user attribute into **access tokens** (not only ID tokens), via a "User Attribute" protocol mapper. | **Medium — must be validated** | Toni / Keycloak admin must verify the mapper exists and targets `access.token=true`. |
 | A3 | The claim name in the resulting JWT is exactly `UserId` (the user-attribute mapper's "Token Claim Name" defaults to the attribute name unless customised). | Medium | Inspect a real token. Doc defines a configurable fallback if the name differs. |
-| A4 | The exact `client_id` (which is also the `aud` value) is not yet known to the implementer. It will be supplied as `Keycloak:Audience` in configuration. | Known unknown | Toni populates the config value. |
+| A4 | The `aud` claim value in tokens issued by the DiVoid client is the literal string `"DiVoid"` — **not** necessarily the `client_id`. Keycloak can emit a different `aud` value depending on realm and client configuration. The concrete value has been confirmed: `Keycloak:Audience` must be set to `"DiVoid"` in production config. | Confirmed | Toni has confirmed the `aud` claim value; verified by decoding a real token. |
 | A5 | Tokens are RS256-signed; JWKS is published at the standard `.well-known` endpoint under the realm. | High | Standard Keycloak. |
 | A6 | DiVoid runs HTTP-only in dev (port 5007 / port 80 in prod via the Program.cs Kestrel override). `RequireHttpsMetadata = true` is fine in prod (Keycloak itself is HTTPS) but must remain configurable so dev keeps working. | High | n/a |
 | A7 | The DiVoid `divoid_user` row for each Keycloak user is pre-provisioned out-of-band (created via the existing API-key admin flow or a small admin script). Auto-provisioning is rejected — see section 5. | Recommendation | Toni's call; doc records the rationale. |
@@ -239,7 +239,7 @@ This is the invariant the design relies on. Any code outside `Backend/Auth/` tha
 |---|---|---|---|---|
 | `Auth:Enabled` | bool | always | `true` | Master switch. `false` ⇒ no auth, all policies open (unchanged today). |
 | `Keycloak:Authority` | string | `Auth:Enabled=true` | `"https://auth.mamgo.io/realms/master"` | OIDC discovery base. |
-| `Keycloak:Audience` | string | `Auth:Enabled=true` | `""` (intentional — startup fails if empty) | Expected `aud` claim. |
+| `Keycloak:Audience` | string | `Auth:Enabled=true` | `""` (intentional — startup fails if empty) | Expected `aud` claim. For this realm/client the value is the literal string `"DiVoid"` (confirmed from a real token — **not** the Keycloak `client_id`). Always verify by decoding a real access token before setting. |
 | `Keycloak:RequireHttpsMetadata` | bool | optional | `false` (dev), set `true` in `appsettings.Production.json` | Whether OIDC metadata fetch requires HTTPS. |
 | `Keycloak:UserIdClaimName` | string | optional | `"UserId"` | Name of the JWT claim that carries the DiVoid `User.Id`. |
 | `DIVOID_KEY_PEPPER` | string ≥ 32 bytes | `Auth:Enabled=true` | none | Existing API-key pepper. Unchanged. |
@@ -367,7 +367,7 @@ There is no live JWT-authenticated client today; the rollout is one-shot:
 
 1. **Pre-merge (Toni / Keycloak admin):** ensure the `DiVoid` client has a user-attribute mapper named `UserId` that emits to access tokens. Note the `client_id` value.
 2. **Merge the PR** with `Keycloak:Audience` empty in the committed `appsettings.json`. Service is still healthy because `Auth:Enabled=false` is the dev default in the existing settings file (verify), or because Toni populates `Keycloak:Audience` in the deployment's environment-overlay config before deploying.
-3. **Configure the production overlay** with `Keycloak:Audience=<client_id>` and `Keycloak:RequireHttpsMetadata=true`.
+3. **Configure the production overlay** with `Keycloak:RequireHttpsMetadata=true` and set `Keycloak:Audience` to **whatever value appears in the `aud` claim of a real access token issued by the DiVoid client**. For this realm/client that value is the literal string `"DiVoid"` — it is **not** the Keycloak `client_id` by default. To verify before committing the config, decode a real token (base64-decode the middle segment, parse JSON, look at `aud`) and use exactly that value.
 4. **Provision DiVoid users** for each human who needs access: create the `divoid_user` row, set `Permissions`, and configure their Keycloak user with the `UserId` attribute matching the row id.
 5. **Verify with a real token** before the frontend lands: mint a token via Keycloak's account console or `curl`, hit `/api/nodes`, confirm 200.
 
