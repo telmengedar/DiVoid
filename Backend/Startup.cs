@@ -108,7 +108,6 @@ public class Startup
         services.AddTransient<IKeyGenerator, KeyGenerator>();
         services.AddTransient<IUserService, UserService>();
         services.AddTransient<IApiKeyService, ApiKeyService>();
-        services.AddTransient<IAuthService, AuthService>();
         services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
         if (AuthEnabled) {
