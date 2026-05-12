@@ -1,10 +1,10 @@
 using System.Linq.Expressions;
 using System.Reflection;
-using System.Text.Json;
 using Backend.Models.Attributes;
 using Pooshit.AspNetCore.Services.Convert;
 using Pooshit.AspNetCore.Services.Errors.Exceptions;
 using Pooshit.AspNetCore.Services.Patches;
+using Pooshit.Json;
 using Pooshit.Ocelot.Entities.Operations;
 using Pooshit.Ocelot.Tokens;
 
@@ -89,34 +89,12 @@ public static class DatabasePatchExtensions {
             for (int i = 0; i < arr.Length; i++) {
                 if (arr[i] is string s)
                     strings[i] = s;
-                else if (arr[i] is JsonElement el && el.ValueKind == JsonValueKind.String)
-                    strings[i] = el.GetString()!;
                 else
                     throw new ArgumentException(
                         $"'{entitytype.Name}::{property.Name}' must be an array of strings; "
                         + $"element at index {i} has type {arr[i]?.GetType().Name ?? "null"}.");
             }
-            return JsonSerializer.Serialize(strings);
-        }
-        if (value is JsonElement element) {
-            switch (element.ValueKind) {
-                case JsonValueKind.Array:
-                    foreach (JsonElement item in element.EnumerateArray()) {
-                        if (item.ValueKind != JsonValueKind.String)
-                            throw new ArgumentException(
-                                $"'{entitytype.Name}::{property.Name}' must be an array of strings; "
-                                + $"element '{item.GetRawText()}' is not a string.");
-                    }
-                    return element.GetRawText();
-                case JsonValueKind.String:
-                    return element.GetString()!;
-                case JsonValueKind.Null:
-                    return null;
-                default:
-                    throw new ArgumentException(
-                        $"'{entitytype.Name}::{property.Name}' expects a JSON array or pre-encoded JSON string, "
-                        + $"got {element.ValueKind}.");
-            }
+            return Json.WriteString(strings);
         }
         if (value is string str)
             return str;
