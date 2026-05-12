@@ -49,7 +49,6 @@ export const API = {
   },
   NODES: {
     LIST: '/nodes',
-    PATH: '/nodes/path',
     DETAIL: (id: number) => `/nodes/${id}`,
     CONTENT: (id: number) => `/nodes/${id}/content`,
     LINKS: (id: number) => `/nodes/${id}/links`,

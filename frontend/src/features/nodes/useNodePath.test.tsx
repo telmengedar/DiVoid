@@ -19,7 +19,7 @@ import { BASE_URL, samplePage } from '@/test/msw/handlers';
 // ─── MSW server ───────────────────────────────────────────────────────────────
 
 const server = setupServer(
-  http.get(`${BASE_URL}/nodes/path`, () => HttpResponse.json(samplePage)),
+  http.get(`${BASE_URL}/nodes`, () => HttpResponse.json(samplePage)),
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
@@ -42,7 +42,6 @@ vi.mock('@/lib/constants', () => ({
     USERS: { ME: '/users/me' },
     NODES: {
       LIST: '/nodes',
-      PATH: '/nodes/path',
       DETAIL: (id: number) => `/nodes/${id}`,
       CONTENT: (id: number) => `/nodes/${id}/content`,
       LINKS: (id: number) => `/nodes/${id}/links`,
@@ -99,7 +98,7 @@ describe('useNodePath', () => {
   it('surfaces column-pointing message on 400', async () => {
     const syntaxErrorText = 'Path query syntax error at column 5: expected predicate after "["';
     server.use(
-      http.get(`${BASE_URL}/nodes/path`, () =>
+      http.get(`${BASE_URL}/nodes`, () =>
         HttpResponse.json(
           { code: 'badparameter', text: syntaxErrorText },
           { status: 400 },

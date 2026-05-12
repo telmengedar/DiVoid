@@ -18,7 +18,7 @@ export interface NodeDetails {
   contentType?: string;
 }
 
-/** Paginated response envelope from GET /api/nodes and GET /api/nodes/path. */
+/** Paginated response envelope from GET /api/nodes (including path-query via ?path=). */
 export interface Page<T> {
   result: T[];
   /** Total count of matching records. -1 when nototal=true. */

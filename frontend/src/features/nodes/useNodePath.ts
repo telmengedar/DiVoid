@@ -1,8 +1,10 @@
 /**
  * useNodePath — graph path traversal hook.
  *
- * Wraps GET /api/nodes/path?path=<expression>&... — server-side multi-hop
+ * Wraps GET /api/nodes?path=<expression>&... — server-side multi-hop
  * traversal. Use when the topology is known ("open tasks under project X").
+ * The `path` parameter is a query param on the listing endpoint; there is no
+ * separate /api/nodes/path route (that returns 404).
  *
  * 400 errors from path syntax problems carry the backend's column-pointing
  * message; callers should surface them directly to the user (not swallow them).
@@ -46,7 +48,7 @@ export function useNodePath(path: string, filter?: PathFilter) {
   return useQuery<Page<NodeDetails>>({
     queryKey: nodePathQueryKey(path, filter),
     queryFn: ({ signal }) =>
-      client.get<Page<NodeDetails>>(API.NODES.PATH, params as Record<string, unknown>, signal),
+      client.get<Page<NodeDetails>>(API.NODES.LIST, params as Record<string, unknown>, signal),
     enabled: auth.isAuthenticated && path.trim().length > 0,
     staleTime: 30_000,
     // Do not retry on 400 — syntax errors are permanent for a given path string.
