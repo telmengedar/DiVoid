@@ -17,8 +17,7 @@ namespace Backend.tests.Tests;
 ///   - GET /api/users/{id} returns Permissions as string[] (not raw JSON string)
 ///   - GET /api/users list returns Permissions per user
 ///   - PATCH /api/users/{id} accepts the natural array shape
-///   - PATCH /api/users/{id} accepts the legacy pre-encoded-string shape (backwards compat)
-///   - PATCH /api/users/{id} rejects non-array, non-string values with 400
+///   - PATCH /api/users/{id} rejects non-array values (string, number) with 400
 /// </summary>
 [TestFixture]
 public class UserPermissionsTests
@@ -149,26 +148,20 @@ public class UserPermissionsTests
     }
 
     // -----------------------------------------------------------------------
-    // PATCH — legacy pre-encoded string (backwards compat)
+    // PATCH — string value (not an array) → 400
     // -----------------------------------------------------------------------
 
     [Test]
-    public async Task PatchUser_LegacyPreEncodedString_StillWorks()
+    public async Task PatchUser_StringValue_Returns400()
     {
         long id = await InsertUserAsync("patch-legacy-user-" + Guid.NewGuid().ToString("N")[..6],
                                         Json.WriteString(new[] { "read" }));
 
-        // Legacy callers send a JSON string containing a JSON-encoded array.
+        // Callers must send an array; a bare string (even if JSON-encoded) is rejected.
         string patchBody = "[{\"op\":\"replace\",\"path\":\"/Permissions\",\"value\":\"[\\\"admin\\\"]\"}]";
         HttpResponseMessage patchResp = await PatchUserAsync(id, patchBody);
-        Assert.That((int)patchResp.StatusCode, Is.EqualTo(200),
-            $"PATCH with pre-encoded string must still return 200; body: {await patchResp.Content.ReadAsStringAsync()}");
-
-        HttpResponseMessage getResp = await GetUserAsync(id);
-        string body = await getResp.Content.ReadAsStringAsync();
-        UserDetails user = Json.Read<UserDetails>(body)!;
-
-        Assert.That(ReadPermissions(user), Is.EquivalentTo(new[] { "admin" }));
+        Assert.That((int)patchResp.StatusCode, Is.EqualTo(400),
+            $"PATCH with a string Permissions value must return 400; body: {await patchResp.Content.ReadAsStringAsync()}");
     }
 
     // -----------------------------------------------------------------------

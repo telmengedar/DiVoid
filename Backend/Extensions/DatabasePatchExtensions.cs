@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using Backend.Models.Attributes;
@@ -84,24 +85,9 @@ public static class DatabasePatchExtensions {
     }
 
     static string ResolveJsonColumnValue(object value, Type entitytype, PropertyInfo property) {
-        if (value is object[] arr) {
-            string[] strings = new string[arr.Length];
-            for (int i = 0; i < arr.Length; i++) {
-                if (arr[i] is string s)
-                    strings[i] = s;
-                else
-                    throw new ArgumentException(
-                        $"'{entitytype.Name}::{property.Name}' must be an array of strings; "
-                        + $"element at index {i} has type {arr[i]?.GetType().Name ?? "null"}.");
-            }
-            return Json.WriteString(strings);
-        }
-        if (value is string str)
-            return str;
-        if (value is null)
-            return null;
-        throw new ArgumentException(
-            $"'{entitytype.Name}::{property.Name}' expects a JSON array or pre-encoded JSON string, "
-            + $"got {value.GetType().Name}.");
+        if (value is not object[] arr)
+            throw new ArgumentException(
+                $"'{entitytype.Name}::{property.Name}' must be an array; got {value?.GetType().Name ?? "null"}.");
+        return Json.WriteString(arr.Select(el => Converter.Convert<string>(el)).ToArray());
     }
 }
