@@ -180,13 +180,16 @@ When `Auth:Enabled=true` but `Keycloak:Audience` is empty, the service must **fa
 
 ### 6.3 Scheme-routing detail
 
-There is no manual "is this a JWT" sniffer in DiVoid code. The behaviour above is the standard ASP.NET multi-scheme pipeline:
+A `PolicyScheme` named `DiVoidBearer` is registered as the default authentication scheme. It inspects the inbound `Authorization` header and forwards to exactly one sub-scheme per request:
 
-- `DefaultAuthenticateScheme = JwtBearer`. JwtBearer is tried first.
-- A non-JWT bearer token causes JwtBearer's handler to return `NoResult` (not `Fail`) — the .NET JwtBearer handler treats malformed-as-JWS bearer values as "not for me," not as an error. (The implementer must verify and, if needed, set `JwtBearerEvents.OnMessageReceived` to short-circuit cleanly; this is a small implementation detail, not an architectural decision.)
-- The fallback authorization policy lists both schemes, so authorization will internally call `AuthenticateAsync("ApiKey")` after JwtBearer abstains, and the API-key handler runs.
+- **Compact JWT shape** (bearer value with exactly 2 dots — `header.payload.signature`) → forwarded to `JwtBearer`.
+- **Anything else** (API-key format `<keyId>.<secret>`, missing header, non-`Bearer` prefix) → forwarded to `ApiKey`.
 
-If the JwtBearer handler ever returns `Fail` (e.g. token *looks* like a JWT but is invalid), authorization should **not** silently fall through to ApiKey. That distinction is what makes the error surface in section 9 well-defined.
+This means each request is authenticated by exactly one scheme. The authorization middleware never needs to enumerate multiple schemes on a policy, so `ForbidAsync` is called on at most one scheme, eliminating the spurious `"ApiKey was forbidden"` log line that the previous multi-scheme-per-policy arrangement produced on every JWT 403.
+
+`ApiKeyAuthenticationHandler` retains its own dot-count guard (returns `NoResult` for JWT-shaped bearers) as defence-in-depth against future misconfiguration of `ForwardDefaultSelector`.
+
+If `JwtBearer` returns `Fail` (e.g. token looks like a JWT but has bad signature, expired, wrong audience), authorization does **not** fall through to ApiKey — `PolicyScheme` already committed the request to `JwtBearer` before validation ran, so the scheme is not retried. This distinction is what makes the error surface in section 9 well-defined.
 
 ### 6.4 Cross-cutting flow — claim emission timing
 
@@ -304,7 +307,7 @@ Signing keys are pulled from JWKS via the OIDC discovery document at `<Authority
 
 | Attribute | How addressed | Trade-off |
 |---|---|---|
-| **Backwards compatibility** | API-key path is untouched. Scheme selection happens by token shape at the framework level. | We rely on JwtBearer's `NoResult` behaviour for non-JWT bearers; if a future .NET version changes that, both schemes' interaction needs revisiting. The cross-scheme test pins it. |
+| **Backwards compatibility** | API-key path is untouched. Scheme selection happens by token shape in the `PolicyScheme` `ForwardDefaultSelector`. | The `PolicyScheme` is DiVoid-controlled code, not a .NET internals assumption. The cross-scheme test pins the contract end-to-end. |
 | **Performance** | One extra DB read per JWT request (PK lookup on `divoid_user`). JWKS is cached by middleware. | No caching yet; if request rates ever hit thousands/sec we'll need an in-process LRU. Not now. |
 | **Security** | Standard `JwtBearer` validation, audience-pinned, signing-key-pinned. Tightened clock skew. Startup fails closed if `Keycloak:Audience` is empty. | Configuration-driven `RequireHttpsMetadata` is `false` in dev — acceptable because the URL is HTTPS anyway, but the doc explicitly calls out that prod settings must set it true. |
 | **Maintainability** | Two new files (transformation + small startup change), no new abstractions, same claim shape as today. | We're adding a column to `divoid_user` instead of a side table or a Keycloak-roles-driven design (section 11). Cost: one schema column. Benefit: zero net new patterns; the column is the obvious place to evolve. |

@@ -208,14 +208,51 @@ public class AuthHandlerTests
         AuthorizationPolicy? fallback = authOptions.Value.FallbackPolicy;
 
         Assert.That(fallback, Is.Not.Null, "Startup must register a non-null FallbackPolicy");
-        Assert.That(fallback.AuthenticationSchemes, Does.Contain(ApiKeyAuthenticationHandler.SchemeName),
-            "FallbackPolicy must include the ApiKey authentication scheme");
-        Assert.That(fallback.AuthenticationSchemes, Does.Contain(JwtBearerDefaults.AuthenticationScheme),
-            "FallbackPolicy must include the JwtBearer authentication scheme");
+        // Under PolicyScheme, policies do NOT carry explicit per-scheme lists.
+        // The DiVoidBearer PolicyScheme is the default authenticate scheme and dispatches
+        // to JwtBearer or ApiKey based on token shape. Per-policy scheme lists caused the
+        // framework to call ForbidAsync on every listed scheme, producing spurious log noise.
+        Assert.That(fallback.AuthenticationSchemes, Is.Empty,
+            "FallbackPolicy must NOT enumerate individual schemes — PolicyScheme dispatches scheme selection");
         Assert.That(
             fallback.Requirements.OfType<Microsoft.AspNetCore.Authorization.Infrastructure.DenyAnonymousAuthorizationRequirement>().Any(),
             Is.True,
             "FallbackPolicy must require an authenticated user (DenyAnonymousAuthorizationRequirement)");
+    }
+
+    // -----------------------------------------------------------------------
+    // Named policies — Startup.ConfigureServices does NOT enumerate schemes
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public void NamedPolicies_DoNotEnumerateAuthenticationSchemes()
+    {
+        // Pins the contract: under PolicyScheme dispatch, named policies must not carry
+        // per-policy authentication scheme lists. If they did, the framework would invoke
+        // ForbidAsync on each listed scheme, emitting spurious log noise on every 403.
+        IConfiguration configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> {
+                ["Auth:Enabled"]      = "true",
+                ["DIVOID_KEY_PEPPER"] = TestPepper,
+                ["Database:Type"]     = "Sqlite",
+                ["Database:Source"]   = ":memory:",
+                ["Keycloak:Audience"] = "test-audience-value"
+            })
+            .Build();
+
+        IServiceCollection services = new ServiceCollection();
+        services.AddSingleton(configuration);
+        new Startup(configuration).ConfigureServices(services);
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        IOptions<AuthorizationOptions> authOptions = provider.GetRequiredService<IOptions<AuthorizationOptions>>();
+
+        foreach (string policyName in new[] { "admin", "write", "read" }) {
+            AuthorizationPolicy? policy = authOptions.Value.GetPolicy(policyName);
+            Assert.That(policy, Is.Not.Null, $"Policy '{policyName}' must be registered");
+            Assert.That(policy!.AuthenticationSchemes, Is.Empty,
+                $"Policy '{policyName}' must not enumerate authentication schemes — PolicyScheme handles dispatch");
+        }
     }
 
     // -----------------------------------------------------------------------
