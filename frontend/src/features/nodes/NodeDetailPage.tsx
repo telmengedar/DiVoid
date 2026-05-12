@@ -27,7 +27,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
 import { toast } from 'sonner';
-import { ChevronLeft, Pencil, Trash2, Link2, Unlink, UploadCloud } from 'lucide-react';
+import { ChevronLeft, Pencil, Trash2, Link2, Unlink, UploadCloud, X } from 'lucide-react';
 import { useNode } from './useNode';
 import { useNodeContent } from './useNodeContent';
 import { useNodeListLinkedTo } from './useNodeListLinkedTo';
@@ -36,6 +36,7 @@ import { EditNodeDialog } from './EditNodeDialog';
 import { DeleteNodeDialog } from './DeleteNodeDialog';
 import { LinkNodeDialog } from './LinkNodeDialog';
 import { ContentUploadZone } from './ContentUploadZone';
+import { MarkdownEditorSurface, isTextShaped } from './MarkdownEditorSurface';
 import { NodeResultTable } from '@/components/common/NodeResultTable';
 import { DivoidApiError } from '@/types/divoid';
 import type { NodeDetails } from '@/types/divoid';
@@ -82,8 +83,11 @@ interface ContentRegionProps {
   canWrite: boolean;
 }
 
+type ContentMode = 'read' | 'edit';
+
 function ContentRegion({ nodeId, contentType, canWrite }: ContentRegionProps) {
   const { data: content, isFetching, error } = useNodeContent(nodeId);
+  const [mode, setMode] = useState<ContentMode>('read');
   const [showUpload, setShowUpload] = useState(false);
 
   useEffect(() => {
@@ -92,7 +96,7 @@ function ContentRegion({ nodeId, contentType, canWrite }: ContentRegionProps) {
     }
   }, [error]);
 
-  if (isFetching) {
+  if (isFetching && !content) {
     return (
       <div className="space-y-2 animate-pulse" aria-label="Loading content">
         {[...Array(6)].map((_, i) => (
@@ -115,27 +119,68 @@ function ContentRegion({ nodeId, contentType, canWrite }: ContentRegionProps) {
     contentType.includes('markdown') ||
     contentType.includes('text/plain');
 
+  const canEdit = canWrite && isTextShaped(contentType || '');
+
   return (
     <div className="flex flex-col gap-4">
-      {/* Content display */}
-      {!content ? (
-        <p className="text-sm text-muted-foreground italic">No content.</p>
-      ) : isMarkdown ? (
-        <div
-          className="prose prose-sm dark:prose-invert max-w-none"
-          aria-label="Node content"
-        >
-          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
-            {content}
-          </ReactMarkdown>
+      {/* Mode toggle for text-shaped content */}
+      {canEdit && (
+        <div className="flex items-center gap-2">
+          {mode === 'read' ? (
+            <button
+              type="button"
+              onClick={() => setMode('edit')}
+              aria-label="Edit content"
+              className="inline-flex items-center gap-1.5 self-start text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Pencil size={15} aria-hidden="true" />
+              Edit content
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setMode('read')}
+              aria-label="Cancel editing"
+              className="inline-flex items-center gap-1.5 self-start text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X size={15} aria-hidden="true" />
+              Cancel
+            </button>
+          )}
         </div>
-      ) : (
-        <pre className="text-sm font-mono whitespace-pre-wrap break-words bg-muted/40 rounded-md p-4 overflow-x-auto">
-          {content}
-        </pre>
       )}
 
-      {/* Upload affordance */}
+      {/* Editor surface (text-shaped content, edit mode) */}
+      {mode === 'edit' && canEdit && (
+        <MarkdownEditorSurface
+          nodeId={nodeId}
+          initialContent={content ?? ''}
+        />
+      )}
+
+      {/* Read display (always visible in read mode) */}
+      {mode === 'read' && (
+        <>
+          {!content ? (
+            <p className="text-sm text-muted-foreground italic">No content.</p>
+          ) : isMarkdown ? (
+            <div
+              className="prose prose-sm dark:prose-invert max-w-none"
+              aria-label="Node content"
+            >
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
+                {content}
+              </ReactMarkdown>
+            </div>
+          ) : (
+            <pre className="text-sm font-mono whitespace-pre-wrap break-words bg-muted/40 rounded-md p-4 overflow-x-auto">
+              {content}
+            </pre>
+          )}
+        </>
+      )}
+
+      {/* Upload affordance (drag-drop, always available for write users) */}
       {canWrite && (
         <>
           <button
@@ -145,7 +190,7 @@ function ContentRegion({ nodeId, contentType, canWrite }: ContentRegionProps) {
             aria-expanded={showUpload}
           >
             <UploadCloud size={15} aria-hidden="true" />
-            {showUpload ? 'Hide upload' : 'Replace content'}
+            {showUpload ? 'Hide upload' : 'Replace content via file'}
           </button>
           {showUpload && <ContentUploadZone nodeId={nodeId} />}
         </>
