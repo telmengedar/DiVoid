@@ -81,6 +81,7 @@ public class Startup
         services.AddTransient<IErrorHandler, NotSupportedExceptionHandler>();
         services.AddTransient<IErrorHandler, PathQueryParseExceptionHandler>();
         services.AddTransient<IErrorHandler, SemanticSearchUnavailableExceptionHandler>();
+        services.AddTransient<IErrorHandler, ArgumentExceptionHandler>();
         services.AddLogging(options =>
         {
             options.ClearProviders();

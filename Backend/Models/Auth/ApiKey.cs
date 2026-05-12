@@ -1,3 +1,4 @@
+using Backend.Models.Attributes;
 using Pooshit.AspNetCore.Services.Patches;
 using Pooshit.Ocelot.Entities.Attributes;
 
@@ -36,6 +37,7 @@ public class ApiKey {
     /// permissions included in key
     /// </summary>
     [AllowPatch]
+    [JsonColumn]
     public string Permissions { get; set; }
 
     /// <summary>
