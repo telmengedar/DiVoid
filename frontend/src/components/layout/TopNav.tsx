@@ -15,6 +15,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { LogOut, Network, ListTodo, Search } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ROUTES } from '@/lib/constants';
+import { ThemeToggle } from './ThemeToggle';
 
 function UserMenuTrigger({ name }: { name?: string }) {
   const initials = name
@@ -83,6 +84,9 @@ export function TopNav() {
 
       {/* Spacer */}
       <div className="flex-1" />
+
+      {/* Theme toggle */}
+      <ThemeToggle />
 
       {/* User menu */}
       {auth.isAuthenticated && (
