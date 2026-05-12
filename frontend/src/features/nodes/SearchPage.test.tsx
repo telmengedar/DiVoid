@@ -20,6 +20,12 @@ import { BASE_URL, semanticPage, samplePage } from '@/test/msw/handlers';
 // ─── MSW server ───────────────────────────────────────────────────────────────
 
 const server = setupServer(
+  http.get(`${BASE_URL}/users/me`, () =>
+    HttpResponse.json({
+      id: 1, name: 'Toni', email: 'toni@mamgo.io', enabled: true,
+      createdAt: '2026-01-01T00:00:00Z', permissions: ['read', 'write'],
+    }),
+  ),
   http.get(`${BASE_URL}/nodes`, ({ request }) => {
     const url = new URL(request.url);
     if (url.searchParams.get('query')) return HttpResponse.json(semanticPage);
@@ -45,11 +51,15 @@ vi.mock('react-oidc-context', () => ({
 vi.mock('@/lib/constants', () => ({
   API_BASE_URL: BASE_URL,
   API: {
+    USERS: { ME: '/users/me' },
     NODES: {
       LIST: '/nodes',
       DETAIL: (id: number) => `/nodes/${id}`,
       CONTENT: (id: number) => `/nodes/${id}/content`,
+      LINKS: (id: number) => `/nodes/${id}/links`,
+      UNLINK: (s: number, t: number) => `/nodes/${s}/links/${t}`,
     },
+    HEALTH: '/health',
   },
   ROUTES: {
     HOME: '/',
@@ -57,11 +67,18 @@ vi.mock('@/lib/constants', () => ({
     NODE_DETAIL: (id: number) => `/nodes/${id}`,
     WORKSPACE: '/workspace',
     TASKS: '/tasks',
+    PROJECT_TASKS: (id: number) => `/tasks/${id}`,
   },
 }));
 
 // sonner toast is a no-op in tests
-vi.mock('sonner', () => ({ toast: { error: vi.fn() } }));
+vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+
+// Mock heavy dialog to prevent jsdom OOM — tested in CreateNodeDialog.test.tsx
+vi.mock('./CreateNodeDialog', () => ({
+  CreateNodeDialog: ({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) =>
+    open ? <div role="dialog" aria-label="Create node"><button onClick={() => onOpenChange(false)}>Close</button></div> : null,
+}));
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
