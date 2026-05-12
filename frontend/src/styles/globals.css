@@ -36,6 +36,7 @@
 
 /* ─── CSS Variables ─── */
 
+/* Light theme (default) */
 :root {
   --background: 0 0% 98%;
   --foreground: 0 0% 9%;
@@ -66,6 +67,37 @@
   --ring: 221 83% 53%;
 
   --radius: 0.5rem;
+}
+
+/* Dark theme — activated by <html class="dark"> (next-themes attribute="class") */
+.dark {
+  --background: 222 47% 8%;
+  --foreground: 213 31% 91%;
+
+  --card: 222 47% 11%;
+  --card-foreground: 213 31% 91%;
+
+  --popover: 222 47% 11%;
+  --popover-foreground: 213 31% 91%;
+
+  --primary: 221 83% 60%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 222 47% 15%;
+  --secondary-foreground: 213 31% 91%;
+
+  --muted: 222 47% 15%;
+  --muted-foreground: 215 16% 57%;
+
+  --accent: 221 83% 60%;
+  --accent-foreground: 0 0% 100%;
+
+  --destructive: 0 63% 55%;
+  --destructive-foreground: 0 0% 98%;
+
+  --border: 222 47% 18%;
+  --input: 222 47% 18%;
+  --ring: 221 83% 60%;
 }
 
 /* ─── Base Styles ─── */
