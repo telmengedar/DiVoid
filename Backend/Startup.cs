@@ -99,6 +99,7 @@ public class Startup
             o.ModelBinderProviders.Insert(0, new ArrayParameterBinderProvider());
         }).AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
+        services.AddDivoidCors(Configuration);
         services.ConfigureDatabaseService(Configuration);
 
         bool embeddingEnabled = Configuration["Database:Type"] != "Sqlite";
@@ -260,6 +261,7 @@ public class Startup
     {
         app.UseRouting();
         app.UseMiddleware<ErrorHandlerMiddleware>();
+        app.UseDivoidCors();
 
         if (AuthEnabled)
             app.UseAuthentication();
