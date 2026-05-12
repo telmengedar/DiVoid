@@ -43,15 +43,28 @@ export function LinkNodeDialog({ open, onOpenChange, sourceId }: LinkNodeDialogP
     defaultValues: { query: '' },
   });
 
-  // Reset state when dialog closes.
+  // Reset local state when dialog closes.
+  // mutation.reset() is deliberately omitted from this effect — mutation is a new
+  // object reference every render (TanStack Query), so including it in deps would
+  // cause mutation.reset() → notify → re-render → new mutation → loop.
+  // mutation.reset() is called in handleOpenChange instead.
   useEffect(() => {
     if (!open) {
       reset();
       setQuery('');
       setSelected(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Reset mutation state on close (Pattern A: event not effect, avoids mutation
+  // identity loop — see CreateNodeDialog for full comment).
+  const handleOpenChange = (isOpen: boolean) => {
+    if (!isOpen) {
       mutation.reset();
     }
-  }, [open, reset, mutation]);
+    onOpenChange(isOpen);
+  };
 
   const handleSearch = handleSubmit(({ query: q }) => {
     setQuery(q.trim());
@@ -62,7 +75,7 @@ export function LinkNodeDialog({ open, onOpenChange, sourceId }: LinkNodeDialogP
     if (!selected) return;
     try {
       await mutation.mutateAsync({ sourceId, targetId: selected.id });
-      onOpenChange(false);
+      handleOpenChange(false);
     } catch {
       // Error toast was already shown by the mutation's onError handler.
       // Keep the dialog open for retry.
@@ -70,7 +83,7 @@ export function LinkNodeDialog({ open, onOpenChange, sourceId }: LinkNodeDialogP
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/40 z-40 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
         <Dialog.Content

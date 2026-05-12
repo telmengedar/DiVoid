@@ -46,13 +46,26 @@ export function EditNodeDialog({ open, onOpenChange, node }: EditNodeDialogProps
     },
   });
 
-  // Sync default values when the node prop changes or dialog opens.
+  // Sync form values when the dialog opens or the node prop changes.
+  // mutation.reset() is deliberately omitted from this effect — mutation is a new
+  // object reference every render (TanStack Query), so including it in deps would
+  // cause mutation.reset() → notify → re-render → new mutation → loop.
+  // mutation.reset() is called in handleOpenChange instead.
   useEffect(() => {
     if (open) {
       reset({ name: node.name, status: node.status ?? '' });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, node.name, node.status]);
+
+  // Reset mutation state on close (Pattern A: event not effect, avoids mutation
+  // identity loop — see CreateNodeDialog for full comment).
+  const handleOpenChange = (isOpen: boolean) => {
+    if (!isOpen) {
       mutation.reset();
     }
-  }, [open, node.name, node.status, reset, mutation]);
+    onOpenChange(isOpen);
+  };
 
   const onSubmit = handleSubmit(async (values) => {
     const ops = [];
@@ -68,13 +81,13 @@ export function EditNodeDialog({ open, onOpenChange, node }: EditNodeDialogProps
     }
 
     if (ops.length === 0) {
-      onOpenChange(false);
+      handleOpenChange(false);
       return;
     }
 
     try {
       await mutation.mutateAsync(ops);
-      onOpenChange(false);
+      handleOpenChange(false);
     } catch {
       // Error toast was already shown by the mutation's onError handler.
       // Keep the dialog open for retry.
@@ -82,7 +95,7 @@ export function EditNodeDialog({ open, onOpenChange, node }: EditNodeDialogProps
   });
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/40 z-40 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
         <Dialog.Content
