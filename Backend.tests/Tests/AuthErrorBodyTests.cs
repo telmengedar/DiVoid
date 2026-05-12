@@ -194,6 +194,52 @@ public class AuthErrorBodyTests
     }
 
     // -----------------------------------------------------------------------
+    // JWT 401 — wrong issuer → "JWT issuer is not accepted by this service"
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task Jwt_WrongIssuer_Returns401WithIssuerDetail()
+    {
+        long userId = await CreateEnabledUserAsync(new[] { "read" });
+        string token = fixture.MintToken(userId: userId, issuer: "https://wrong-issuer.example.com/realms/other");
+
+        HttpResponseMessage response = await GetNodesWithTokenAsync(token);
+
+        Assert.That((int)response.StatusCode, Is.EqualTo(401));
+        AssertJsonContentType(response);
+        AssertWwwAuthenticate(response);
+
+        ErrorBody body = await ReadErrorBodyAsync(response);
+        Assert.Multiple(() => {
+            Assert.That(body.Status, Is.EqualTo(401));
+            Assert.That(body.Title, Is.EqualTo("Unauthorized"));
+            Assert.That(body.Detail, Is.EqualTo("JWT issuer is not accepted by this service"));
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // JWT 401 — malformed token → "JWT could not be parsed"
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task Jwt_Malformed_Returns401WithParseDetail()
+    {
+        // Two dots → routes to JwtBearer (not ApiKey path), but not a valid JWT
+        HttpResponseMessage response = await GetNodesWithTokenAsync("aaa.bbb.ccc");
+
+        Assert.That((int)response.StatusCode, Is.EqualTo(401));
+        AssertJsonContentType(response);
+        AssertWwwAuthenticate(response);
+
+        ErrorBody body = await ReadErrorBodyAsync(response);
+        Assert.Multiple(() => {
+            Assert.That(body.Status, Is.EqualTo(401));
+            Assert.That(body.Title, Is.EqualTo("Unauthorized"));
+            Assert.That(body.Detail, Is.EqualTo("JWT could not be parsed"));
+        });
+    }
+
+    // -----------------------------------------------------------------------
     // JWT 403 — authenticated but lacks permission
     // -----------------------------------------------------------------------
 
@@ -213,8 +259,8 @@ public class AuthErrorBodyTests
         Assert.Multiple(() => {
             Assert.That(body.Status, Is.EqualTo(403));
             Assert.That(body.Title, Is.EqualTo("Forbidden"));
-            // GET /api/nodes requires the "read" policy
-            Assert.That(body.Detail, Does.Contain("read"));
+            // GET /api/nodes requires the "read" policy — pin the exact contract string
+            Assert.That(body.Detail, Is.EqualTo("Caller lacks required permission 'read'"));
         });
     }
 
@@ -295,6 +341,154 @@ public class AuthErrorBodyTests
             Assert.That(body.Status, Is.EqualTo(401));
             Assert.That(body.Title, Is.EqualTo("Unauthorized"));
             Assert.That(body.Detail, Is.EqualTo("API key not recognised"));
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // ApiKey 401 — disabled key → "API key is disabled"
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task ApiKey_DisabledKey_Returns401WithDisabledKeyDetail()
+    {
+        long userId = await CreateEnabledUserAsync(new[] { "read" });
+
+        IConfiguration config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> {
+                ["DIVOID_KEY_PEPPER"] = JwtAuthFixture.TestPepper,
+                ["Auth:Enabled"]      = "true"
+            })
+            .Build();
+
+        ApiKeyService svc = new(
+            db,
+            new KeyGenerator(),
+            config,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<ApiKeyService>.Instance);
+
+        ApiKeyDetails key = await svc.CreateApiKey(new ApiKeyParameters {
+            UserId      = userId,
+            Permissions = ["read"]
+        });
+
+        // Disable the key directly via the entity manager
+        await db.Update<ApiKey>()
+                .Set(k => k.Enabled == false)
+                .Where(k => k.Id == key.Id)
+                .ExecuteAsync();
+
+        HttpClient client = fixture.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", key.PlaintextKey!);
+
+        HttpResponseMessage response = await client.GetAsync("/api/nodes");
+
+        Assert.That((int)response.StatusCode, Is.EqualTo(401));
+        AssertJsonContentType(response);
+        AssertWwwAuthenticate(response);
+
+        ErrorBody body = await ReadErrorBodyAsync(response);
+        Assert.Multiple(() => {
+            Assert.That(body.Status, Is.EqualTo(401));
+            Assert.That(body.Title, Is.EqualTo("Unauthorized"));
+            Assert.That(body.Detail, Is.EqualTo("API key is disabled"));
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // ApiKey 401 — expired key → "API key has expired"
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task ApiKey_ExpiredKey_Returns401WithExpiredDetail()
+    {
+        long userId = await CreateEnabledUserAsync(new[] { "read" });
+
+        IConfiguration config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> {
+                ["DIVOID_KEY_PEPPER"] = JwtAuthFixture.TestPepper,
+                ["Auth:Enabled"]      = "true"
+            })
+            .Build();
+
+        ApiKeyService svc = new(
+            db,
+            new KeyGenerator(),
+            config,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<ApiKeyService>.Instance);
+
+        ApiKeyDetails key = await svc.CreateApiKey(new ApiKeyParameters {
+            UserId      = userId,
+            Permissions = ["read"]
+        });
+
+        // Set expiry to 1 hour in the past
+        DateTime expiredAt = DateTime.UtcNow.AddHours(-1);
+        await db.Update<ApiKey>()
+                .Set(k => k.ExpiresAt == expiredAt)
+                .Where(k => k.Id == key.Id)
+                .ExecuteAsync();
+
+        HttpClient client = fixture.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", key.PlaintextKey!);
+
+        HttpResponseMessage response = await client.GetAsync("/api/nodes");
+
+        Assert.That((int)response.StatusCode, Is.EqualTo(401));
+        AssertJsonContentType(response);
+        AssertWwwAuthenticate(response);
+
+        ErrorBody body = await ReadErrorBodyAsync(response);
+        Assert.Multiple(() => {
+            Assert.That(body.Status, Is.EqualTo(401));
+            Assert.That(body.Title, Is.EqualTo("Unauthorized"));
+            Assert.That(body.Detail, Is.EqualTo("API key has expired"));
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // ApiKey 401 — disabled DiVoid user → "DiVoid account is disabled"
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task ApiKey_DisabledUser_Returns401WithDisabledAccountDetail()
+    {
+        long userId = await CreateDisabledUserAsync();
+
+        IConfiguration config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> {
+                ["DIVOID_KEY_PEPPER"] = JwtAuthFixture.TestPepper,
+                ["Auth:Enabled"]      = "true"
+            })
+            .Build();
+
+        ApiKeyService svc = new(
+            db,
+            new KeyGenerator(),
+            config,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<ApiKeyService>.Instance);
+
+        ApiKeyDetails key = await svc.CreateApiKey(new ApiKeyParameters {
+            UserId      = userId,
+            Permissions = ["read"]
+        });
+
+        HttpClient client = fixture.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", key.PlaintextKey!);
+
+        HttpResponseMessage response = await client.GetAsync("/api/nodes");
+
+        Assert.That((int)response.StatusCode, Is.EqualTo(401));
+        AssertJsonContentType(response);
+        AssertWwwAuthenticate(response);
+
+        ErrorBody body = await ReadErrorBodyAsync(response);
+        Assert.Multiple(() => {
+            Assert.That(body.Status, Is.EqualTo(401));
+            Assert.That(body.Title, Is.EqualTo("Unauthorized"));
+            Assert.That(body.Detail, Is.EqualTo("DiVoid account is disabled"));
         });
     }
 
