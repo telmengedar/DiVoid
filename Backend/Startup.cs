@@ -116,15 +116,33 @@ public class Startup
             string authority = Configuration["Keycloak:Authority"] ?? "https://auth.mamgo.io/realms/master";
             bool requireHttpsMetadata = Configuration.GetValue("Keycloak:RequireHttpsMetadata", false);
 
-            services.AddAuthentication(options => {
-                // JwtBearer is the default: it is tried first on every request.
-                // API-key tokens do not look like JWTs (no three-segment base64url form)
-                // so JwtBearer returns NoResult for them and the fallback policy
-                // then tries the ApiKey scheme.
-                options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-                options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+            // PolicyScheme acts as a single entry point for the authentication pipeline.
+            // It inspects the inbound bearer token shape and forwards to exactly one scheme:
+            //   - 3-dot-separated base64url (compact JWT) → JwtBearer
+            //   - anything else (API-key format "<keyId>.<secret>", missing, or malformed) → ApiKey
+            // This means only one scheme ever runs per request, eliminating the "ApiKey was
+            // forbidden" log noise that the previous multi-scheme-per-policy arrangement caused
+            // (the framework called ForbidAsync on every scheme listed in a policy, not just the
+            // one that authenticated the request).
+            const string CombinedScheme = "DiVoidBearer";
+
+            services.AddAuthentication(CombinedScheme)
+            .AddPolicyScheme(CombinedScheme, "JWT or ApiKey bearer", o => {
+                o.ForwardDefaultSelector = ctx => {
+                    string authHeader = ctx.Request.Headers.Authorization.ToString();
+                    if (string.IsNullOrEmpty(authHeader) ||
+                        !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                        return ApiKeyAuthenticationHandler.SchemeName; // no/non-Bearer header → ApiKey produces clean 401
+                    string token = authHeader.Substring("Bearer ".Length).Trim();
+                    // Count dots: a compact JWT serialisation has exactly 2 (header.payload.signature).
+                    int dotCount = 0;
+                    foreach (char c in token) if (c == '.') dotCount++;
+                    return dotCount == 2
+                        ? JwtBearerDefaults.AuthenticationScheme
+                        : ApiKeyAuthenticationHandler.SchemeName;
+                };
             })
-            .AddJwtBearer(options => {
+            .AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options => {
                 options.Authority = authority;
                 options.RequireHttpsMetadata = requireHttpsMetadata;
 
@@ -141,26 +159,10 @@ public class Startup
                     RequireSignedTokens = true,
                     RequireExpirationTime = true
                 };
-
-                // Abstain (NoResult) for tokens that do not look like JWTs.
-                // A valid JWT compact serialization has exactly 2 dots (header.payload.signature).
-                // API-key tokens have the form "<keyId>.<secret>" — exactly 1 dot — and must be
-                // routed to the ApiKey scheme instead of failing JwtBearer validation with an error.
-                // Clearing ctx.Token causes JwtBearerHandler to return NoResult, giving ApiKey
-                // a chance. See design doc section 6.3.
-                options.Events = new JwtBearerEvents {
-                    OnMessageReceived = ctx => {
-                        string token = ctx.Token ?? "";
-                        // Count dots; a JWT needs exactly 2 (compact serialization: h.p.s)
-                        int dotCount = 0;
-                        foreach (char c in token) {
-                            if (c == '.') dotCount++;
-                        }
-                        if (dotCount != 2)
-                            ctx.Token = string.Empty; // causes handler to return NoResult
-                        return Task.CompletedTask;
-                    }
-                };
+                // Note: the OnMessageReceived dot-count gate that existed here previously has been
+                // removed. The PolicyScheme ForwardDefaultSelector is now the primary gate —
+                // non-JWT tokens never reach JwtBearer. ApiKeyAuthenticationHandler retains its
+                // own symmetric dot-count guard as defence-in-depth.
             })
             .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
                 ApiKeyAuthenticationHandler.SchemeName, null);
@@ -168,23 +170,16 @@ public class Startup
             services.AddTransient<IClaimsTransformation, KeycloakClaimsTransformation>();
 
             services.AddAuthorization(options => {
-                // All named policies include both authentication schemes so the authorization
-                // middleware tries JwtBearer first, then ApiKey, for every protected endpoint.
-                // Without this, endpoints with [Authorize(Policy="read")] only invoke the
-                // DefaultAuthenticateScheme (JwtBearer) and API-key callers get 401.
-                options.AddPolicy("admin", p => p
-                    .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, ApiKeyAuthenticationHandler.SchemeName)
-                    .AddRequirements(new PermissionRequirement("admin")));
-                options.AddPolicy("write",  p => p
-                    .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, ApiKeyAuthenticationHandler.SchemeName)
-                    .AddRequirements(new PermissionRequirement("write")));
-                options.AddPolicy("read",   p => p
-                    .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, ApiKeyAuthenticationHandler.SchemeName)
-                    .AddRequirements(new PermissionRequirement("read")));
+                // Policies carry no explicit scheme list: the PolicyScheme (DiVoidBearer) is the
+                // default authenticate scheme and dispatches to exactly one sub-scheme per request.
+                // Listing individual schemes here would cause the framework to ForbidAsync each
+                // listed scheme on a 403, producing spurious "ApiKey was forbidden" log lines.
+                options.AddPolicy("admin", p => p.AddRequirements(new PermissionRequirement("admin")));
+                options.AddPolicy("write",  p => p.AddRequirements(new PermissionRequirement("write")));
+                options.AddPolicy("read",   p => p.AddRequirements(new PermissionRequirement("read")));
 
                 // Fallback: require authentication on every endpoint without explicit [AllowAnonymous].
                 options.FallbackPolicy = new AuthorizationPolicyBuilder()
-                    .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, ApiKeyAuthenticationHandler.SchemeName)
                     .RequireAuthenticatedUser()
                     .Build();
             });
