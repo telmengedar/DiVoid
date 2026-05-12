@@ -26,7 +26,6 @@ const server = setupServer(
     if (url.searchParams.get('linkedto')) return HttpResponse.json(samplePage);
     return HttpResponse.json({ result: [], total: 0 });
   }),
-  http.get(`${BASE_URL}/nodes/path`, () => HttpResponse.json(samplePage)),
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
@@ -48,7 +47,6 @@ vi.mock('@/lib/constants', () => ({
   API: {
     NODES: {
       LIST: '/nodes',
-      PATH: '/nodes/path',
       DETAIL: (id: number) => `/nodes/${id}`,
       CONTENT: (id: number) => `/nodes/${id}/content`,
     },
@@ -134,12 +132,16 @@ describe('SearchPage', () => {
 
   it('path tab shows column-pointing error message on 400', async () => {
     server.use(
-      http.get(`${BASE_URL}/nodes/path`, () =>
-        HttpResponse.json(
-          { code: 'badparameter', text: 'Path query syntax error at column 5' },
-          { status: 400 },
-        ),
-      ),
+      http.get(`${BASE_URL}/nodes`, ({ request }) => {
+        const url = new URL(request.url);
+        if (url.searchParams.get('path')) {
+          return HttpResponse.json(
+            { code: 'badparameter', text: 'Path query syntax error at column 5' },
+            { status: 400 },
+          );
+        }
+        return HttpResponse.json({ result: [], total: 0 });
+      }),
     );
 
     const user = userEvent.setup();

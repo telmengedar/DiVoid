@@ -75,9 +75,6 @@ export const handlers = [
     return HttpResponse.json(samplePage);
   }),
 
-  // Node path traversal
-  http.get(`${BASE_URL}/nodes/path`, () => HttpResponse.json(samplePage)),
-
   // Node detail
   http.get(`${BASE_URL}/nodes/:id`, ({ params }) => {
     const id = parseInt(params.id as string, 10);
