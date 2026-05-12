@@ -12,6 +12,7 @@ using Backend.Models.Users;
 using Backend.Services.Auth;
 using Backend.tests.Fixtures;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -181,10 +182,13 @@ public class AuthHandlerTests
         // required during the service-registration phase.
         IConfiguration configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> {
-                ["Auth:Enabled"] = "true",
-                ["DIVOID_KEY_PEPPER"] = TestPepper,
-                ["Database:Type"] = "Sqlite",
-                ["Database:Source"] = ":memory:"
+                ["Auth:Enabled"]       = "true",
+                ["DIVOID_KEY_PEPPER"]  = TestPepper,
+                ["Database:Type"]      = "Sqlite",
+                ["Database:Source"]    = ":memory:",
+                // Keycloak:Audience must be non-empty when Auth:Enabled=true
+                // (startup fails closed if it is empty — tested separately)
+                ["Keycloak:Audience"]  = "test-audience-value"
             })
             .Build();
 
@@ -202,6 +206,8 @@ public class AuthHandlerTests
         Assert.That(fallback, Is.Not.Null, "Startup must register a non-null FallbackPolicy");
         Assert.That(fallback.AuthenticationSchemes, Does.Contain(ApiKeyAuthenticationHandler.SchemeName),
             "FallbackPolicy must include the ApiKey authentication scheme");
+        Assert.That(fallback.AuthenticationSchemes, Does.Contain(JwtBearerDefaults.AuthenticationScheme),
+            "FallbackPolicy must include the JwtBearer authentication scheme");
         Assert.That(
             fallback.Requirements.OfType<Microsoft.AspNetCore.Authorization.Infrastructure.DenyAnonymousAuthorizationRequirement>().Any(),
             Is.True,
