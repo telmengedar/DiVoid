@@ -1,7 +1,6 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
-using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -22,13 +21,13 @@ namespace Backend.tests.Tests;
 /// Integration tests that assert on the JSON error body returned by 401 and 403
 /// responses from the authentication / authorization pipeline.
 ///
-/// Every 401 must return:
-///   { "status": 401, "title": "Unauthorized", "detail": "&lt;specific reason&gt;" }
+/// Every 401 must return the canonical project shape:
+///   { "code": "authorization_invalidtoken", "text": "&lt;specific reason&gt;" }
 ///   Content-Type: application/json; charset=utf-8
 ///   WWW-Authenticate: Bearer
 ///
 /// Every 403 must return:
-///   { "status": 403, "title": "Forbidden", "detail": "Caller lacks required permission '...'" }
+///   { "code": "authorization_missingscope", "text": "Caller lacks required permission '...'" }
 ///   Content-Type: application/json; charset=utf-8
 ///
 /// Positive paths (200) must not be affected.
@@ -119,7 +118,7 @@ public class AuthErrorBodyTests
     }
 
     // -----------------------------------------------------------------------
-    // JWT 401 — wrong signing key → "JWT signature could not be verified"
+    // JWT 401 - wrong signing key -> "JWT signature could not be verified"
     // -----------------------------------------------------------------------
 
     [Test]
@@ -134,14 +133,13 @@ public class AuthErrorBodyTests
 
         ErrorBody body = await ReadErrorBodyAsync(response);
         Assert.Multiple(() => {
-            Assert.That(body.Status, Is.EqualTo(401));
-            Assert.That(body.Title, Is.EqualTo("Unauthorized"));
-            Assert.That(body.Detail, Is.EqualTo("JWT signature could not be verified"));
+            Assert.That(body.Code, Is.EqualTo("authorization_invalidtoken"));
+            Assert.That(body.Text, Is.EqualTo("JWT signature could not be verified"));
         });
     }
 
     // -----------------------------------------------------------------------
-    // JWT 401 — expired token → "JWT has expired"
+    // JWT 401 - expired token -> "JWT has expired"
     // -----------------------------------------------------------------------
 
     [Test]
@@ -163,14 +161,13 @@ public class AuthErrorBodyTests
 
         ErrorBody body = await ReadErrorBodyAsync(response);
         Assert.Multiple(() => {
-            Assert.That(body.Status, Is.EqualTo(401));
-            Assert.That(body.Title, Is.EqualTo("Unauthorized"));
-            Assert.That(body.Detail, Is.EqualTo("JWT has expired"));
+            Assert.That(body.Code, Is.EqualTo("authorization_invalidtoken"));
+            Assert.That(body.Text, Is.EqualTo("JWT has expired"));
         });
     }
 
     // -----------------------------------------------------------------------
-    // JWT 401 — wrong audience → "JWT audience is not accepted by this service"
+    // JWT 401 - wrong audience -> "JWT audience is not accepted by this service"
     // -----------------------------------------------------------------------
 
     [Test]
@@ -187,14 +184,13 @@ public class AuthErrorBodyTests
 
         ErrorBody body = await ReadErrorBodyAsync(response);
         Assert.Multiple(() => {
-            Assert.That(body.Status, Is.EqualTo(401));
-            Assert.That(body.Title, Is.EqualTo("Unauthorized"));
-            Assert.That(body.Detail, Is.EqualTo("JWT audience is not accepted by this service"));
+            Assert.That(body.Code, Is.EqualTo("authorization_invalidtoken"));
+            Assert.That(body.Text, Is.EqualTo("JWT audience is not accepted by this service"));
         });
     }
 
     // -----------------------------------------------------------------------
-    // JWT 401 — wrong issuer → "JWT issuer is not accepted by this service"
+    // JWT 401 - wrong issuer -> "JWT issuer is not accepted by this service"
     // -----------------------------------------------------------------------
 
     [Test]
@@ -211,20 +207,19 @@ public class AuthErrorBodyTests
 
         ErrorBody body = await ReadErrorBodyAsync(response);
         Assert.Multiple(() => {
-            Assert.That(body.Status, Is.EqualTo(401));
-            Assert.That(body.Title, Is.EqualTo("Unauthorized"));
-            Assert.That(body.Detail, Is.EqualTo("JWT issuer is not accepted by this service"));
+            Assert.That(body.Code, Is.EqualTo("authorization_invalidtoken"));
+            Assert.That(body.Text, Is.EqualTo("JWT issuer is not accepted by this service"));
         });
     }
 
     // -----------------------------------------------------------------------
-    // JWT 401 — malformed token → "JWT could not be parsed"
+    // JWT 401 - malformed token -> "JWT could not be parsed"
     // -----------------------------------------------------------------------
 
     [Test]
     public async Task Jwt_Malformed_Returns401WithParseDetail()
     {
-        // Two dots → routes to JwtBearer (not ApiKey path), but not a valid JWT
+        // Two dots -> routes to JwtBearer (not ApiKey path), but not a valid JWT
         HttpResponseMessage response = await GetNodesWithTokenAsync("aaa.bbb.ccc");
 
         Assert.That((int)response.StatusCode, Is.EqualTo(401));
@@ -233,20 +228,19 @@ public class AuthErrorBodyTests
 
         ErrorBody body = await ReadErrorBodyAsync(response);
         Assert.Multiple(() => {
-            Assert.That(body.Status, Is.EqualTo(401));
-            Assert.That(body.Title, Is.EqualTo("Unauthorized"));
-            Assert.That(body.Detail, Is.EqualTo("JWT could not be parsed"));
+            Assert.That(body.Code, Is.EqualTo("authorization_invalidtoken"));
+            Assert.That(body.Text, Is.EqualTo("JWT could not be parsed"));
         });
     }
 
     // -----------------------------------------------------------------------
-    // JWT 403 — authenticated but lacks permission
+    // JWT 403 - authenticated but lacks permission
     // -----------------------------------------------------------------------
 
     [Test]
     public async Task Jwt_Authenticated_NoPermission_Returns403WithPermissionDetail()
     {
-        // User exists and is enabled but has no permissions → falls through to 403
+        // User exists and is enabled but has no permissions -> falls through to 403
         long userId = await CreateEnabledUserAsync(Array.Empty<string>());
         string token = fixture.MintToken(userId: userId);
 
@@ -257,15 +251,14 @@ public class AuthErrorBodyTests
 
         ErrorBody body = await ReadErrorBodyAsync(response);
         Assert.Multiple(() => {
-            Assert.That(body.Status, Is.EqualTo(403));
-            Assert.That(body.Title, Is.EqualTo("Forbidden"));
-            // GET /api/nodes requires the "read" policy — pin the exact contract string
-            Assert.That(body.Detail, Is.EqualTo("Caller lacks required permission 'read'"));
+            Assert.That(body.Code, Is.EqualTo("authorization_missingscope"));
+            // GET /api/nodes requires the "read" policy - pin the exact contract string
+            Assert.That(body.Text, Is.EqualTo("Caller lacks required permission 'read'"));
         });
     }
 
     // -----------------------------------------------------------------------
-    // JWT 200 — positive path: no error body injected
+    // JWT 200 - positive path: no error body injected
     // -----------------------------------------------------------------------
 
     [Test]
@@ -277,11 +270,11 @@ public class AuthErrorBodyTests
         HttpResponseMessage response = await GetNodesWithTokenAsync(token);
 
         Assert.That((int)response.StatusCode, Is.EqualTo(200),
-            "valid JWT with read permission must return 200 — positive path must not be disrupted");
+            "valid JWT with read permission must return 200 - positive path must not be disrupted");
     }
 
     // -----------------------------------------------------------------------
-    // ApiKey 401 — no Authorization header → "Authorization header missing"
+    // ApiKey 401 - no Authorization header -> "Authorization header missing"
     // -----------------------------------------------------------------------
 
     [Test]
@@ -295,14 +288,13 @@ public class AuthErrorBodyTests
 
         ErrorBody body = await ReadErrorBodyAsync(response);
         Assert.Multiple(() => {
-            Assert.That(body.Status, Is.EqualTo(401));
-            Assert.That(body.Title, Is.EqualTo("Unauthorized"));
-            Assert.That(body.Detail, Is.EqualTo("Authorization header missing"));
+            Assert.That(body.Code, Is.EqualTo("authorization_invalidtoken"));
+            Assert.That(body.Text, Is.EqualTo("Authorization header missing"));
         });
     }
 
     // -----------------------------------------------------------------------
-    // ApiKey 401 — Authorization without Bearer prefix → "Authorization header must use Bearer scheme"
+    // ApiKey 401 - Authorization without Bearer prefix -> "Authorization header must use Bearer scheme"
     // -----------------------------------------------------------------------
 
     [Test]
@@ -316,20 +308,19 @@ public class AuthErrorBodyTests
 
         ErrorBody body = await ReadErrorBodyAsync(response);
         Assert.Multiple(() => {
-            Assert.That(body.Status, Is.EqualTo(401));
-            Assert.That(body.Title, Is.EqualTo("Unauthorized"));
-            Assert.That(body.Detail, Is.EqualTo("Authorization header must use Bearer scheme"));
+            Assert.That(body.Code, Is.EqualTo("authorization_invalidtoken"));
+            Assert.That(body.Text, Is.EqualTo("Authorization header must use Bearer scheme"));
         });
     }
 
     // -----------------------------------------------------------------------
-    // ApiKey 401 — invalid/unknown API key → "API key not recognised"
+    // ApiKey 401 - invalid/unknown API key -> "API key not recognised"
     // -----------------------------------------------------------------------
 
     [Test]
     public async Task ApiKey_InvalidKey_Returns401WithNotRecognisedDetail()
     {
-        // A key in API-key format (single dot, no JWT) that doesn't exist in the DB
+        // A key in API-key format (single dot, no JWT) that does not exist in the DB
         HttpResponseMessage response = await GetNodesWithTokenAsync("00000000.invalidsecret");
 
         Assert.That((int)response.StatusCode, Is.EqualTo(401));
@@ -338,14 +329,13 @@ public class AuthErrorBodyTests
 
         ErrorBody body = await ReadErrorBodyAsync(response);
         Assert.Multiple(() => {
-            Assert.That(body.Status, Is.EqualTo(401));
-            Assert.That(body.Title, Is.EqualTo("Unauthorized"));
-            Assert.That(body.Detail, Is.EqualTo("API key not recognised"));
+            Assert.That(body.Code, Is.EqualTo("authorization_invalidtoken"));
+            Assert.That(body.Text, Is.EqualTo("API key not recognised"));
         });
     }
 
     // -----------------------------------------------------------------------
-    // ApiKey 401 — disabled key → "API key is disabled"
+    // ApiKey 401 - disabled key -> "API key is disabled"
     // -----------------------------------------------------------------------
 
     [Test]
@@ -364,7 +354,7 @@ public class AuthErrorBodyTests
             db,
             new KeyGenerator(),
             config,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<ApiKeyService>.Instance);
+            NullLogger<ApiKeyService>.Instance);
 
         ApiKeyDetails key = await svc.CreateApiKey(new ApiKeyParameters {
             UserId      = userId,
@@ -389,14 +379,13 @@ public class AuthErrorBodyTests
 
         ErrorBody body = await ReadErrorBodyAsync(response);
         Assert.Multiple(() => {
-            Assert.That(body.Status, Is.EqualTo(401));
-            Assert.That(body.Title, Is.EqualTo("Unauthorized"));
-            Assert.That(body.Detail, Is.EqualTo("API key is disabled"));
+            Assert.That(body.Code, Is.EqualTo("authorization_invalidtoken"));
+            Assert.That(body.Text, Is.EqualTo("API key is disabled"));
         });
     }
 
     // -----------------------------------------------------------------------
-    // ApiKey 401 — expired key → "API key has expired"
+    // ApiKey 401 - expired key -> "API key has expired"
     // -----------------------------------------------------------------------
 
     [Test]
@@ -415,7 +404,7 @@ public class AuthErrorBodyTests
             db,
             new KeyGenerator(),
             config,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<ApiKeyService>.Instance);
+            NullLogger<ApiKeyService>.Instance);
 
         ApiKeyDetails key = await svc.CreateApiKey(new ApiKeyParameters {
             UserId      = userId,
@@ -441,14 +430,13 @@ public class AuthErrorBodyTests
 
         ErrorBody body = await ReadErrorBodyAsync(response);
         Assert.Multiple(() => {
-            Assert.That(body.Status, Is.EqualTo(401));
-            Assert.That(body.Title, Is.EqualTo("Unauthorized"));
-            Assert.That(body.Detail, Is.EqualTo("API key has expired"));
+            Assert.That(body.Code, Is.EqualTo("authorization_invalidtoken"));
+            Assert.That(body.Text, Is.EqualTo("API key has expired"));
         });
     }
 
     // -----------------------------------------------------------------------
-    // ApiKey 401 — disabled DiVoid user → "DiVoid account is disabled"
+    // ApiKey 401 - disabled DiVoid user -> "DiVoid account is disabled"
     // -----------------------------------------------------------------------
 
     [Test]
@@ -467,7 +455,7 @@ public class AuthErrorBodyTests
             db,
             new KeyGenerator(),
             config,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<ApiKeyService>.Instance);
+            NullLogger<ApiKeyService>.Instance);
 
         ApiKeyDetails key = await svc.CreateApiKey(new ApiKeyParameters {
             UserId      = userId,
@@ -486,14 +474,13 @@ public class AuthErrorBodyTests
 
         ErrorBody body = await ReadErrorBodyAsync(response);
         Assert.Multiple(() => {
-            Assert.That(body.Status, Is.EqualTo(401));
-            Assert.That(body.Title, Is.EqualTo("Unauthorized"));
-            Assert.That(body.Detail, Is.EqualTo("DiVoid account is disabled"));
+            Assert.That(body.Code, Is.EqualTo("authorization_invalidtoken"));
+            Assert.That(body.Text, Is.EqualTo("DiVoid account is disabled"));
         });
     }
 
     // -----------------------------------------------------------------------
-    // ApiKey 200 — positive path: valid API key still returns 200
+    // ApiKey 200 - positive path: valid API key still returns 200
     // -----------------------------------------------------------------------
 
     [Test]
@@ -530,16 +517,16 @@ public class AuthErrorBodyTests
         HttpResponseMessage response = await client.GetAsync("/api/nodes");
 
         Assert.That((int)response.StatusCode, Is.EqualTo(200),
-            "valid API key with read permission must return 200 — positive path must not be disrupted");
+            "valid API key with read permission must return 200 - positive path must not be disrupted");
     }
 }
 
 /// <summary>
-/// DTO for deserializing the three-field auth error response body.
+/// DTO for deserializing the canonical project error response body.
+/// Matches <c>Pooshit.AspNetCore.Services.Errors.ErrorResponse</c> (<c>code</c> + <c>text</c>).
 /// </summary>
 sealed class ErrorBody
 {
-    public int Status { get; init; }
-    public string Title { get; init; } = "";
-    public string Detail { get; init; } = "";
+    public string Code { get; init; } = "";
+    public string Text { get; init; } = "";
 }

@@ -3,6 +3,7 @@ using System.Linq;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using System.Threading.Tasks;
+using Backend.Errors.Exceptions;
 using Backend.Services.Auth;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
@@ -50,7 +51,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
             return AuthenticateResult.NoResult();
         }
 
-        // Symmetric guard: if the bearer value looks like a JWT (exactly 2 dots —
+        // Symmetric guard: if the bearer value looks like a JWT (exactly 2 dots -
         // compact serialization is header.payload.signature), abstain immediately.
         // JwtBearer has already had its chance; falling through and failing a DB lookup
         // would log a misleading "invalid api key" error when the real issue is on the
@@ -92,19 +93,15 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
         }
     }
 
-    protected override async Task HandleChallengeAsync(AuthenticationProperties properties) {
-        string detail = ResolveApiKeyFailureDetail();
-        Response.Headers["WWW-Authenticate"] = "Bearer";
-        Response.StatusCode = 401;
-        Response.ContentType = "application/json; charset=utf-8";
-        await Response.WriteAsync(AuthErrorMapping.SerializeError(401, "Unauthorized", detail));
+    protected override Task HandleChallengeAsync(AuthenticationProperties properties) {
+        // Throwing here propagates through AuthorizationMiddleware up to ErrorHandlerMiddleware.
+        // ErrorHandlerMiddleware produces the canonical { code, text } body at HTTP 401 with
+        // a WWW-Authenticate: Bearer header (set by AuthenticationFailedExceptionHandler).
+        throw new AuthenticationFailedException(ResolveApiKeyFailureDetail());
     }
 
-    protected override async Task HandleForbiddenAsync(AuthenticationProperties properties) {
-        Response.StatusCode = 403;
-        Response.ContentType = "application/json; charset=utf-8";
-        string detail = BuildForbiddenDetail();
-        await Response.WriteAsync(AuthErrorMapping.SerializeError(403, "Forbidden", detail));
+    protected override Task HandleForbiddenAsync(AuthenticationProperties properties) {
+        throw new AuthorizationFailedException(BuildForbiddenDetail());
     }
 
     string ResolveApiKeyFailureDetail() {
@@ -118,7 +115,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
 
         // Failure reason was stashed by HandleAuthenticateAsync.
         string reason = Context.Items["divoid.auth.failure_reason"] as string ?? "invalid_key";
-        return AuthErrorMapping.MapApiKeyFailureToDetail(reason);
+        return MapApiKeyFailureToDetail(reason);
     }
 
     string BuildForbiddenDetail() {
@@ -127,7 +124,6 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
         if (endpoint != null) {
             IAuthorizeData[] authorizeData = endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>().ToArray();
             if (authorizeData.Length > 0) {
-                // PolicyName is the field on AuthorizeAttribute.
                 string policyName = authorizeData[0].Policy;
                 if (!string.IsNullOrEmpty(policyName))
                     return $"Caller lacks required permission '{policyName}'";
@@ -136,4 +132,11 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
 
         return "Caller lacks required permission";
     }
+
+    static string MapApiKeyFailureToDetail(string reason) => reason switch {
+        "disabled_key"  => "API key is disabled",
+        "expired"       => "API key has expired",
+        "disabled_user" => "DiVoid account is disabled",
+        _               => "API key not recognised"
+    };
 }
