@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json.Serialization;
 using Backend.Auth;
 using Backend.Errors;
@@ -159,6 +160,46 @@ public class Startup
                         if (dotCount != 2)
                             ctx.Token = string.Empty; // causes handler to return NoResult
                         return Task.CompletedTask;
+                    },
+                    OnChallenge = async ctx => {
+                        // Suppress the framework's default empty 401 and write a JSON body instead.
+                        ctx.HandleResponse();
+                        ctx.Response.StatusCode = 401;
+                        ctx.Response.ContentType = "application/json; charset=utf-8";
+                        if (!ctx.Response.Headers.ContainsKey("WWW-Authenticate"))
+                            ctx.Response.Headers["WWW-Authenticate"] = "Bearer";
+
+                        string authHdr = ctx.Request.Headers["Authorization"].ToString();
+                        string detail;
+                        if (string.IsNullOrEmpty(authHdr)) {
+                            detail = "Authorization header missing";
+                        } else if (!authHdr.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) {
+                            detail = "Authorization header must use Bearer scheme";
+                        } else {
+                            // Token shape detection: JWTs have exactly 2 dots; API-key tokens have 1 dot.
+                            // If this looks like an API key, read the failure reason stashed by
+                            // ApiKeyAuthenticationHandler rather than mapping ctx.AuthenticateFailure.
+                            string tok = authHdr.Substring("Bearer ".Length).Trim();
+                            int dots = 0;
+                            foreach (char ch in tok) {
+                                if (ch == '.') dots++;
+                            }
+                            if (dots == 2) {
+                                detail = ctx.AuthenticateFailure != null
+                                    ? AuthErrorMapping.MapJwtFailureToDetail(ctx.AuthenticateFailure)
+                                    : "JWT could not be parsed";
+                            } else {
+                                string reason = ctx.HttpContext.Items["divoid.auth.failure_reason"] as string ?? "invalid_key";
+                                detail = AuthErrorMapping.MapApiKeyFailureToDetail(reason);
+                            }
+                        }
+                        await ctx.Response.WriteAsync(AuthErrorMapping.SerializeError(401, "Unauthorized", detail));
+                    },
+                    OnForbidden = async ctx => {
+                        ctx.Response.StatusCode = 403;
+                        ctx.Response.ContentType = "application/json; charset=utf-8";
+                        string detail = ExtractRequiredPermission(ctx.HttpContext);
+                        await ctx.Response.WriteAsync(AuthErrorMapping.SerializeError(403, "Forbidden", detail));
                     }
                 };
             })
@@ -199,6 +240,19 @@ public class Startup
 
         services.AddHostedService<DatabaseModelService>();
         services.AddHostedService<StartupWarningService>();
+    }
+
+    static string ExtractRequiredPermission(HttpContext context) {
+        Microsoft.AspNetCore.Http.Endpoint endpoint = context.GetEndpoint();
+        if (endpoint != null) {
+            IAuthorizeData[] authorizeData = endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>().ToArray();
+            if (authorizeData.Length > 0) {
+                string policyName = authorizeData[0].Policy;
+                if (!string.IsNullOrEmpty(policyName))
+                    return $"Caller lacks required permission '{policyName}'";
+            }
+        }
+        return "Caller lacks required permission";
     }
 
     /// <summary>
