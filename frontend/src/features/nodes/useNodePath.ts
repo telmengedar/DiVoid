@@ -15,8 +15,8 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from 'react-oidc-context';
-import { createApiClient } from '@/lib/api';
-import { API, API_BASE_URL } from '@/lib/constants';
+import { useApiClient } from '@/lib/useApiClient';
+import { API } from '@/lib/constants';
 import type { NodeFilter, Page, NodeDetails } from '@/types/divoid';
 
 /** Filter params accepted by the path endpoint (excludes linkedto and query). */
@@ -32,13 +32,7 @@ export function nodePathQueryKey(path: string, filter?: PathFilter) {
  */
 export function useNodePath(path: string, filter?: PathFilter) {
   const auth = useAuth();
-
-  const client = createApiClient(
-    () => auth.user?.access_token,
-    () => auth.signinSilent(),
-    () => auth.signinRedirect(),
-    API_BASE_URL,
-  );
+  const client = useApiClient();
 
   const params = {
     ...filter,

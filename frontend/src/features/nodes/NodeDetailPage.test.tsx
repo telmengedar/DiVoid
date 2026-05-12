@@ -287,3 +287,26 @@ describe('NodeDetailPage — write affordances', () => {
     await waitFor(() => expect(screen.getByText('Search page')).toBeInTheDocument());
   });
 });
+
+// ─── Regression: infinite-render loop (DiVoid #257) ──────────────────────────
+//
+// Prior to useApiClient() being introduced, every hook called createApiClient()
+// inline on every render. This created a new client object each render, which
+// changed queryFn identity, which caused TanStack Query to refetch, which
+// triggered a re-render, which looped. @testing-library/react itself throws
+// "Maximum update depth exceeded" when a component loops — so a clean render
+// with data visible is proof the loop is gone.
+
+describe('NodeDetailPage — no infinite render loop (regression for #257)', () => {
+  it('renders to completion without "Maximum update depth exceeded"', async () => {
+    // If the loop regresses, this will throw before waitFor resolves.
+    renderAtId(42);
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Document')).toBeInTheDocument();
+    });
+
+    // The page settled — no loop.
+    expect(screen.getByText('42')).toBeInTheDocument();
+  });
+});
