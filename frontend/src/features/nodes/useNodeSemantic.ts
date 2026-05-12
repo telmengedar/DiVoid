@@ -31,6 +31,7 @@ export function useNodeSemantic(query: string, filter?: SemanticFilter) {
 
   const client = createApiClient(
     () => auth.user?.access_token,
+    () => auth.signinSilent(),
     () => auth.signinRedirect(),
     API_BASE_URL,
   );

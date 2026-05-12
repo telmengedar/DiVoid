@@ -28,6 +28,7 @@ export function useNodeList(filter?: NodeFilter) {
 
   const client = createApiClient(
     () => auth.user?.access_token,
+    () => auth.signinSilent(),
     () => auth.signinRedirect(),
     API_BASE_URL,
   );

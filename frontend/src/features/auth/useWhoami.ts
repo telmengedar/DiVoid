@@ -31,7 +31,8 @@ export function useWhoami() {
 
   const client = createApiClient(
     () => auth.user?.access_token,
-    undefined,
+    () => auth.signinSilent(),
+    () => auth.signinRedirect(),
     API_BASE_URL,
   );
 

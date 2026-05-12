@@ -27,6 +27,7 @@ export function useNode(id: number) {
 
   const client = createApiClient(
     () => auth.user?.access_token,
+    () => auth.signinSilent(),
     () => auth.signinRedirect(),
     API_BASE_URL,
   );

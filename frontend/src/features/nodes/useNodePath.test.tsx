@@ -114,7 +114,7 @@ describe('useNodePath', () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
 
-    const err = result.current.error as { status: number; code: string; text: string };
+    const err = result.current.error as unknown as { status: number; code: string; text: string };
     expect(err.status).toBe(400);
     expect(err.code).toBe('badparameter');
     expect(err.text).toBe(syntaxErrorText);

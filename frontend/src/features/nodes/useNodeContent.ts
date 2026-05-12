@@ -1,20 +1,27 @@
 /**
  * useNodeContent — node content blob hook.
  *
- * Wraps GET /api/nodes/{id}/content.
+ * Wraps GET /api/nodes/{id}/content via apiClient.fetchRaw().
  * Returns the raw content as a string. The caller decides how to render it
  * based on the `contentType` field from useNode (e.g. "text/markdown" → ReactMarkdown).
  *
  * The response is treated as text. Binary blobs (images, etc.) are out of
  * scope for PR 2; the detail page will show a placeholder for non-text content.
  *
- * Design: docs/architecture/frontend-bootstrap.md §5.5
+ * Routing through apiClient.fetchRaw() ensures all client guarantees apply:
+ *  - Bearer token injection
+ *  - 30s AbortController timeout
+ *  - Combined caller + timeout AbortSignal
+ *  - Dev-mode request logging
+ *  - §6.3 silent-refresh-then-redirect 401 chain (no raw auth.signinRedirect())
+ *
+ * Design: docs/architecture/frontend-bootstrap.md §5.5, §6.3
  */
 
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from 'react-oidc-context';
-import { DivoidApiError } from '@/types/divoid';
-import { API_BASE_URL, API } from '@/lib/constants';
+import { createApiClient } from '@/lib/api';
+import { API, API_BASE_URL } from '@/lib/constants';
 
 export function nodeContentQueryKey(id: number) {
   return ['nodes', 'content', id] as const;
@@ -26,40 +33,18 @@ export function nodeContentQueryKey(id: number) {
  */
 export function useNodeContent(id: number) {
   const auth = useAuth();
-  const token = auth.user?.access_token;
+
+  const client = createApiClient(
+    () => auth.user?.access_token,
+    () => auth.signinSilent(),
+    () => auth.signinRedirect(),
+    API_BASE_URL,
+  );
 
   return useQuery<string>({
     queryKey: nodeContentQueryKey(id),
     queryFn: async ({ signal }) => {
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
-      const response = await fetch(`${API_BASE_URL}${API.NODES.CONTENT(id)}`, {
-        headers,
-        signal: signal ?? undefined,
-      });
-
-      if (!response.ok) {
-        const raw = await response.text().catch(() => '');
-        let code = 'unknown';
-        let text = response.statusText || `HTTP ${response.status}`;
-        if (raw) {
-          try {
-            const parsed = JSON.parse(raw) as Record<string, unknown>;
-            if (typeof parsed.code === 'string') code = parsed.code;
-            if (typeof parsed.text === 'string') text = parsed.text;
-          } catch {
-            text = raw;
-          }
-        }
-        if (response.status === 401) {
-          auth.signinRedirect();
-        }
-        throw new DivoidApiError(response.status, code, text);
-      }
-
+      const response = await client.fetchRaw(API.NODES.CONTENT(id), signal);
       return response.text();
     },
     enabled: auth.isAuthenticated && id > 0,

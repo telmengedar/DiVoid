@@ -33,6 +33,7 @@ export function useNodePath(path: string, filter?: PathFilter) {
 
   const client = createApiClient(
     () => auth.user?.access_token,
+    () => auth.signinSilent(),
     () => auth.signinRedirect(),
     API_BASE_URL,
   );
