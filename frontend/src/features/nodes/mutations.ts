@@ -20,10 +20,9 @@
  */
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useAuth } from 'react-oidc-context';
 import { toast } from 'sonner';
-import { createApiClient } from '@/lib/api';
-import { API, API_BASE_URL } from '@/lib/constants';
+import { useApiClient } from '@/lib/useApiClient';
+import { API } from '@/lib/constants';
 import type { NodeDetails, PatchOperation } from '@/types/divoid';
 import { DivoidApiError } from '@/types/divoid';
 import { nodeQueryKey } from './useNode';
@@ -47,17 +46,6 @@ function toastError(error: unknown, fallback = 'Something went wrong. Please try
   } else {
     toast.error(fallback);
   }
-}
-
-/** Builds a fresh API client bound to the current OIDC context. */
-function useApiClient() {
-  const auth = useAuth();
-  return createApiClient(
-    () => auth.user?.access_token,
-    () => auth.signinSilent(),
-    () => auth.signinRedirect(),
-    API_BASE_URL,
-  );
 }
 
 // ─── Create ───────────────────────────────────────────────────────────────────

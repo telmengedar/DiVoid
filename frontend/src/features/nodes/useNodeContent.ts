@@ -20,8 +20,8 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from 'react-oidc-context';
-import { createApiClient } from '@/lib/api';
-import { API, API_BASE_URL } from '@/lib/constants';
+import { useApiClient } from '@/lib/useApiClient';
+import { API } from '@/lib/constants';
 
 export function nodeContentQueryKey(id: number) {
   return ['nodes', 'content', id] as const;
@@ -33,13 +33,7 @@ export function nodeContentQueryKey(id: number) {
  */
 export function useNodeContent(id: number) {
   const auth = useAuth();
-
-  const client = createApiClient(
-    () => auth.user?.access_token,
-    () => auth.signinSilent(),
-    () => auth.signinRedirect(),
-    API_BASE_URL,
-  );
+  const client = useApiClient();
 
   return useQuery<string>({
     queryKey: nodeContentQueryKey(id),
