@@ -40,7 +40,7 @@ Each Keycloak principal who is permitted to use DiVoid carries a custom user att
 |---|---|---|---|
 | A1 | Keycloak issuer URL is `https://auth.mamgo.io/realms/master`; the `iss` claim in tokens matches that exact string. | High | Confirm with one real token. |
 | A2 | The Keycloak `DiVoid` client is configured to emit the `UserId` user attribute into **access tokens** (not only ID tokens), via a "User Attribute" protocol mapper. | **Medium — must be validated** | Toni / Keycloak admin must verify the mapper exists and targets `access.token=true`. |
-| A3 | The claim name in the resulting JWT is exactly `UserId` (the user-attribute mapper's "Token Claim Name" defaults to the attribute name unless customised). | Medium | Inspect a real token. Doc defines a configurable fallback if the name differs. |
+| A3 | The claim name in the resulting JWT is `"userId"` (camelCase). Keycloak's user-attribute mapper lowercases the first letter of the attribute name by default when serializing to JSON. The "Token Claim Name" field on the mapper can override this; the deployed mapper does not, so the emitted claim name is `"userId"`. Verified against a real access token. | Confirmed | Verified — real token contains `userId: 1`. |
 | A4 | The `aud` claim value in tokens issued by the DiVoid client is the literal string `"DiVoid"` — **not** necessarily the `client_id`. Keycloak can emit a different `aud` value depending on realm and client configuration. The concrete value has been confirmed: `Keycloak:Audience` must be set to `"DiVoid"` in production config. | Confirmed | Toni has confirmed the `aud` claim value; verified by decoding a real token. |
 | A5 | Tokens are RS256-signed; JWKS is published at the standard `.well-known` endpoint under the realm. | High | Standard Keycloak. |
 | A6 | DiVoid runs HTTP-only in dev (port 5007 / port 80 in prod via the Program.cs Kestrel override). `RequireHttpsMetadata = true` is fine in prod (Keycloak itself is HTTPS) but must remain configurable so dev keeps working. | High | n/a |
@@ -131,7 +131,7 @@ New `appsettings.json` section:
   "Authority": "https://auth.mamgo.io/realms/master",
   "Audience": "",                          // empty in committed file; Toni populates per env
   "RequireHttpsMetadata": false,           // false in dev; true in prod via appsettings.Production.json
-  "UserIdClaimName": "UserId"              // configurable so a different mapper name is a config change, not a code change
+  "UserIdClaimName": "userId"              // camelCase — matches Keycloak's default first-letter-lowercase mapper emission
 }
 ```
 
@@ -241,7 +241,7 @@ This is the invariant the design relies on. Any code outside `Backend/Auth/` tha
 | `Keycloak:Authority` | string | `Auth:Enabled=true` | `"https://auth.mamgo.io/realms/master"` | OIDC discovery base. |
 | `Keycloak:Audience` | string | `Auth:Enabled=true` | `""` (intentional — startup fails if empty) | Expected `aud` claim. For this realm/client the value is the literal string `"DiVoid"` (confirmed from a real token — **not** the Keycloak `client_id`). Always verify by decoding a real access token before setting. |
 | `Keycloak:RequireHttpsMetadata` | bool | optional | `false` (dev), set `true` in `appsettings.Production.json` | Whether OIDC metadata fetch requires HTTPS. |
-| `Keycloak:UserIdClaimName` | string | optional | `"UserId"` | Name of the JWT claim that carries the DiVoid `User.Id`. |
+| `Keycloak:UserIdClaimName` | string | optional | `"userId"` | Name of the JWT claim that carries the DiVoid `User.Id`. Defaults to `"userId"` (camelCase) to match Keycloak's default first-letter-lowercase emission from the user-attribute mapper. Override only if the mapper's "Token Claim Name" is explicitly set to something different. |
 | `DIVOID_KEY_PEPPER` | string ≥ 32 bytes | `Auth:Enabled=true` | none | Existing API-key pepper. Unchanged. |
 
 ### 8.3 Token validation contract (the `JwtBearer` side)

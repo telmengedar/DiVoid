@@ -56,7 +56,7 @@ public sealed class JwtAuthFixture : IDisposable
                     ["Keycloak:Authority"]            = TestAuthority,
                     ["Keycloak:Audience"]             = TestAudience,
                     ["Keycloak:RequireHttpsMetadata"] = "false",
-                    ["Keycloak:UserIdClaimName"]      = "UserId"
+                    ["Keycloak:UserIdClaimName"]      = "userId"
                 });
             });
             builder.ConfigureServices(services => {
@@ -96,13 +96,14 @@ public sealed class JwtAuthFixture : IDisposable
         string?  issuer    = TestAuthority,
         DateTime? notBefore = null,
         DateTime? expires  = null,
-        bool     useWrongKey = false)
+        bool     useWrongKey = false,
+        string   userIdClaimName = "userId")
     {
         DateTime now = DateTime.UtcNow;
 
         List<Claim> claims = new();
         if (subject != null)    claims.Add(new Claim(JwtRegisteredClaimNames.Sub, subject));
-        if (userId.HasValue)    claims.Add(new Claim("UserId", userId.Value.ToString()));
+        if (userId.HasValue)    claims.Add(new Claim(userIdClaimName, userId.Value.ToString()));
 
         SigningCredentials creds;
         RSA? wrongRsa = null;

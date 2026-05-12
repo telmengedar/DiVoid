@@ -114,6 +114,31 @@ public class JwtAuthTests
     }
 
     // -----------------------------------------------------------------------
+    // Case 2b — Valid JWT, UserId claim uses old PascalCase name → 403
+    //
+    // Pins the contract: the system reads exactly the configured claim name
+    // ("userId", camelCase). A token emitting "UserId" (PascalCase — the
+    // previous wrong default) must be treated as if no user-id claim is
+    // present, so no NameIdentifier / permission claims are emitted → 403.
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task ValidJwt_PascalCaseUserIdClaim_Returns403()
+    {
+        long userId = await CreateEnabledUserAsync(
+            permissionsJson: Json.WriteString(new[] { "read" }));
+
+        // Deliberately mint with the old wrong claim name "UserId" (PascalCase).
+        // The server is configured to look for "userId" (camelCase), so this
+        // claim is invisible to KeycloakClaimsTransformation → no permissions → 403.
+        string token = fixture.MintToken(userId: userId, userIdClaimName: "UserId");
+        HttpResponseMessage response = await GetNodesAsync(token);
+
+        Assert.That((int)response.StatusCode, Is.EqualTo(403),
+            "JWT emitting 'UserId' (PascalCase) must return 403 — server expects 'userId' (camelCase)");
+    }
+
+    // -----------------------------------------------------------------------
     // Case 3 — Valid JWT, UserId present, no divoid_user row → 403
     // -----------------------------------------------------------------------
 

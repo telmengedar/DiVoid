@@ -39,7 +39,7 @@ public class KeycloakClaimsTransformation : IClaimsTransformation {
         ILogger<KeycloakClaimsTransformation> logger) {
         this.database = database;
         this.logger = logger;
-        userIdClaimName = configuration["Keycloak:UserIdClaimName"] ?? "UserId";
+        userIdClaimName = configuration["Keycloak:UserIdClaimName"] ?? "userId";
     }
 
     /// <inheritdoc />
