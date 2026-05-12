@@ -1,3 +1,4 @@
+using Pooshit.Json;
 using Pooshit.Ocelot.Fields;
 
 namespace Backend.Models.Users;
@@ -30,5 +31,8 @@ public class UserMapper : FieldMapper<UserDetails, User> {
         yield return new FieldMapping<UserDetails, DateTime>("createdat",
                                                               u => u.CreatedAt,
                                                               (u, v) => u.CreatedAt = v);
+        yield return new FieldMapping<UserDetails, string>("permissions",
+                                                           u => (string)(object)u.Permissions,
+                                                           (u, v) => u.Permissions = string.IsNullOrEmpty(v) ? [] : Json.Read<string[]>(v) ?? []);
     }
 }
