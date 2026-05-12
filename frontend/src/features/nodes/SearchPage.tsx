@@ -13,14 +13,18 @@
  */
 
 import { useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Search, Link2, GitBranch } from 'lucide-react';
+import { Search, Link2, GitBranch, Plus } from 'lucide-react';
 import { useNodeSemantic } from './useNodeSemantic';
 import { useNodeListLinkedTo } from './useNodeListLinkedTo';
 import { useNodePath } from './useNodePath';
+import { CreateNodeDialog } from './CreateNodeDialog';
 import { NodeResultTable } from '@/components/common/NodeResultTable';
 import { DivoidApiError } from '@/types/divoid';
+import { ROUTES } from '@/lib/constants';
 import { cn } from '@/lib/cn';
+import { useWhoami } from '@/features/auth/useWhoami';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -349,14 +353,35 @@ function PathPanel() {
 
 export function SearchPage() {
   const [activeTab, setActiveTab] = useState<Tab>('semantic');
+  const [createOpen, setCreateOpen] = useState(false);
+  const navigate = useNavigate();
+  const { data: whoami } = useWhoami();
+  const canWrite = whoami?.permissions?.includes('write') ?? false;
+
+  const handleCreated = (id: number) => {
+    navigate(ROUTES.NODE_DETAIL(id));
+  };
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 flex flex-col gap-6">
-      <div>
-        <h1 className="text-xl font-semibold">Search</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Three retrieval modes for the DiVoid graph.
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold">Search</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Three retrieval modes for the DiVoid graph.
+          </p>
+        </div>
+
+        {canWrite && (
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity shrink-0"
+          >
+            <Plus size={15} aria-hidden="true" />
+            New node
+          </button>
+        )}
       </div>
 
       <div className="flex flex-col gap-4">
@@ -368,6 +393,12 @@ export function SearchPage() {
           {activeTab === 'path' && <PathPanel />}
         </div>
       </div>
+
+      <CreateNodeDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreated={handleCreated}
+      />
     </div>
   );
 }
