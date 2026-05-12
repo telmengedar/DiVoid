@@ -10,6 +10,7 @@
  *      · signinSilent() rejects → signinRedirect() called exactly once
  *      · retry also 401s → signinRedirect() called (no infinite loop)
  *  - fetchRaw returns the Response on success; throws DivoidApiError on error
+ *  - postRaw POSTs a raw body with caller-supplied Content-Type; inherits §6.3 chain
  *  - 204 No Content returns undefined cleanly
  */
 
@@ -55,6 +56,16 @@ const server = setupServer(
       );
     }
     return new HttpResponse('hello world', { status: 200, headers: { 'Content-Type': 'text/plain' } });
+  }),
+  http.post(`${BASE_URL}/nodes/99/content`, ({ request }) => {
+    const auth = request.headers.get('Authorization');
+    if (!auth?.startsWith('Bearer ')) {
+      return HttpResponse.json(
+        { code: 'unauthorized', text: 'Missing token' },
+        { status: 401 },
+      );
+    }
+    return new HttpResponse(null, { status: 204 });
   }),
 );
 
@@ -258,6 +269,108 @@ describe('createApiClient.fetchRaw', () => {
     await expect(client.fetchRaw('/nodes/99/content')).rejects.toMatchObject({ status: 401 });
     expect(signinSilent).toHaveBeenCalledOnce();
     expect(signinRedirect).toHaveBeenCalledOnce();
+    expect(callCount).toBe(2);
+  });
+});
+
+// ─── createApiClient — postRaw ─────────────────────────────────────────────────
+
+describe('createApiClient.postRaw', () => {
+  it('returns raw Response on success (200)', async () => {
+    const client = createApiClient(() => 'test-token', undefined, undefined, BASE_URL);
+    const response = await client.postRaw('/nodes/99/content', 'hello', 'text/plain');
+    expect(response.status).toBe(204);
+    expect(response.ok).toBe(true);
+  });
+
+  it('injects Bearer token and caller-supplied Content-Type', async () => {
+    let capturedAuth: string | null = null;
+    let capturedContentType: string | null = null;
+    server.use(
+      http.post(`${BASE_URL}/nodes/99/content`, ({ request }) => {
+        capturedAuth = request.headers.get('Authorization');
+        capturedContentType = request.headers.get('Content-Type');
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+
+    const client = createApiClient(() => 'my-token', undefined, undefined, BASE_URL);
+    await client.postRaw('/nodes/99/content', 'data', 'text/markdown; charset=utf-8');
+
+    expect(capturedAuth).toBe('Bearer my-token');
+    expect(capturedContentType).toBe('text/markdown; charset=utf-8');
+  });
+
+  it('throws DivoidApiError on 401 (no signinSilent)', async () => {
+    const client = createApiClient(() => undefined, undefined, undefined, BASE_URL);
+    await expect(
+      client.postRaw('/nodes/99/content', 'data', 'text/plain'),
+    ).rejects.toMatchObject({ name: 'DivoidApiError', status: 401 });
+  });
+
+  it('§6.3: signinSilent called on 401; retry succeeds; signinRedirect NOT called', async () => {
+    let callCount = 0;
+    server.use(
+      http.post(`${BASE_URL}/nodes/99/content`, ({ request }) => {
+        callCount++;
+        const auth = request.headers.get('Authorization');
+        if (auth === 'Bearer new-token') {
+          return new HttpResponse(null, { status: 204 });
+        }
+        return HttpResponse.json({ code: 'unauthorized', text: 'bad' }, { status: 401 });
+      }),
+    );
+
+    let tokenValue: string | undefined = undefined;
+    const signinSilent = vi.fn(async () => { tokenValue = 'new-token'; });
+    const signinRedirect = vi.fn();
+    const client = createApiClient(() => tokenValue, signinSilent, signinRedirect, BASE_URL);
+
+    const response = await client.postRaw('/nodes/99/content', 'data', 'text/plain');
+    expect(response.ok).toBe(true);
+    expect(signinSilent).toHaveBeenCalledOnce();
+    expect(signinRedirect).not.toHaveBeenCalled();
+    expect(callCount).toBe(2);
+  });
+
+  it('§6.3: signinRedirect called when signinSilent rejects', async () => {
+    server.use(
+      http.post(`${BASE_URL}/nodes/99/content`, () =>
+        HttpResponse.json({ code: 'unauthorized', text: 'expired' }, { status: 401 }),
+      ),
+    );
+
+    const signinSilent = vi.fn(async () => { throw new Error('refresh failed'); });
+    const signinRedirect = vi.fn();
+    const client = createApiClient(() => undefined, signinSilent, signinRedirect, BASE_URL);
+
+    await expect(
+      client.postRaw('/nodes/99/content', 'data', 'text/plain'),
+    ).rejects.toMatchObject({ status: 401 });
+
+    expect(signinSilent).toHaveBeenCalledOnce();
+    expect(signinRedirect).toHaveBeenCalledOnce();
+  });
+
+  it('§6.3: signinRedirect called after retry also 401s (no-loop guarantee)', async () => {
+    let callCount = 0;
+    server.use(
+      http.post(`${BASE_URL}/nodes/99/content`, () => {
+        callCount++;
+        return HttpResponse.json({ code: 'unauthorized', text: 'still bad' }, { status: 401 });
+      }),
+    );
+
+    const signinSilent = vi.fn(async () => { /* resolves but server still rejects */ });
+    const signinRedirect = vi.fn();
+    const client = createApiClient(() => undefined, signinSilent, signinRedirect, BASE_URL);
+
+    await expect(
+      client.postRaw('/nodes/99/content', 'data', 'text/plain'),
+    ).rejects.toMatchObject({ status: 401 });
+    expect(signinSilent).toHaveBeenCalledOnce();
+    expect(signinRedirect).toHaveBeenCalledOnce();
+    // Exactly 2 fetches: original + one retry. No third attempt.
     expect(callCount).toBe(2);
   });
 });

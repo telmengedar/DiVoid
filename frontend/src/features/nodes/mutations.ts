@@ -225,66 +225,16 @@ export interface UploadContentInput {
 }
 
 /**
- * Uploads content bytes to a node.
- *
- * Uses a direct fetch() call because createApiClient.post() always sets
- * Content-Type to application/json and serialises the body as JSON. For raw
- * bytes (file upload, markdown text) we need to send the caller-supplied
- * Content-Type and body verbatim.
- *
- * All client guarantees still apply: Bearer token, 30s timeout, dev logging.
- * §6.3 silent-refresh is handled by the same _fetch logic wired into the
- * token accessor.
- *
- * On success: the node-content query and node-detail query are invalidated.
- * On error: a sonner toast shows the backend error.
+ * Uploads raw content bytes to a node via POST /api/nodes/{id}/content.
+ * Routes through client.postRaw() — inherits the §6.3 silent-refresh chain.
  */
 export function useUploadContent(id: number) {
-  // We need the raw auth object to get the current token for the direct fetch.
-  const auth = useAuth();
+  const client = useApiClient();
   const queryClient = useQueryClient();
 
   return useMutation<void, DivoidApiError, UploadContentInput>({
-    mutationFn: async ({ body, contentType }) => {
-      const token = auth.user?.access_token;
-      const baseUrl = API_BASE_URL;
-
-      // 30-second timeout — mirrors createApiClient._fetch behaviour.
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30_000);
-
-      let response: Response;
-      try {
-        response = await fetch(`${baseUrl}${API.NODES.CONTENT(id)}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': contentType,
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body,
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timeoutId);
-      }
-
-      if (!response.ok) {
-        // Mirror createApiClient's error mapping.
-        const raw = await response.text().catch(() => '');
-        let code = 'unknown';
-        let text = response.statusText || `HTTP ${response.status}`;
-        if (raw) {
-          try {
-            const parsed = JSON.parse(raw) as Record<string, unknown>;
-            if (typeof parsed.code === 'string') code = parsed.code;
-            if (typeof parsed.text === 'string') text = parsed.text;
-          } catch {
-            text = raw;
-          }
-        }
-        throw new DivoidApiError(response.status, code, text);
-      }
-    },
+    mutationFn: ({ body, contentType }) =>
+      client.postRaw(API.NODES.CONTENT(id), body, contentType).then(() => undefined),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: nodeContentQueryKey(id) });
       queryClient.invalidateQueries({ queryKey: nodeQueryKey(id) });

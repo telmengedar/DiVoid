@@ -5,8 +5,12 @@
  *  - Happy path: mutation succeeds and invalidates the right query keys.
  *  - Error path: backend returns an error; the hook exposes the DivoidApiError.
  *
+ * useUploadContent additionally pins the §6.3 reactive-401 contract:
+ *  - 401 + signinSilent succeeds → retry succeeds; signinRedirect NOT called.
+ *  - 401 + signinSilent rejects → signinRedirect called exactly once.
+ *  - 401 twice (retry also 401s) → signinRedirect called; no-loop guarantee.
+ *
  * Uses MSW to intercept fetch at the network boundary.
- * Uses vitest's fake timer approach to avoid real network latency.
  */
 
 import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
@@ -17,6 +21,31 @@ import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { BASE_URL, sampleNode } from '@/test/msw/handlers';
 import { DivoidApiError } from '@/types/divoid';
+
+// ─── Hoisted mock refs ────────────────────────────────────────────────────────
+// vi.mock() is hoisted before imports; vi.hoisted() lets tests mutate the refs
+// at runtime so we can test the §6.3 retry path without re-importing the module.
+
+const { mockSigninSilent, mockSigninRedirect, mockGetToken } = vi.hoisted(() => {
+  const mockSigninSilent = vi.fn<() => Promise<void>>(async () => { return; });
+  const mockSigninRedirect = vi.fn<() => void>(() => undefined);
+  const mockGetToken = vi.fn<() => string | undefined>(() => 'test-token');
+  return { mockSigninSilent, mockSigninRedirect, mockGetToken };
+});
+
+// ─── Mocks ────────────────────────────────────────────────────────────────────
+
+vi.mock('react-oidc-context', () => ({
+  useAuth: vi.fn(() => ({
+    isAuthenticated: true,
+    get user() {
+      const t = mockGetToken();
+      return t ? { access_token: t } : undefined;
+    },
+    signinRedirect: mockSigninRedirect,
+    signinSilent: mockSigninSilent,
+  })),
+}));
 
 // ─── MSW server ───────────────────────────────────────────────────────────────
 
@@ -36,24 +65,25 @@ const server = setupServer(
   // Unlink nodes
   http.delete(`${BASE_URL}/nodes/:sourceId/links/:targetId`, () => new HttpResponse(null, { status: 204 })),
 
-  // Upload content
-  http.post(`${BASE_URL}/nodes/:id/content`, () => new HttpResponse(null, { status: 204 })),
+  // Upload content — auth-aware so §6.3 tests can vary the token
+  http.post(`${BASE_URL}/nodes/:id/content`, ({ request }) => {
+    const auth = request.headers.get('Authorization');
+    if (!auth?.startsWith('Bearer ')) {
+      return HttpResponse.json({ code: 'unauthorized', text: 'Missing token' }, { status: 401 });
+    }
+    return new HttpResponse(null, { status: 204 });
+  }),
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
-afterEach(() => server.resetHandlers());
+afterEach(() => {
+  server.resetHandlers();
+  vi.clearAllMocks();
+  mockGetToken.mockReturnValue('test-token');
+  mockSigninSilent.mockResolvedValue(undefined);
+  mockSigninRedirect.mockReturnValue(undefined);
+});
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
-
-vi.mock('react-oidc-context', () => ({
-  useAuth: vi.fn(() => ({
-    isAuthenticated: true,
-    user: { access_token: 'test-token' },
-    signinRedirect: vi.fn(),
-    signinSilent: vi.fn().mockResolvedValue(undefined),
-  })),
-}));
 
 vi.mock('@/lib/constants', () => ({
   API_BASE_URL: BASE_URL,
@@ -336,5 +366,90 @@ describe('useUploadContent', () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect((result.current.error as DivoidApiError).status).toBe(413);
+  });
+
+  it('§6.3: signinSilent called on 401; retry succeeds; signinRedirect NOT called', async () => {
+    let callCount = 0;
+    server.use(
+      http.post(`${BASE_URL}/nodes/:id/content`, ({ request }) => {
+        callCount++;
+        const auth = request.headers.get('Authorization');
+        if (auth === 'Bearer refreshed-token') {
+          return new HttpResponse(null, { status: 204 });
+        }
+        return HttpResponse.json({ code: 'unauthorized', text: 'bad' }, { status: 401 });
+      }),
+    );
+
+    // Start with no token; signinSilent updates it to 'refreshed-token'.
+    mockGetToken.mockReturnValueOnce(undefined);
+    mockSigninSilent.mockImplementation(async () => {
+      mockGetToken.mockReturnValue('refreshed-token');
+    });
+
+    const { Wrapper } = createWrapper();
+    const { useUploadContent } = await import('./mutations');
+    const { result } = renderHook(() => useUploadContent(42), { wrapper: Wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync({ body: 'data', contentType: 'text/plain' });
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockSigninSilent).toHaveBeenCalledOnce();
+    expect(mockSigninRedirect).not.toHaveBeenCalled();
+    expect(callCount).toBe(2);
+  });
+
+  it('§6.3: signinRedirect called when signinSilent rejects', async () => {
+    mockGetToken.mockReturnValue(undefined);
+    mockSigninSilent.mockRejectedValue(new Error('refresh token expired'));
+
+    const { Wrapper } = createWrapper();
+    const { useUploadContent } = await import('./mutations');
+    const { result } = renderHook(() => useUploadContent(42), { wrapper: Wrapper });
+
+    await act(async () => {
+      try {
+        await result.current.mutateAsync({ body: 'data', contentType: 'text/plain' });
+      } catch {
+        // expected — hook surfaces DivoidApiError
+      }
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(mockSigninSilent).toHaveBeenCalledOnce();
+    expect(mockSigninRedirect).toHaveBeenCalledOnce();
+  });
+
+  it('§6.3: signinRedirect called after retry also 401s (no-loop guarantee)', async () => {
+    let callCount = 0;
+    server.use(
+      http.post(`${BASE_URL}/nodes/:id/content`, () => {
+        callCount++;
+        return HttpResponse.json({ code: 'unauthorized', text: 'still bad' }, { status: 401 });
+      }),
+    );
+
+    mockGetToken.mockReturnValue(undefined);
+    mockSigninSilent.mockResolvedValue(undefined); // resolves but server always rejects
+
+    const { Wrapper } = createWrapper();
+    const { useUploadContent } = await import('./mutations');
+    const { result } = renderHook(() => useUploadContent(42), { wrapper: Wrapper });
+
+    await act(async () => {
+      try {
+        await result.current.mutateAsync({ body: 'data', contentType: 'text/plain' });
+      } catch {
+        // expected
+      }
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(mockSigninSilent).toHaveBeenCalledOnce();
+    expect(mockSigninRedirect).toHaveBeenCalledOnce();
+    // Exactly 2 POST attempts: original + one retry. No third attempt.
+    expect(callCount).toBe(2);
   });
 });

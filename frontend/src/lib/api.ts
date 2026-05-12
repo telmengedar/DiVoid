@@ -102,21 +102,24 @@ export function createApiClient(
   /**
    * Core fetch wrapper.
    *
+   * Accepts a `RequestInit`-like `init` (method, body, headers, signal) so that
+   * both JSON and raw-body callers share the same §6.3 retry logic.
+   *
    * @param isRetry  When true, skips the silent-refresh path so we never loop.
    */
   async function _fetch(
-    method: string,
     path: string,
-    body?: unknown,
-    signal?: AbortSignal,
+    init: {
+      method: string;
+      body?: BodyInit;
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+    },
     isRetry = false,
   ): Promise<Response> {
     const token = getToken();
 
-    const headers: Record<string, string> = {};
-    if (body !== undefined) {
-      headers['Content-Type'] = 'application/json';
-    }
+    const headers: Record<string, string> = { ...(init.headers ?? {}) };
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
@@ -127,22 +130,22 @@ export function createApiClient(
 
     // Combine caller signal with our timeout signal if supported
     let combinedSignal: AbortSignal;
-    if (signal && typeof AbortSignal.any === 'function') {
-      combinedSignal = AbortSignal.any([signal, timeoutController.signal]);
+    if (init.signal && typeof AbortSignal.any === 'function') {
+      combinedSignal = AbortSignal.any([init.signal, timeoutController.signal]);
     } else {
       combinedSignal = timeoutController.signal;
     }
 
     if (import.meta.env.DEV) {
-      console.debug(`[DiVoid API] ${method} ${path}`);
+      console.debug(`[DiVoid API] ${init.method} ${path}`);
     }
 
     let response: Response;
     try {
       response = await fetch(`${resolvedBase}${path}`, {
-        method,
+        method: init.method,
         headers,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
+        body: init.body,
         signal: combinedSignal,
       });
     } finally {
@@ -160,7 +163,7 @@ export function createApiClient(
       }
 
       // Retry once with the freshly-obtained token.
-      const retried = await _fetch(method, path, body, signal, true);
+      const retried = await _fetch(path, init, true);
       if (retried.status === 401) {
         // Retry also failed — fall through to full redirect.
         if (signinRedirect) signinRedirect();
@@ -177,7 +180,16 @@ export function createApiClient(
     body?: unknown,
     signal?: AbortSignal,
   ): Promise<T> {
-    const response = await _fetch(method, path, body, signal);
+    const headers: Record<string, string> = {};
+    if (body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+    }
+    const response = await _fetch(path, {
+      method,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      headers,
+      signal,
+    });
 
     if (!response.ok) {
       const error = await mapErrorResponse(response);
@@ -231,7 +243,37 @@ export function createApiClient(
      * Content-Type. Throws DivoidApiError on non-2xx (after the retry path).
      */
     async fetchRaw(path: string, signal?: AbortSignal): Promise<Response> {
-      const response = await _fetch('GET', path, undefined, signal);
+      const response = await _fetch(path, { method: 'GET', signal });
+      if (!response.ok) {
+        const error = await mapErrorResponse(response);
+        throw error;
+      }
+      return response;
+    },
+
+    /**
+     * POSTs a raw body with a caller-supplied Content-Type, returning the raw Response.
+     * Inherits all client guarantees: Bearer token, 30s timeout, combined signal,
+     * dev logging, and the §6.3 silent-refresh-then-redirect 401 chain.
+     *
+     * Use this instead of post() when the body is not JSON (e.g. file upload,
+     * raw bytes, markdown text). The BodyInit type covers Uint8Array, Blob, File,
+     * FormData, ArrayBuffer, and string.
+     *
+     * Throws DivoidApiError on non-2xx (after the retry path).
+     */
+    async postRaw(
+      path: string,
+      body: BodyInit,
+      contentType: string,
+      signal?: AbortSignal,
+    ): Promise<Response> {
+      const response = await _fetch(path, {
+        method: 'POST',
+        body,
+        headers: { 'Content-Type': contentType },
+        signal,
+      });
       if (!response.ok) {
         const error = await mapErrorResponse(response);
         throw error;
