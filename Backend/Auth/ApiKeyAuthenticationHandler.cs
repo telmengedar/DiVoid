@@ -48,6 +48,19 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
             return AuthenticateResult.NoResult();
         }
 
+        // Symmetric guard: if the bearer value looks like a JWT (exactly 2 dots —
+        // compact serialization is header.payload.signature), abstain immediately.
+        // JwtBearer has already had its chance; falling through and failing a DB lookup
+        // would log a misleading "invalid api key" error when the real issue is on the
+        // JWT path (wrong audience, expired token, bad signature, JWKS unreachable, etc.).
+        // This mirrors the JwtBearerEvents.OnMessageReceived dot-count gate in Startup.cs.
+        int dotCount = 0;
+        foreach (char c in key) {
+            if (c == '.') dotCount++;
+        }
+        if (dotCount == 2)
+            return AuthenticateResult.NoResult();
+
         try {
             Models.Auth.ApiKeyDetails details = await apiKeyService.GetApiKey(key);
 

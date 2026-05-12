@@ -14,11 +14,15 @@ using Backend.tests.Fixtures;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Pooshit.AspNetCore.Services.Data;
+using Pooshit.AspNetCore.Services.Formatters.DataStream;
+using Pooshit.AspNetCore.Services.Patches;
 
 namespace Backend.tests.Tests;
 
@@ -233,4 +237,105 @@ public class AuthHandlerTests
             principal,
             null);
     }
+
+    // -----------------------------------------------------------------------
+    // JWT-shape guard — ApiKeyAuthenticationHandler returns NoResult for JWTs
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// ApiKeyAuthenticationHandler must return NoResult immediately when the bearer
+    /// value has exactly 2 dots (compact JWT serialization: header.payload.signature).
+    /// The database must never be consulted for JWT-shaped tokens — falling through to
+    /// a DB lookup and failing it would log a misleading "invalid api key" error when
+    /// the real issue is on the JWT path (expired, wrong audience, bad signature, etc.).
+    /// </summary>
+    [Test]
+    public async Task ApiKeyHandler_JwtShapedBearer_ReturnsNoResult_WithoutCallingDatabase()
+    {
+        // Arrange: stub service that throws if GetApiKey is ever called.
+        // If the guard fires correctly, this will never be reached.
+        ThrowIfCalledApiKeyService stub = new();
+
+        IOptionsMonitor<AuthenticationSchemeOptions> options =
+            new TestOptionsMonitor<AuthenticationSchemeOptions>(new AuthenticationSchemeOptions());
+
+        ApiKeyAuthenticationHandler handler = new(
+            options,
+            NullLoggerFactory.Instance,
+            UrlEncoder.Default,
+            stub);
+
+        // Set up an HttpContext with a bearer value that looks like a JWT (exactly 2 dots).
+        DefaultHttpContext httpContext = new();
+        httpContext.Request.Headers["Authorization"] = "Bearer eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.fake-signature";
+
+        AuthenticationScheme scheme = new(
+            ApiKeyAuthenticationHandler.SchemeName,
+            displayName: null,
+            typeof(ApiKeyAuthenticationHandler));
+
+        await handler.InitializeAsync(scheme, httpContext);
+
+        // Act
+        AuthenticateResult result = await handler.AuthenticateAsync();
+
+        // Assert: must abstain (NoResult) and must not have called the database
+        Assert.That(result.None, Is.True,
+            "ApiKeyAuthenticationHandler must return NoResult for a JWT-shaped bearer (2 dots)");
+        Assert.That(stub.WasCalled, Is.False,
+            "GetApiKey must not be called for a JWT-shaped bearer — the guard must short-circuit before the DB");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test doubles
+// ---------------------------------------------------------------------------
+
+/// <summary>
+/// IApiKeyService stub that records whether GetApiKey was ever called and throws
+/// if it is, so that tests can assert the JWT-shape guard fires before any DB access.
+/// </summary>
+file sealed class ThrowIfCalledApiKeyService : IApiKeyService
+{
+    public bool WasCalled { get; private set; }
+
+    public Task<ApiKeyDetails> GetApiKey(string fullKey)
+    {
+        WasCalled = true;
+        throw new InvalidOperationException("GetApiKey must not be called for a JWT-shaped bearer token");
+    }
+
+    public Task<ApiKeyDetails> CreateApiKey(ApiKeyParameters apiKey) =>
+        throw new NotSupportedException();
+
+    public Task<ApiKeyDetails> GetApiKeyById(long keyId) =>
+        throw new NotSupportedException();
+
+    public AsyncPageResponseWriter<ApiKeyDetails> ListApiKeys(ListFilter filter = null!) =>
+        throw new NotSupportedException();
+
+    public Task<ApiKeyDetails> UpdateApiKey(long keyId, params PatchOperation[] patches) =>
+        throw new NotSupportedException();
+
+    public Task DeleteApiKey(long keyId) =>
+        throw new NotSupportedException();
+
+    public Task<bool> AnyAdminKeyExists() =>
+        throw new NotSupportedException();
+}
+
+/// <summary>
+/// Minimal IOptionsMonitor implementation for tests that always returns the same value.
+/// </summary>
+file sealed class TestOptionsMonitor<TOptions> : IOptionsMonitor<TOptions>
+{
+    readonly TOptions value;
+
+    public TestOptionsMonitor(TOptions value) => this.value = value;
+
+    public TOptions CurrentValue => value;
+
+    public TOptions Get(string? name) => value;
+
+    public IDisposable? OnChange(Action<TOptions, string?> listener) => null;
 }
