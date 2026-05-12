@@ -2,7 +2,7 @@
  * Route tree for the DiVoid SPA.
  *
  * PR 1 routes: /, /callback, /logout
- * PR 2 routes: /search, /nodes/:id (stubs only here)
+ * PR 2 routes: /search, /nodes/:id
  * PR 4 routes: /workspace (stub)
  * PR 5 routes: /tasks, /tasks/:projectId (stub)
  *
@@ -25,6 +25,14 @@ const WorkspacePage = lazy(() =>
 );
 const TasksPage = lazy(() =>
   import('@/features/tasks/TasksPage').then((m) => ({ default: m.TasksPage })),
+);
+
+// PR 2 routes — search + node detail.
+const SearchPage = lazy(() =>
+  import('@/features/nodes/SearchPage').then((m) => ({ default: m.SearchPage })),
+);
+const NodeDetailPage = lazy(() =>
+  import('@/features/nodes/NodeDetailPage').then((m) => ({ default: m.NodeDetailPage })),
 );
 
 function RouteLoadingFallback() {
@@ -54,6 +62,30 @@ export function AppRoutes() {
             </ProtectedRoute>
           }
         />
+
+        {/* PR 2 — search and node detail */}
+        <Route
+          path={ROUTES.SEARCH}
+          element={
+            <ProtectedRoute>
+              <AppShell>
+                <SearchPage />
+              </AppShell>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/nodes/:id"
+          element={
+            <ProtectedRoute>
+              <AppShell>
+                <NodeDetailPage />
+              </AppShell>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* PR 4 — workspace (stub) */}
         <Route
           path={ROUTES.WORKSPACE}
           element={
@@ -64,6 +96,8 @@ export function AppRoutes() {
             </ProtectedRoute>
           }
         />
+
+        {/* PR 5 — tasks (stub) */}
         <Route
           path={ROUTES.TASKS}
           element={
