@@ -14,7 +14,6 @@
  * Task: DiVoid node #229
  */
 
-import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as Dialog from '@radix-ui/react-dialog';
@@ -45,13 +44,17 @@ export function CreateNodeDialog({ open, onOpenChange, onCreated }: CreateNodeDi
   const typeValue = watch('type');
   const statusOptions = statusOptionsForType(typeValue);
 
-  // Reset the form when the dialog is closed.
-  useEffect(() => {
-    if (!open) {
+  // When the dialog closes, reset the form and mutation state.
+  // Done in onOpenChange (an event) rather than useEffect to avoid depending on
+  // the mutation result object, which TanStack Query recreates every render and
+  // would cause an infinite re-render loop.
+  const handleOpenChange = (isOpen: boolean) => {
+    if (!isOpen) {
       reset();
       mutation.reset();
     }
-  }, [open, reset, mutation]);
+    onOpenChange(isOpen);
+  };
 
   const onSubmit = handleSubmit(async (values) => {
     const input = {
@@ -63,7 +66,7 @@ export function CreateNodeDialog({ open, onOpenChange, onCreated }: CreateNodeDi
     try {
       const result = await mutation.mutateAsync(input);
       onCreated(result.id);
-      onOpenChange(false);
+      handleOpenChange(false);
     } catch {
       // Error toast was already shown by the mutation's onError handler.
       // Keep the dialog open for retry.
@@ -71,7 +74,7 @@ export function CreateNodeDialog({ open, onOpenChange, onCreated }: CreateNodeDi
   });
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/40 z-40 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
         <Dialog.Content
