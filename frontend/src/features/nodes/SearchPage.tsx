@@ -12,7 +12,7 @@
  * Task: DiVoid node #228
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Search, Link2, GitBranch, Plus } from 'lucide-react';
@@ -129,9 +129,11 @@ function SemanticPanel() {
 
   const { data, isFetching, error } = useNodeSemantic(query, filter);
 
-  if (error instanceof DivoidApiError) {
-    toast.error(`${error.code}: ${error.text}`);
-  }
+  useEffect(() => {
+    if (error instanceof DivoidApiError) {
+      toast.error(`${error.code}: ${error.text}`);
+    }
+  }, [error]);
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -207,9 +209,11 @@ function LinkedPanel() {
 
   const { data, isFetching, error } = useNodeListLinkedTo(anchorId, filter);
 
-  if (error instanceof DivoidApiError) {
-    toast.error(`${error.code}: ${error.text}`);
-  }
+  useEffect(() => {
+    if (error instanceof DivoidApiError) {
+      toast.error(`${error.code}: ${error.text}`);
+    }
+  }, [error]);
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -283,9 +287,11 @@ function PathPanel() {
 
   const pathError = error instanceof DivoidApiError ? error : null;
 
-  if (pathError && pathError.status !== 400) {
-    toast.error(`${pathError.code}: ${pathError.text}`);
-  }
+  useEffect(() => {
+    if (pathError && pathError.status !== 400) {
+      toast.error(`${pathError.code}: ${pathError.text}`);
+    }
+  }, [pathError]);
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {

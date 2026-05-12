@@ -9,6 +9,7 @@
  * API reference: DiVoid node #8
  */
 
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from 'react-oidc-context';
 import { useApiClient } from '@/lib/useApiClient';
@@ -30,10 +31,19 @@ export function useNodeListLinkedTo(
   const auth = useAuth();
   const client = useApiClient();
 
-  const params: NodeFilter = {
-    ...filter,
-    linkedto: [linkedToId],
-  };
+  // Stabilise params so the queryFn closure never changes identity between
+  // renders when the logical filter is the same.  Without this, useMemo-on-empty-
+  // deps in useApiClient stays stable, but the arrow function capturing `params`
+  // is still a new reference every render, which makes TanStack Query's
+  // observer.setOptions() detect an options change on every render (shallow
+  // equality of defaultedOptions fails on the queryFn reference).
+  const params: NodeFilter = useMemo(
+    () => ({ ...filter, linkedto: [linkedToId] }),
+    // JSON-serialise the filter so the memo only recomputes when the logical
+    // content changes, not when the caller passes a new object literal each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [linkedToId, JSON.stringify(filter)],
+  );
 
   return useQuery<Page<NodeDetails>>({
     queryKey: nodeLinkedToQueryKey(linkedToId, filter),
