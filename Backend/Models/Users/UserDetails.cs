@@ -29,4 +29,10 @@ public class UserDetails {
     /// timestamp when the user was created
     /// </summary>
     public DateTime CreatedAt { get; set; }
+
+    /// <summary>
+    /// permissions for Keycloak-authenticated requests (empty array when none are set).
+    /// Allowed values: admin, write, read.
+    /// </summary>
+    public string[] Permissions { get; set; }
 }

@@ -1,3 +1,4 @@
+using Backend.Models.Attributes;
 using Pooshit.AspNetCore.Services.Patches;
 using Pooshit.Ocelot.Entities.Attributes;
 
@@ -46,5 +47,6 @@ public class User {
     /// Allowed values: admin, write, read.
     /// </summary>
     [AllowPatch]
+    [JsonColumn]
     public string Permissions { get; set; }
 }

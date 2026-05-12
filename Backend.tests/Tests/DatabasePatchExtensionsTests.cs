@@ -66,7 +66,7 @@ public class DatabasePatchExtensionsTests
         long id = await InsertApiKey(fixture, permissions: "[\"read\"]");
 
         await fixture.EntityManager.Update<ApiKey>()
-                     .Patch(new PatchOperation { Op = "replace", Path = "/permissions", Value = "[\"admin\"]" })
+                     .Patch(new PatchOperation { Op = "replace", Path = "/permissions", Value = new object[] { "admin" } })
                      .Where(k => k.Id == id)
                      .ExecuteAsync();
 
@@ -190,7 +190,7 @@ public class DatabasePatchExtensionsTests
         await fixture.EntityManager.Update<ApiKey>()
                      .Patch(
                          new PatchOperation { Op = "replace", Path = "/userid", Value = 99L },
-                         new PatchOperation { Op = "replace", Path = "/permissions", Value = "[\"write\"]" })
+                         new PatchOperation { Op = "replace", Path = "/permissions", Value = new object[] { "write" } })
                      .Where(k => k.Id == id)
                      .ExecuteAsync();
 

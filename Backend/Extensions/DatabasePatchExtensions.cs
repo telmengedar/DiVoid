@@ -1,12 +1,15 @@
-﻿using System.Linq.Expressions;
+using System.Linq;
+using System.Linq.Expressions;
 using System.Reflection;
+using Backend.Models.Attributes;
 using Pooshit.AspNetCore.Services.Convert;
 using Pooshit.AspNetCore.Services.Errors.Exceptions;
 using Pooshit.AspNetCore.Services.Patches;
+using Pooshit.Json;
 using Pooshit.Ocelot.Entities.Operations;
 using Pooshit.Ocelot.Tokens;
 
-namespace Backend.Extensions; 
+namespace Backend.Extensions;
 
 /// <summary>
 /// extensions for patch operations in a database context
@@ -16,21 +19,13 @@ public static class DatabasePatchExtensions {
     /// <summary>
     /// applies a set of patch operations to an update operation
     /// </summary>
-    /// <typeparam name="T"></typeparam>
-    /// <param name="updateoperation">update operation to be updated</param>
-    /// <param name="operations">operations to apply</param>
-    /// <returns>the update operation for fluent behavior</returns>
     public static UpdateValuesOperation<T> Patch<T>(this UpdateValuesOperation<T> updateoperation, params PatchOperation[] operations) {
         return Patch(updateoperation, (IEnumerable<PatchOperation>) operations);
     }
-    
+
     /// <summary>
     /// applies a set of patch operations to an update operation
     /// </summary>
-    /// <typeparam name="T"></typeparam>
-    /// <param name="updateoperation">update operation to be updated</param>
-    /// <param name="operations">operations to apply</param>
-    /// <returns>the update operation for fluent behavior</returns>
     /// <exception cref="PropertyNotFoundException">
     /// Thrown when a patch path does not resolve to any property on <typeparamref name="T"/>.
     /// Mapped to HTTP 400 by <see cref="Backend.Errors.PropertyNotFoundExceptionHandler"/>.
@@ -53,9 +48,13 @@ public static class DatabasePatchExtensions {
                 throw new NotSupportedException($"Patching of '{entitytype.Name}::{property.Name}' is not supported");
 
             object targetvalue = null;
-            if (patch.Op != "embed")
-                targetvalue = Converter.Convert(patch.Value, property.PropertyType, true);
-            
+            if (patch.Op != "embed") {
+                if (Attribute.IsDefined(property, typeof(JsonColumnAttribute)))
+                    targetvalue = ResolveJsonColumnValue(patch.Value, entitytype, property);
+                else
+                    targetvalue = Converter.Convert(patch.Value, property.PropertyType, true);
+            }
+
             switch (patch.Op) {
                 case Pooshit.AspNetCore.Services.Patches.Patch.Op_Replace:
                     setters.Add(e => DB.Property<T>(property.Name, true) == targetvalue);
@@ -83,5 +82,12 @@ public static class DatabasePatchExtensions {
         if (setters.Count > 0)
             updateoperation.Set(setters.ToArray());
         return updateoperation;
+    }
+
+    static string ResolveJsonColumnValue(object value, Type entitytype, PropertyInfo property) {
+        if (value is not object[] arr)
+            throw new ArgumentException(
+                $"'{entitytype.Name}::{property.Name}' must be an array; got {value?.GetType().Name ?? "null"}.");
+        return Json.WriteString(arr.Select(el => Converter.Convert<string>(el)).ToArray());
     }
 }
