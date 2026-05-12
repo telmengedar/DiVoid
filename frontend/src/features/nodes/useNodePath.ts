@@ -13,6 +13,7 @@
  * API reference: DiVoid node #8 (path grammar)
  */
 
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from 'react-oidc-context';
 import { useApiClient } from '@/lib/useApiClient';
@@ -34,10 +35,12 @@ export function useNodePath(path: string, filter?: PathFilter) {
   const auth = useAuth();
   const client = useApiClient();
 
-  const params = {
-    ...filter,
-    path,
-  };
+  // Stabilise params so queryFn identity doesn't change between renders.
+  const params = useMemo(
+    () => ({ ...filter, path }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [path, JSON.stringify(filter)],
+  );
 
   return useQuery<Page<NodeDetails>>({
     queryKey: nodePathQueryKey(path, filter),

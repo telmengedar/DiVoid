@@ -9,6 +9,7 @@
  * API reference: DiVoid node #8 and onboarding node #9
  */
 
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from 'react-oidc-context';
 import { useApiClient } from '@/lib/useApiClient';
@@ -30,10 +31,13 @@ export function useNodeSemantic(query: string, filter?: SemanticFilter) {
   const auth = useAuth();
   const client = useApiClient();
 
-  const params: NodeFilter = {
-    ...filter,
-    query,
-  };
+  // Stabilise params so the queryFn closure doesn't change identity between
+  // renders when the logical filter hasn't changed.
+  const params: NodeFilter = useMemo(
+    () => ({ ...filter, query }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [query, JSON.stringify(filter)],
+  );
 
   return useQuery<Page<NodeDetails>>({
     queryKey: nodeSemanticQueryKey(query, filter),
