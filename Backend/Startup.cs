@@ -1,6 +1,8 @@
+using System.Linq;
 using System.Text.Json.Serialization;
 using Backend.Auth;
 using Backend.Errors;
+using Backend.Errors.Exceptions;
 using Backend.Extensions.Startup;
 using Backend.Formatters;
 using Backend.Init;
@@ -14,7 +16,6 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
-using Pooshit.AspNetCore.Services.Errors.Exceptions;
 using Pooshit.AspNetCore.Services.Errors.Handlers;
 using Pooshit.AspNetCore.Services.Extensions;
 using Pooshit.AspNetCore.Services.Formatters;
@@ -80,6 +81,10 @@ public class Startup
         services.AddTransient<IErrorHandler, NotSupportedExceptionHandler>();
         services.AddTransient<IErrorHandler, PathQueryParseExceptionHandler>();
         services.AddTransient<IErrorHandler, SemanticSearchUnavailableExceptionHandler>();
+        // AuthenticationFailedExceptionHandler and AuthorizationFailedExceptionHandler map
+        // auth pipeline exceptions to the canonical { code, text } shape at 401/403.
+        services.AddTransient<IErrorHandler, AuthenticationFailedExceptionHandler>();
+        services.AddTransient<IErrorHandler, AuthorizationFailedExceptionHandler>();
         services.AddLogging(options =>
         {
             options.ClearProviders();
@@ -146,7 +151,7 @@ public class Startup
                 options.Authority = authority;
                 options.RequireHttpsMetadata = requireHttpsMetadata;
 
-                // IMPORTANT: never log raw JWT contents — only issuer, audience, and
+                // IMPORTANT: never log raw JWT contents - only issuer, audience, and
                 // the resolved DiVoid userId should appear in logs.
                 options.TokenValidationParameters = new TokenValidationParameters {
                     ValidateIssuer = true,
@@ -163,6 +168,32 @@ public class Startup
                 // removed. The PolicyScheme ForwardDefaultSelector is now the primary gate —
                 // non-JWT tokens never reach JwtBearer. ApiKeyAuthenticationHandler retains its
                 // own symmetric dot-count guard as defence-in-depth.
+                options.Events = new JwtBearerEvents {
+                    OnChallenge = ctx => {
+                        // Suppress the framework's default empty 401 and throw so that
+                        // ErrorHandlerMiddleware produces the canonical { code, text } body.
+                        // The PolicyScheme ensures only JWT-shaped tokens reach this handler, so
+                        // API-key failure cases are handled by ApiKeyAuthenticationHandler directly.
+                        ctx.HandleResponse();
+                        string authHdr = ctx.Request.Headers["Authorization"].ToString();
+                        string detail;
+                        if (string.IsNullOrEmpty(authHdr)) {
+                            detail = "Authorization header missing";
+                        } else if (!authHdr.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) {
+                            detail = "Authorization header must use Bearer scheme";
+                        } else {
+                            detail = ctx.AuthenticateFailure != null
+                                ? MapJwtFailureToDetail(ctx.AuthenticateFailure)
+                                : "JWT could not be parsed";
+                        }
+                        throw new AuthenticationFailedException(detail);
+                    },
+                    OnForbidden = ctx => {
+                        // JWT authenticated but authorization failed.
+                        string detail = ExtractRequiredPermission(ctx.HttpContext);
+                        throw new AuthorizationFailedException(detail);
+                    }
+                };
             })
             .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
                 ApiKeyAuthenticationHandler.SchemeName, null);
@@ -188,13 +219,35 @@ public class Startup
                 options.AddPolicy("admin", p => p.RequireAssertion(_ => true));
                 options.AddPolicy("write",  p => p.RequireAssertion(_ => true));
                 options.AddPolicy("read",   p => p.RequireAssertion(_ => true));
-                // No fallback — all endpoints open when auth is disabled
+                // No fallback - all endpoints open when auth is disabled
             });
         }
 
         services.AddHostedService<DatabaseModelService>();
         services.AddHostedService<StartupWarningService>();
     }
+
+    static string ExtractRequiredPermission(HttpContext context) {
+        Microsoft.AspNetCore.Http.Endpoint endpoint = context.GetEndpoint();
+        if (endpoint != null) {
+            IAuthorizeData[] authorizeData = endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>().ToArray();
+            if (authorizeData.Length > 0) {
+                string policyName = authorizeData[0].Policy;
+                if (!string.IsNullOrEmpty(policyName))
+                    return $"Caller lacks required permission '{policyName}'";
+            }
+        }
+        return "Caller lacks required permission";
+    }
+
+    static string MapJwtFailureToDetail(Exception ex) => ex switch {
+        Microsoft.IdentityModel.Tokens.SecurityTokenExpiredException             => "JWT has expired",
+        Microsoft.IdentityModel.Tokens.SecurityTokenInvalidAudienceException     => "JWT audience is not accepted by this service",
+        Microsoft.IdentityModel.Tokens.SecurityTokenInvalidIssuerException       => "JWT issuer is not accepted by this service",
+        Microsoft.IdentityModel.Tokens.SecurityTokenSignatureKeyNotFoundException => "JWT signature could not be verified",
+        Microsoft.IdentityModel.Tokens.SecurityTokenInvalidSignatureException    => "JWT signature could not be verified",
+        _                                                                         => "JWT could not be parsed"
+    };
 
     /// <summary>
     /// configures service pipeline
