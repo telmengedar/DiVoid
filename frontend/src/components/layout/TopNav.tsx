@@ -12,7 +12,7 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from 'react-oidc-context';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { LogOut, Network, ListTodo } from 'lucide-react';
+import { LogOut, Network, ListTodo, Search } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ROUTES } from '@/lib/constants';
 
@@ -41,6 +41,7 @@ export function TopNav() {
   const userName = auth.user?.profile?.name ?? auth.user?.profile?.preferred_username;
 
   const navLinks = [
+    { to: ROUTES.SEARCH, label: 'Search', Icon: Search },
     { to: ROUTES.WORKSPACE, label: 'Workspace', Icon: Network },
     { to: ROUTES.TASKS, label: 'Tasks', Icon: ListTodo },
   ];
