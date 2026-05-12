@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+/* ─── Theme ─── */
+
+@theme {
+  --font-sans: system-ui, -apple-system, sans-serif;
+
+  --radius-sm: calc(0.5rem - 2px);
+  --radius-md: calc(0.5rem);
+  --radius-lg: 0.5rem;
+  --radius-xl: calc(0.5rem + 4px);
+
+  /* Semantic colors (HSL via CSS vars for shadcn-style compat) */
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+}
+
+/* ─── CSS Variables ─── */
+
+:root {
+  --background: 0 0% 98%;
+  --foreground: 0 0% 9%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 9%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 9%;
+
+  --primary: 221 83% 53%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 0 0% 94%;
+  --secondary-foreground: 0 0% 9%;
+
+  --muted: 0 0% 94%;
+  --muted-foreground: 0 0% 46%;
+
+  --accent: 221 83% 53%;
+  --accent-foreground: 0 0% 100%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 98%;
+
+  --border: 0 0% 90%;
+  --input: 0 0% 88%;
+  --ring: 221 83% 53%;
+
+  --radius: 0.5rem;
+}
+
+/* ─── Base Styles ─── */
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-weight: normal;
+    letter-spacing: -0.02em;
+  }
+
+  button, [role="button"], a, [type="button"], [type="submit"], [type="reset"],
+  summary, label[for], select {
+    cursor: pointer;
+  }
+}
+
+/* ─── Scrollbar ─── */
+
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+}
+:hover::-webkit-scrollbar-thumb,
+:focus-within::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+}
+::-webkit-scrollbar-thumb:hover { background: hsl(0 0% 70%); }
