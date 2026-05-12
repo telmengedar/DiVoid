@@ -63,7 +63,7 @@ public sealed class JwtAuthFixture : IDisposable
                 // Replace the JwtBearer backchannel handler and override signing key directly
                 // so the middleware never makes a real network call to Keycloak.
                 services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options => {
-                    options.BackchannelHttpHandler = new FakeJwksHandler(TestAuthority, discoveryJson, jwks);
+                    options.BackchannelHttpHandler = new FakeJwksHandlerPublic(TestAuthority, discoveryJson, jwks);
                     options.TokenValidationParameters.IssuerSigningKey  = signingKey;
                     options.TokenValidationParameters.IssuerSigningKeys = [signingKey];
                 });
@@ -173,13 +173,14 @@ public sealed class JwtAuthFixture : IDisposable
     // Inner handler that serves canned OIDC metadata + JWKS responses
     // -----------------------------------------------------------------------
 
-    sealed class FakeJwksHandler : HttpMessageHandler
+    /// <summary>exposes the fake JWKS handler for use in other test fixtures</summary>
+    public sealed class FakeJwksHandlerPublic : HttpMessageHandler
     {
         readonly string authority;
         readonly string discoveryJson;
         readonly string jwksJson;
 
-        public FakeJwksHandler(string authority, string discoveryJson, string jwksJson)
+        public FakeJwksHandlerPublic(string authority, string discoveryJson, string jwksJson)
         {
             this.authority     = authority;
             this.discoveryJson = discoveryJson;
@@ -201,7 +202,7 @@ public sealed class JwtAuthFixture : IDisposable
 
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound) {
                 Content = new StringContent(
-                    $"FakeJwksHandler: unexpected URL {url}", Encoding.UTF8, "text/plain")
+                    $"FakeJwksHandlerPublic: unexpected URL {url}", Encoding.UTF8, "text/plain")
             });
         }
 

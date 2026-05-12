@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json.Serialization;
 using Backend.Auth;
 using Backend.Errors;
@@ -163,6 +164,37 @@ public class Startup
                 // removed. The PolicyScheme ForwardDefaultSelector is now the primary gate —
                 // non-JWT tokens never reach JwtBearer. ApiKeyAuthenticationHandler retains its
                 // own symmetric dot-count guard as defence-in-depth.
+                options.Events = new JwtBearerEvents {
+                    OnChallenge = async ctx => {
+                        // Suppress the framework's default empty 401 and write a JSON body instead.
+                        // The PolicyScheme ensures only JWT-shaped tokens reach this handler, so
+                        // API-key failure cases are handled by ApiKeyAuthenticationHandler directly.
+                        ctx.HandleResponse();
+                        ctx.Response.StatusCode = 401;
+                        ctx.Response.ContentType = "application/json; charset=utf-8";
+                        if (!ctx.Response.Headers.ContainsKey("WWW-Authenticate"))
+                            ctx.Response.Headers["WWW-Authenticate"] = "Bearer";
+
+                        string authHdr = ctx.Request.Headers["Authorization"].ToString();
+                        string detail;
+                        if (string.IsNullOrEmpty(authHdr)) {
+                            detail = "Authorization header missing";
+                        } else if (!authHdr.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) {
+                            detail = "Authorization header must use Bearer scheme";
+                        } else {
+                            detail = ctx.AuthenticateFailure != null
+                                ? AuthErrorMapping.MapJwtFailureToDetail(ctx.AuthenticateFailure)
+                                : "JWT could not be parsed";
+                        }
+                        await ctx.Response.WriteAsync(AuthErrorMapping.SerializeError(401, "Unauthorized", detail));
+                    },
+                    OnForbidden = async ctx => {
+                        ctx.Response.StatusCode = 403;
+                        ctx.Response.ContentType = "application/json; charset=utf-8";
+                        string detail = ExtractRequiredPermission(ctx.HttpContext);
+                        await ctx.Response.WriteAsync(AuthErrorMapping.SerializeError(403, "Forbidden", detail));
+                    }
+                };
             })
             .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
                 ApiKeyAuthenticationHandler.SchemeName, null);
@@ -194,6 +226,19 @@ public class Startup
 
         services.AddHostedService<DatabaseModelService>();
         services.AddHostedService<StartupWarningService>();
+    }
+
+    static string ExtractRequiredPermission(HttpContext context) {
+        Microsoft.AspNetCore.Http.Endpoint endpoint = context.GetEndpoint();
+        if (endpoint != null) {
+            IAuthorizeData[] authorizeData = endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>().ToArray();
+            if (authorizeData.Length > 0) {
+                string policyName = authorizeData[0].Policy;
+                if (!string.IsNullOrEmpty(policyName))
+                    return $"Caller lacks required permission '{policyName}'";
+            }
+        }
+        return "Caller lacks required permission";
     }
 
     /// <summary>
