@@ -16,6 +16,11 @@ interface NodeResultTableProps {
   nodes: NodeDetails[];
   /** When true, shows a skeleton loading state instead of rows. */
   loading?: boolean;
+  /**
+   * Override the link target for each row's name cell.
+   * Defaults to `ROUTES.NODE_DETAIL(node.id)`.
+   */
+  getRowHref?: (node: NodeDetails) => string;
 }
 
 function StatusBadge({ status }: { status: string | null }) {
@@ -57,7 +62,7 @@ function SkeletonRow() {
   );
 }
 
-export function NodeResultTable({ nodes, loading = false }: NodeResultTableProps) {
+export function NodeResultTable({ nodes, loading = false, getRowHref }: NodeResultTableProps) {
   const hasSimilarity = nodes.some((n) => n.similarity !== undefined);
 
   return (
@@ -120,7 +125,7 @@ export function NodeResultTable({ nodes, loading = false }: NodeResultTableProps
                 </td>
                 <td className="px-3 py-2 font-medium">
                   <Link
-                    to={ROUTES.NODE_DETAIL(node.id)}
+                    to={getRowHref ? getRowHref(node) : ROUTES.NODE_DETAIL(node.id)}
                     className="text-foreground hover:text-primary underline-offset-2 hover:underline transition-colors"
                   >
                     {node.name ?? `Node ${node.id}`}
