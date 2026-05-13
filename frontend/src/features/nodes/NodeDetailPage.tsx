@@ -21,7 +21,7 @@
  * Task: DiVoid node #229
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -322,6 +322,24 @@ export function NodeDetailPage() {
   const nodeId = idParam ? parseInt(idParam, 10) : 0;
   const navigate = useNavigate();
 
+  /**
+   * Navigate back to wherever the user came from.
+   * If there is no prior history entry (URL pasted directly, new tab),
+   * fall back to /search — the previous default.
+   *
+   * Detection: window.history.state.idx is the depth counter that
+   * react-router-dom 7 / the browser maintains. A value > 0 means
+   * at least one prior entry exists in the session history stack.
+   */
+  const handleBack = useCallback(() => {
+    const historyIdx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+    if (historyIdx > 0) {
+      navigate(-1);
+    } else {
+      navigate(ROUTES.SEARCH);
+    }
+  }, [navigate]);
+
   const { data: node, isFetching, error } = useNode(nodeId);
   const { data: whoami } = useWhoami();
   const canWrite = whoami?.permissions?.includes('write') ?? false;
@@ -381,14 +399,17 @@ export function NodeDetailPage() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 flex flex-col gap-6">
-      {/* Back link */}
-      <Link
-        to={ROUTES.SEARCH}
-        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+      {/* Back button — returns to previous history entry, or /search when none */}
+      <button
+        type="button"
+        onClick={handleBack}
+        className="inline-flex items-center gap-1 self-start text-sm text-muted-foreground hover:text-foreground transition-colors"
+        aria-label="Go back"
+        data-testid="back-button"
       >
         <ChevronLeft size={15} aria-hidden="true" />
-        Back to search
-      </Link>
+        Back
+      </button>
 
       {/* Metadata region */}
       <section aria-labelledby="metadata-heading">

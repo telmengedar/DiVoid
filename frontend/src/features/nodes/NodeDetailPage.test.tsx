@@ -199,12 +199,11 @@ describe('NodeDetailPage — read regions', () => {
     expect(link).toHaveAttribute('href', '/nodes/1');
   });
 
-  it('renders back link to search', async () => {
+  it('renders the back button', async () => {
     renderAtId(42);
 
     await waitFor(() => {
-      const backLink = screen.getByRole('link', { name: /back to search/i });
-      expect(backLink).toHaveAttribute('href', '/search');
+      expect(screen.getByTestId('back-button')).toBeInTheDocument();
     });
   });
 
