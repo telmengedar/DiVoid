@@ -4,6 +4,8 @@
  * Responsibilities (this component only):
  *  - Own the ReactFlow instance and viewport state (local pan/zoom).
  *  - Compute padded bounds from the current viewport and pass to hooks.
+ *  - Apply type and status filters via useNodesInViewport / useUntypedNodesInViewport.
+ *  - Merge typed + untyped node sets when "untyped" is selected.
  *  - Convert NodeDetails[] + NodeLink[] → xyflow Node[] / Edge[].
  *  - Dispatch useMoveNode on drag-end.
  *  - Handle file drop → create-node with inferred type + upload content.
@@ -16,7 +18,7 @@
  *  - The bounds debounce prevents thrashing the query on every pan tick.
  *
  * Design: docs/architecture/workspace-mode.md §5.7
- * Task: DiVoid node #230
+ * Task: DiVoid node #230 / #318
  */
 
 import {
@@ -45,9 +47,24 @@ import { useTheme } from 'next-themes';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
-import { useNodesInViewport, type ViewportBounds } from './useNodesInViewport';
+import {
+  useNodesInViewport,
+  useUntypedNodesInViewport,
+  type ViewportBounds,
+} from './useNodesInViewport';
 import { useNodeAdjacency } from './useNodeAdjacency';
 import { useMoveNode } from './useMoveNode';
+import {
+  useWorkspaceFilters,
+  UNTYPED_VALUE,
+  ALL_NODE_TYPES,
+  ALL_STATUS_VALUES,
+  NO_STATUS_VALUE,
+} from './useWorkspaceFilters';
+import {
+  WorkspaceFilterPopover,
+  type FilterOption,
+} from './WorkspaceFilterPopover';
 import { NodeCardRenderer, type NodeCardData, type WorkspaceNode } from './NodeCardRenderer';
 import { CreateNodeDialog } from '@/features/nodes/CreateNodeDialog';
 import { useCreateNode } from '@/features/nodes/mutations';
@@ -70,6 +87,28 @@ const nodeTypes = { nodeCard: NodeCardRenderer };
 
 // ─── Session storage key for viewport persistence ─────────────────────────────
 const VIEWPORT_SESSION_KEY = 'divoid.workspace.viewport';
+
+// ─── Filter option labels ─────────────────────────────────────────────────────
+
+/** Human-readable labels for synthetic / abbreviated type values. */
+const TYPE_LABELS: Record<string, string> = {
+  [UNTYPED_VALUE]: 'untyped',
+};
+
+/** Human-readable labels for synthetic / abbreviated status values. */
+const STATUS_LABELS: Record<string, string> = {
+  [NO_STATUS_VALUE]: 'no status',
+};
+
+const typeFilterOptions: FilterOption[] = ALL_NODE_TYPES.map((t) => ({
+  value: t,
+  label: TYPE_LABELS[t] ?? t,
+}));
+
+const statusFilterOptions: FilterOption[] = ALL_STATUS_VALUES.map((s) => ({
+  value: s,
+  label: STATUS_LABELS[s] ?? s,
+}));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -158,6 +197,32 @@ export function WorkspaceCanvas() {
   const moveNode          = useMoveNode();
   const createNode        = useCreateNode();
 
+  // ── Filters ───────────────────────────────────────────────────────────────
+  const {
+    selectedTypes,
+    selectedStatuses,
+    toggleType,
+    toggleStatus,
+    typeFilterActive,
+    statusFilterActive,
+  } = useWorkspaceFilters();
+
+  // Build the filter param object for useNodesInViewport.
+  // Memoised so it doesn't cause query key churn on every render.
+  const filterParams = useMemo(
+    () => ({ selectedTypes, selectedStatuses }),
+    [selectedTypes, selectedStatuses],
+  );
+
+  // Derive whether real types are selected (to decide if typed query runs).
+  const hasRealTypes = useMemo(
+    () => selectedTypes.some((t) => t !== UNTYPED_VALUE),
+    [selectedTypes],
+  );
+
+  const selectedTypesSet    = useMemo(() => new Set(selectedTypes),    [selectedTypes]);
+  const selectedStatusesSet = useMemo(() => new Set(selectedStatuses), [selectedStatuses]);
+
   // ── Container ref (to read pixel dimensions for bounds calc) ──────────────
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -196,12 +261,35 @@ export function WorkspaceCanvas() {
   // ── Data queries ──────────────────────────────────────────────────────────
   const { data: nodesPage } = useNodesInViewport(
     debouncedBounds ?? DEFAULT_VIEWPORT_BOUNDS,
+    filterParams,
+    hasRealTypes,
   );
 
-  const visibleDetails = useMemo(
-    () => nodesPage?.result ?? [],
-    [nodesPage],
+  // Untyped fetch (option b from #318): only when UNTYPED_VALUE is selected.
+  const includesUntyped = selectedTypes.includes(UNTYPED_VALUE);
+  const { data: untypedPage } = useUntypedNodesInViewport(
+    debouncedBounds ?? DEFAULT_VIEWPORT_BOUNDS,
+    filterParams,
   );
+
+  // Merge typed + untyped results. Deduplicate by id (a node cannot be both
+  // typed and untyped, but guard anyway).
+  const visibleDetails = useMemo<PositionedNodeDetails[]>(() => {
+    const typed   = nodesPage?.result ?? [];
+    const untyped = includesUntyped ? (untypedPage?.result ?? []) : [];
+
+    if (untyped.length === 0) return typed;
+
+    const seen = new Set(typed.map((n) => n.id));
+    const merged = [...typed];
+    for (const n of untyped) {
+      if (!seen.has(n.id)) {
+        merged.push(n);
+        seen.add(n.id);
+      }
+    }
+    return merged;
+  }, [nodesPage, untypedPage, includesUntyped]);
 
   const visibleNodeIds = useMemo(
     () => visibleDetails.map((n) => n.id),
@@ -394,6 +482,29 @@ export function WorkspaceCanvas() {
           <p className="text-primary font-medium text-sm">Drop file to create node</p>
         </div>
       )}
+
+      {/* Toolbar overlay — filter controls */}
+      <div
+        className="pointer-events-none absolute top-3 left-3 z-20 flex items-center gap-2"
+        aria-label="Workspace filter toolbar"
+      >
+        <div className="pointer-events-auto flex items-center gap-2">
+          <WorkspaceFilterPopover
+            label="Type"
+            options={typeFilterOptions}
+            selected={selectedTypesSet}
+            onToggle={toggleType}
+            active={typeFilterActive}
+          />
+          <WorkspaceFilterPopover
+            label="Status"
+            options={statusFilterOptions}
+            selected={selectedStatusesSet}
+            onToggle={toggleStatus}
+            active={statusFilterActive}
+          />
+        </div>
+      </div>
 
       <ReactFlow
         nodes={nodes}
