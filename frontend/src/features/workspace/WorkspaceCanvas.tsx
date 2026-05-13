@@ -85,6 +85,22 @@ import { useApiClient } from '@/lib/useApiClient';
 // render-loop pitfall documented in #271.
 const nodeTypes = { nodeCard: NodeCardRenderer };
 
+// ─── Stable MiniMap nodeColor callback (win #5) ───────────────────────────────
+// Inline arrow → new function identity every render → MiniMap re-paints all
+// nodes on every viewport change. Module-level constant breaks that cycle.
+function miniMapNodeColor(n: { data?: unknown }): string {
+  const type = (n.data as NodeCardData | undefined)?.type ?? '';
+  switch (type) {
+    case 'task':          return '#3b82f6';
+    case 'bug':           return '#ef4444';
+    case 'project':       return '#a855f7';
+    case 'documentation': return '#f59e0b';
+    case 'person':        return '#22c55e';
+    case 'organization':  return '#14b8a6';
+    default:              return '#6b7280';
+  }
+}
+
 // ─── Session storage key for viewport persistence ─────────────────────────────
 const VIEWPORT_SESSION_KEY = 'divoid.workspace.viewport';
 
@@ -226,34 +242,21 @@ export function WorkspaceCanvas() {
   // ── Container ref (to read pixel dimensions for bounds calc) ──────────────
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // ── Viewport state ────────────────────────────────────────────────────────
-  const [viewport, setViewport] = useState<Viewport>(loadSavedViewport);
+  // ── Viewport ref (win #3: was useState — re-rendered canvas at ~60Hz on pan) ─
+  // Only handlePaneClick and handleCanvasDrop read viewport for screen→world
+  // conversion; both read from the ref at call time so no re-render is needed.
+  const viewportRef = useRef<Viewport>(loadSavedViewport());
 
   // ── Debounced bounds for the viewport query ───────────────────────────────
   const [debouncedBounds, setDebouncedBounds] = useState<ViewportBounds | null>(null);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const scheduleBoundsUpdate = useCallback((newViewport: Viewport) => {
-    if (debounceTimer.current) clearTimeout(debounceTimer.current);
-    debounceTimer.current = setTimeout(() => {
-      const container = containerRef.current;
-      if (!container) return;
-      setDebouncedBounds(
-        computePaddedBounds(
-          newViewport,
-          container.offsetWidth,
-          container.offsetHeight,
-        ),
-      );
-    }, VIEWPORT_DEBOUNCE_MS);
-  }, []);
 
   // Initialise bounds on first mount (after container is sized).
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     setDebouncedBounds(
-      computePaddedBounds(viewport, container.offsetWidth, container.offsetHeight),
+      computePaddedBounds(viewportRef.current, container.offsetWidth, container.offsetHeight),
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentional: run once on mount
@@ -326,19 +329,24 @@ export function WorkspaceCanvas() {
   // Sync server data into xyflow state whenever query results change.
   // Only replace positions for nodes NOT currently being dragged to avoid
   // snapping under the cursor.
+  //
+  // win #6: prev.find inside xyNodes.map was O(n²). Build prevMap once (O(n))
+  // so each lookup is O(1) — measurable at the 250-node cap.
   useEffect(() => {
     setNodes((prev) => {
       const dragging = new Set(prev.filter((n) => n.dragging).map((n) => n.id));
+      // Build Map<id, prev> once — O(n) instead of O(n) per map iteration.
+      const prevMap  = new Map(prev.map((p) => [p.id, p]));
       const incoming = new Map(xyNodes.map((n) => [n.id, n]));
 
       // Remove nodes that left the viewport; add new ones; update non-dragging ones.
-      return xyNodes.map((incoming_node) => {
-        const existing = prev.find((p) => p.id === incoming_node.id);
+      return xyNodes.map((incomingNode) => {
+        const existing = prevMap.get(incomingNode.id);
         if (existing && dragging.has(existing.id)) {
           // Preserve local drag position; update data (name/status) only.
-          return { ...existing, data: incoming_node.data };
+          return { ...existing, data: incomingNode.data };
         }
-        return incoming_node;
+        return incomingNode;
       }).concat(
         // Keep dragging nodes that scrolled out of viewport bounds temporarily.
         prev.filter((p) => dragging.has(p.id) && !incoming.has(p.id)),
@@ -363,13 +371,28 @@ export function WorkspaceCanvas() {
   );
 
   // ── Viewport change ───────────────────────────────────────────────────────
+  // win #3: viewportRef replaces useState — no re-render on pan/zoom.
+  // win #2: saveViewport is folded into the existing debounce timer so the
+  //         sessionStorage write fires at most once per VIEWPORT_DEBOUNCE_MS
+  //         (~250ms) instead of every xyflow tick (~60Hz).
   const handleViewportChange = useCallback(
     (newViewport: Viewport) => {
-      setViewport(newViewport);
-      saveViewport(newViewport);
-      scheduleBoundsUpdate(newViewport);
+      viewportRef.current = newViewport;
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      debounceTimer.current = setTimeout(() => {
+        const container = containerRef.current;
+        if (!container) return;
+        setDebouncedBounds(
+          computePaddedBounds(
+            newViewport,
+            container.offsetWidth,
+            container.offsetHeight,
+          ),
+        );
+        saveViewport(newViewport);
+      }, VIEWPORT_DEBOUNCE_MS);
     },
-    [scheduleBoundsUpdate],
+    [],
   );
 
   // ── CreateNodeDialog state ─────────────────────────────────────────────────
@@ -377,22 +400,25 @@ export function WorkspaceCanvas() {
   const [createPosition, setCreatePosition]     = useState<{ x: number; y: number } | null>(null);
 
   // ── Click on empty canvas space → open CreateNodeDialog ───────────────────
+  // win #3: reads viewportRef.current instead of viewport state — the handler
+  // identity is now stable across pan/zoom (no viewport in deps array).
   const handlePaneClick = useCallback(
     (event: React.MouseEvent) => {
       // Convert screen coordinates to canvas world coordinates.
       const container = containerRef.current;
       if (!container) return;
 
+      const vp        = viewportRef.current;
       const rect      = container.getBoundingClientRect();
       const screenX   = event.clientX - rect.left;
       const screenY   = event.clientY - rect.top;
-      const worldX    = (screenX - viewport.x) / viewport.zoom;
-      const worldY    = (screenY - viewport.y) / viewport.zoom;
+      const worldX    = (screenX - vp.x) / vp.zoom;
+      const worldY    = (screenY - vp.y) / vp.zoom;
 
       setCreatePosition({ x: worldX, y: worldY });
       setCreateDialogOpen(true);
     },
-    [viewport],
+    [],
   );
 
   // ── File drop onto canvas blank space ─────────────────────────────────────
@@ -419,11 +445,12 @@ export function WorkspaceCanvas() {
       // Compute drop world position.
       const container = containerRef.current;
       if (!container) return;
+      const vp     = viewportRef.current;
       const rect   = container.getBoundingClientRect();
       const screenX = e.clientX - rect.left;
       const screenY = e.clientY - rect.top;
-      const worldX  = (screenX - viewport.x) / viewport.zoom;
-      const worldY  = (screenY - viewport.y) / viewport.zoom;
+      const worldX  = (screenX - vp.x) / vp.zoom;
+      const worldY  = (screenY - vp.y) / vp.zoom;
 
       // Create the node first, then upload content.
       try {
@@ -443,7 +470,7 @@ export function WorkspaceCanvas() {
         // Error toast already shown by mutation's onError.
       }
     },
-    [viewport, createNode, client],
+    [createNode, client],
   );
 
   // ── After create-node from dialog ─────────────────────────────────────────
@@ -516,29 +543,19 @@ export function WorkspaceCanvas() {
         onNodeDragStop={handleNodeDragStop}
         onViewportChange={handleViewportChange}
         onPaneClick={handlePaneClick}
-        defaultViewport={viewport}
+        defaultViewport={viewportRef.current}
         colorMode={resolvedTheme === 'dark' ? 'dark' : 'light'}
         fitView={false}
         minZoom={0.1}
         maxZoom={4}
         nodesConnectable={false}
         deleteKeyCode={null}
+        onlyRenderVisibleElements
       >
         <Background />
         <Controls />
         <MiniMap
-          nodeColor={(n) => {
-            const type = (n.data as NodeCardData | undefined)?.type ?? '';
-            switch (type) {
-              case 'task':          return '#3b82f6';
-              case 'bug':           return '#ef4444';
-              case 'project':       return '#a855f7';
-              case 'documentation': return '#f59e0b';
-              case 'person':        return '#22c55e';
-              case 'organization':  return '#14b8a6';
-              default:              return '#6b7280';
-            }
-          }}
+          nodeColor={miniMapNodeColor}
           pannable
           zoomable
         />
