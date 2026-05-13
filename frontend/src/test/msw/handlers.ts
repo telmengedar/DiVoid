@@ -64,6 +64,24 @@ export const viewportPage: Page<PositionedNodeDetails> = {
   total: 3,
 };
 
+/**
+ * Extended viewport fixture for filter tests (DiVoid #318).
+ *
+ * Adds:
+ *  - A closed task (id=4) — hidden by default status filter.
+ *  - An untyped node (id=5, type=null) — "group node" visible by default.
+ */
+export const viewportPageWithFilterFixtures: Page<PositionedNodeDetails> = {
+  result: [
+    { id: 1, type: 'task',          name: 'First task',   status: 'open',   x: 100, y: 200 },
+    { id: 2, type: 'documentation', name: 'Some doc',     status: null,     x: -50, y: 80  },
+    { id: 3, type: 'project',       name: 'DiVoid',       status: null,     x: 300, y: 150 },
+    { id: 4, type: 'task',          name: 'Closed task',  status: 'closed', x: 400, y: 200 },
+    { id: 5, type: null as unknown as string, name: 'Group node', status: null, x: 500, y: 300 },
+  ],
+  total: 5,
+};
+
 /** Fixture: link adjacency rows for workspace edge queries. */
 export const adjacencyPage: Page<NodeLink> = {
   result: [
