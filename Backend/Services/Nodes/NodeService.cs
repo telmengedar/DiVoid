@@ -1,5 +1,4 @@
 using System.Linq.Expressions;
-using System.Runtime.CompilerServices;
 using System.Text;
 using Backend.Extensions;
 using Backend.Models.Nodes;
@@ -508,18 +507,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         transaction.Commit();
     }
 
-    /// <summary>
-    /// projects a <see cref="NodeLink"/> async sequence into <see cref="LinkAdjacency"/> values.
-    /// </summary>
-    static async IAsyncEnumerable<LinkAdjacency> ProjectLinks(IAsyncEnumerable<NodeLink> source, [EnumeratorCancellation] CancellationToken ct = default)
-    {
-        await foreach (NodeLink link in source.WithCancellation(ct))
-            yield return new LinkAdjacency { SourceId = link.SourceId, TargetId = link.TargetId };
-    }
-
-
     /// <inheritdoc />
-    public Task<AsyncPageResponseWriter<LinkAdjacency>> ListLinks(long[] ids, ListFilter filter, CancellationToken ct)
+    public Task<AsyncPageResponseWriter<NodeLink>> ListLinks(long[] ids, ListFilter filter, CancellationToken ct)
     {
         filter ??= new();
         if (filter.Count is null or > 500)
@@ -532,8 +521,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         LoadOperation<NodeLink> countOp = database.Load<NodeLink>(DB.Count())
                                                   .Where(l => l.SourceId.In(ids) || l.TargetId.In(ids));
 
-        return Task.FromResult(new AsyncPageResponseWriter<LinkAdjacency>(
-            ProjectLinks(operation.ExecuteEntitiesAsync(), ct),
+        return Task.FromResult(new AsyncPageResponseWriter<NodeLink>(
+            operation.ExecuteEntitiesAsync(ct),
             async () => await countOp.ExecuteScalarAsync<long>(),
             filter.Continue
         ));

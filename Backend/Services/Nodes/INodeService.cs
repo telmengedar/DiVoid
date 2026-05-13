@@ -76,7 +76,7 @@ public interface INodeService
     /// <param name="filter">paging/sort filter</param>
     /// <param name="ct">cancellation token</param>
     /// <returns>page of link adjacency pairs</returns>
-    Task<AsyncPageResponseWriter<LinkAdjacency>> ListLinks(long[] ids, ListFilter filter, CancellationToken ct);
+    Task<AsyncPageResponseWriter<NodeLink>> ListLinks(long[] ids, ListFilter filter, CancellationToken ct);
 
     /// <summary>
     /// deletes an existing node

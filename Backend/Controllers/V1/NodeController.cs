@@ -85,7 +85,7 @@ namespace Backend.Controllers.V1
         /// <returns>page of link adjacency pairs in the standard list envelope</returns>
         [HttpGet("links")]
         [Authorize(Policy = "read")]
-        public Task<AsyncPageResponseWriter<LinkAdjacency>> ListLinks([FromQuery] long[] ids, [FromQuery] ListFilter filter, CancellationToken ct)
+        public Task<AsyncPageResponseWriter<NodeLink>> ListLinks([FromQuery] long[] ids, [FromQuery] ListFilter filter, CancellationToken ct)
         {
             logger.LogInformation("Listing links for {Count} nodes", ids?.Length ?? 0);
             return nodeService.ListLinks(ids ?? [], filter, ct);
