@@ -723,6 +723,91 @@ public class NodeServiceTests
         Assert.That(results.Select(n => n.Id), Does.Not.Contain(withStatus.Id));
     }
 
+    // -----------------------------------------------------------------------
+    // ListPaged — nostatus=true + status=<list> OR semantics (bug #321)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Load-bearing test for bug #321.
+    ///
+    /// When both <c>Status</c> and <c>NoStatus=true</c> are supplied, the predicate must
+    /// be <c>(Status IN (list) OR Status IS NULL)</c>, not the impossible
+    /// <c>(Status IN (list)) AND (Status IS NULL)</c>.
+    ///
+    /// POSITIVE PROOF: with the OR fix this test passes — the result set includes both
+    /// the "open" node and the null-status node, while "closed" is excluded.
+    ///
+    /// NEGATIVE PROOF: revert the fix to two separate <c>predicate &amp;=</c> calls (AND semantics).
+    /// The result set becomes empty because no row satisfies both branches simultaneously,
+    /// so the Assert.Multiple fails on both expected ids.
+    /// </summary>
+    [Test]
+    public async Task ListPaged_StatusAndNoStatus_UsesOrSemantics()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails openNode   = await CreateWithStatus(svc, "open",   name: "OpenNode");
+        NodeDetails closedNode = await CreateWithStatus(svc, "closed", name: "ClosedNode");
+        NodeDetails nullNode   = await Create(svc, name: "NullStatusNode");
+
+        var writer = await svc.ListPaged(new NodeFilter { Status = ["open", "in-progress"], NoStatus = true, Count = 100 });
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(openNode.Id),   "open-status node must be included (matches Status list)");
+            Assert.That(ids, Does.Contain(nullNode.Id),   "null-status node must be included (matches NoStatus)");
+            Assert.That(ids, Does.Not.Contain(closedNode.Id), "closed-status node must be excluded");
+        });
+    }
+
+    /// <summary>
+    /// Regression: when only <c>Status=["open"]</c> is supplied (no NoStatus), only the open
+    /// node is returned — null-status nodes are excluded.
+    /// </summary>
+    [Test]
+    public async Task ListPaged_StatusOnly_ExcludesNullStatusNodes()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails openNode   = await CreateWithStatus(svc, "open", name: "OpenNode");
+        NodeDetails nullNode   = await Create(svc, name: "NullStatusNode");
+
+        var writer = await svc.ListPaged(new NodeFilter { Status = ["open"], Count = 100 });
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(openNode.Id),       "open-status node must be included");
+            Assert.That(ids, Does.Not.Contain(nullNode.Id),   "null-status node must be excluded when only status filter is set");
+        });
+    }
+
+    /// <summary>
+    /// Regression: when only <c>NoStatus=true</c> is supplied (no Status list), only
+    /// null-status nodes are returned — nodes with any status are excluded.
+    /// </summary>
+    [Test]
+    public async Task ListPaged_NoStatusOnly_ExcludesNodesWithStatus()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails openNode   = await CreateWithStatus(svc, "open", name: "OpenNode");
+        NodeDetails nullNode   = await Create(svc, name: "NullStatusNode");
+
+        var writer = await svc.ListPaged(new NodeFilter { NoStatus = true, Count = 100 });
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(nullNode.Id),       "null-status node must be included");
+            Assert.That(ids, Does.Not.Contain(openNode.Id),   "open-status node must be excluded when only nostatus filter is set");
+        });
+    }
+
     [Test]
     public async Task ListPaged_StatusAppearsInDefaultFields()
     {
