@@ -86,4 +86,22 @@ export interface NodeFilter {
   fields?: string[];
   /** Semantic search query. Triggers vector similarity ranking. */
   query?: string;
+  /**
+   * Viewport bounding rectangle [xMin, yMin, xMax, yMax] (world units, inclusive).
+   * Only nodes whose X/Y fall inside the rectangle are returned.
+   * PR 4b: used by workspace graph view.
+   */
+  bounds?: [number, number, number, number];
+}
+
+/** A link between two nodes, returned by GET /api/nodes/links. */
+export interface NodeLink {
+  sourceId: number;
+  targetId: number;
+}
+
+/** Extended NodeDetails with required x/y position (workspace view). */
+export interface PositionedNodeDetails extends NodeDetails {
+  x: number;
+  y: number;
 }
