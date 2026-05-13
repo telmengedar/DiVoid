@@ -56,6 +56,10 @@ export interface CreateNodeInput {
   name: string;
   /** Only send status for types that carry one (task, bug). */
   status?: string;
+  /** Canvas X position (workspace view). Omit for non-canvas creation. */
+  x?: number;
+  /** Canvas Y position (workspace view). Omit for non-canvas creation. */
+  y?: number;
 }
 
 /**

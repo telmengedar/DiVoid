@@ -25,9 +25,14 @@ interface CreateNodeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: (id: number) => void;
+  /**
+   * When provided (workspace canvas use), the new node will be created at
+   * this canvas-world position and the position fields will be shown to the user.
+   */
+  initialPosition?: { x: number; y: number };
 }
 
-export function CreateNodeDialog({ open, onOpenChange, onCreated }: CreateNodeDialogProps) {
+export function CreateNodeDialog({ open, onOpenChange, onCreated, initialPosition }: CreateNodeDialogProps) {
   const mutation = useCreateNode();
 
   const {
@@ -61,6 +66,7 @@ export function CreateNodeDialog({ open, onOpenChange, onCreated }: CreateNodeDi
       type: values.type.trim(),
       name: values.name.trim(),
       ...(values.status && statusOptions ? { status: values.status } : {}),
+      ...(initialPosition != null ? { x: initialPosition.x, y: initialPosition.y } : {}),
     };
 
     try {
@@ -95,7 +101,15 @@ export function CreateNodeDialog({ open, onOpenChange, onCreated }: CreateNodeDi
 
           <p id="create-node-description" className="sr-only">
             Create a new node in the DiVoid graph.
+            {initialPosition != null &&
+              ` The node will be placed at canvas position X: ${initialPosition.x.toFixed(0)}, Y: ${initialPosition.y.toFixed(0)}.`}
           </p>
+
+          {initialPosition != null && (
+            <p className="text-xs text-muted-foreground mb-3" aria-hidden="true">
+              Canvas position: ({initialPosition.x.toFixed(0)}, {initialPosition.y.toFixed(0)})
+            </p>
+          )}
 
           <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
             {/* Type */}

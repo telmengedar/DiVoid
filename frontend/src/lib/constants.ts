@@ -54,6 +54,8 @@ export const API = {
     LINKS: (id: number) => `/nodes/${id}/links`,
     UNLINK: (sourceId: number, targetId: number) =>
       `/nodes/${sourceId}/links/${targetId}`,
+    /** GET /api/nodes/links?ids=... — adjacency endpoint (PR 4b). */
+    ADJACENCY: '/nodes/links',
   },
   HEALTH: '/health',
 } as const;

@@ -10,7 +10,7 @@
  */
 
 import { http, HttpResponse } from 'msw';
-import type { Page, NodeDetails } from '@/types/divoid';
+import type { Page, NodeDetails, NodeLink, PositionedNodeDetails } from '@/types/divoid';
 
 export const BASE_URL = 'http://localhost:5007/api';
 
@@ -54,26 +54,46 @@ export const semanticPage: Page<NodeDetails> = {
   total: 2,
 };
 
+/** Fixture: positioned nodes for workspace viewport queries. */
+export const viewportPage: Page<PositionedNodeDetails> = {
+  result: [
+    { id: 1, type: 'task', name: 'First task', status: 'open', x: 100, y: 200 },
+    { id: 2, type: 'documentation', name: 'Some doc', status: null, x: -50, y: 80 },
+    { id: 3, type: 'project', name: 'DiVoid', status: null, x: 300, y: 150 },
+  ],
+  total: 3,
+};
+
+/** Fixture: link adjacency rows for workspace edge queries. */
+export const adjacencyPage: Page<NodeLink> = {
+  result: [
+    { sourceId: 1, targetId: 2 },
+    { sourceId: 2, targetId: 3 },
+  ],
+  total: 2,
+};
+
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
 export const handlers = [
   // Auth
   http.get(`${BASE_URL}/users/me`, () => HttpResponse.json(defaultUser)),
 
-  // Node listing (bare)
+  // Node listing (bare) + bounds (workspace viewport)
   http.get(`${BASE_URL}/nodes`, ({ request }) => {
     const url = new URL(request.url);
-    const query = url.searchParams.get('query');
+    const query   = url.searchParams.get('query');
     const linkedto = url.searchParams.get('linkedto');
+    const bounds  = url.searchParams.get('bounds');
 
-    if (query) {
-      return HttpResponse.json(semanticPage);
-    }
-    if (linkedto) {
-      return HttpResponse.json(samplePage);
-    }
+    if (query)   return HttpResponse.json(semanticPage);
+    if (linkedto) return HttpResponse.json(samplePage);
+    if (bounds)  return HttpResponse.json(viewportPage);
     return HttpResponse.json(samplePage);
   }),
+
+  // Node adjacency (workspace edges)
+  http.get(`${BASE_URL}/nodes/links`, () => HttpResponse.json(adjacencyPage)),
 
   // Node detail
   http.get(`${BASE_URL}/nodes/:id`, ({ params }) => {
