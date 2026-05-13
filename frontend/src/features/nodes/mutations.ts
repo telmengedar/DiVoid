@@ -29,6 +29,7 @@ import { nodeQueryKey } from './useNode';
 import { nodeContentQueryKey } from './useNodeContent';
 import { nodeListQueryKey } from './useNodeList';
 import { nodeLinkedToQueryKey } from './useNodeListLinkedTo';
+import { nodeAdjacencyQueryKey } from '@/features/workspace/useNodeAdjacency';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -154,11 +155,34 @@ export interface LinkNodesInput {
   targetId: number;
 }
 
+/** Backend error text returned when linking an already-linked pair (bug #317). */
+const ALREADY_LINKED_TEXT = 'Nodes already linked';
+
+/**
+ * Invalidates all query caches relevant to a link between sourceId and targetId.
+ * Shared by the success path and the bug-#317 graceful-already-linked path.
+ */
+function invalidateLinkCaches(
+  queryClient: ReturnType<typeof useQueryClient>,
+  sourceId: number,
+  targetId: number,
+): void {
+  queryClient.invalidateQueries({ queryKey: nodeLinkedToQueryKey(sourceId) });
+  queryClient.invalidateQueries({ queryKey: nodeLinkedToQueryKey(targetId) });
+  queryClient.invalidateQueries({ queryKey: ['nodes', 'linkedto'] });
+  // Invalidate workspace adjacency so the new edge appears on the canvas.
+  queryClient.invalidateQueries({ queryKey: nodeAdjacencyQueryKey([]) });
+}
+
 /**
  * Links two nodes. Body: target id as a bare long (per API reference node #8).
  *
- * On success: linkedto queries for both source and target are invalidated.
- * On error: a sonner toast shows the backend error.
+ * On success: linkedto and workspace adjacency queries are invalidated.
+ *
+ * Bug #317 graceful handling: the backend returns 500 {"code":"unhandled",
+ * "text":"Nodes already linked"} when the pair is already linked. We treat
+ * that specific 500 as success — invalidate caches and surface toast.info.
+ * Any other 500 surfaces a real error toast.
  */
 export function useLinkNodes() {
   const client = useApiClient();
@@ -168,11 +192,21 @@ export function useLinkNodes() {
     mutationFn: ({ sourceId, targetId }) =>
       client.post<void>(API.NODES.LINKS(sourceId), targetId),
     onSuccess: (_, { sourceId, targetId }) => {
-      queryClient.invalidateQueries({ queryKey: nodeLinkedToQueryKey(sourceId) });
-      queryClient.invalidateQueries({ queryKey: nodeLinkedToQueryKey(targetId) });
-      queryClient.invalidateQueries({ queryKey: ['nodes', 'linkedto'] });
+      invalidateLinkCaches(queryClient, sourceId, targetId);
     },
-    onError: (error) => toastError(error),
+    onError: (error, { sourceId, targetId }) => {
+      // Bug #317: backend returns 500 "Nodes already linked" — treat as success.
+      if (
+        error instanceof DivoidApiError &&
+        error.status === 500 &&
+        error.text === ALREADY_LINKED_TEXT
+      ) {
+        invalidateLinkCaches(queryClient, sourceId, targetId);
+        toast.info('Already linked');
+        return;
+      }
+      toastError(error);
+    },
   });
 }
 
@@ -187,7 +221,7 @@ export interface UnlinkNodesInput {
 /**
  * Removes a link between two nodes.
  *
- * On success: linkedto queries for both nodes are invalidated.
+ * On success: linkedto and workspace adjacency queries are invalidated.
  * On error: a sonner toast shows the backend error.
  */
 export function useUnlinkNodes() {
@@ -201,6 +235,8 @@ export function useUnlinkNodes() {
       queryClient.invalidateQueries({ queryKey: nodeLinkedToQueryKey(sourceId) });
       queryClient.invalidateQueries({ queryKey: nodeLinkedToQueryKey(targetId) });
       queryClient.invalidateQueries({ queryKey: ['nodes', 'linkedto'] });
+      // Invalidate workspace adjacency so the removed edge disappears from the canvas.
+      queryClient.invalidateQueries({ queryKey: nodeAdjacencyQueryKey([]) });
     },
     onError: (error) => toastError(error),
   });

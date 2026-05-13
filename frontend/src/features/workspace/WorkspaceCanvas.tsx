@@ -8,17 +8,19 @@
  *  - Merge typed + untyped node sets when "untyped" is selected.
  *  - Convert NodeDetails[] + NodeLink[] → xyflow Node[] / Edge[].
  *  - Dispatch useMoveNode on drag-end.
+ *  - Dispatch useLinkNodes on xyflow onConnect (drag-to-connect, #287).
+ *  - Dispatch useUnlinkNodes on Delete key via onEdgesDelete, with undo toast (#266).
  *  - Handle file drop → create-node with inferred type + upload content.
  *  - Handle click-on-empty-space → open CreateNodeDialog with pre-filled position.
  *
  * Render-stability guardrails (DiVoid rule #271):
  *  - nodes / edges arrays are memoised over query results.
  *  - All xyflow event handlers are wrapped in useCallback.
- *  - nodeTypes object is declared outside the component (stable reference).
+ *  - nodeTypes / edgeTypes objects are declared outside the component (stable refs).
  *  - The bounds debounce prevents thrashing the query on every pan tick.
  *
  * Design: docs/architecture/workspace-mode.md §5.7
- * Task: DiVoid node #230 / #318
+ * Task: DiVoid node #230 / #318 / #352
  */
 
 import {
@@ -37,10 +39,12 @@ import {
   useNodesState,
   useEdgesState,
   addEdge,
+  ConnectionMode,
   type Edge,
   type Connection,
   type Viewport,
   type OnNodeDrag,
+  type EdgeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useTheme } from 'next-themes';
@@ -66,8 +70,9 @@ import {
   type FilterOption,
 } from './WorkspaceFilterPopover';
 import { NodeCardRenderer, type NodeCardData, type WorkspaceNode } from './NodeCardRenderer';
+import { FloatingEdge } from './FloatingEdge';
 import { CreateNodeDialog } from '@/features/nodes/CreateNodeDialog';
-import { useCreateNode } from '@/features/nodes/mutations';
+import { useCreateNode, useLinkNodes, useUnlinkNodes } from '@/features/nodes/mutations';
 import {
   NODE_DIMENSION_PADDING,
   VIEWPORT_DEBOUNCE_MS,
@@ -79,11 +84,15 @@ import type { PositionedNodeDetails, NodeLink } from '@/types/divoid';
 import { API } from '@/lib/constants';
 import { useApiClient } from '@/lib/useApiClient';
 
-// ─── Stable nodeTypes reference (must be outside component) ──────────────────
-// Declaring nodeTypes inside the component would create a new object on every
-// render, causing xyflow to unmount/remount every node. This is a common
-// render-loop pitfall documented in #271.
+// ─── Stable nodeTypes / edgeTypes references (must be outside component) ──────
+// Declaring these inside the component would create a new object on every
+// render, causing xyflow to unmount/remount every node or edge. This is a
+// common render-loop pitfall documented in #271.
 const nodeTypes = { nodeCard: NodeCardRenderer };
+const edgeTypes: EdgeTypes = { floating: FloatingEdge };
+
+// defaultEdgeOptions — typed once here so the object reference is stable.
+const defaultEdgeOptions = { type: 'floating' } as const;
 
 // ─── Stable MiniMap nodeColor callback (win #5) ───────────────────────────────
 // Inline arrow → new function identity every render → MiniMap re-paints all
@@ -172,7 +181,7 @@ function toXyflowEdge(link: NodeLink, visibleIds: Set<string>): Edge | null {
     id:     `${src}-${tgt}`,
     source: src,
     target: tgt,
-    type:   'default',
+    type:   'floating',
   };
 }
 
@@ -212,6 +221,8 @@ export function WorkspaceCanvas() {
   const client            = useApiClient();
   const moveNode          = useMoveNode();
   const createNode        = useCreateNode();
+  const linkNodes         = useLinkNodes();
+  const unlinkNodes       = useUnlinkNodes();
 
   // ── Filters ───────────────────────────────────────────────────────────────
   const {
@@ -482,12 +493,67 @@ export function WorkspaceCanvas() {
     [navigate],
   );
 
-  // ── Edge connection (no-op in this PR — link-by-drag is #287) ─────────────
+  // ── Drag-to-connect (#287) ────────────────────────────────────────────────
+  // xyflow fires onConnect when the user drags from a source handle and drops
+  // on a target handle. We parse the string ids back to numbers, guard against
+  // self-links, then call useLinkNodes. The optimistic edge is added to local
+  // state immediately (addEdge) so the UI responds before the PATCH resolves;
+  // the adjacency cache invalidation in useLinkNodes' onSuccess reconciles it.
   const handleConnect = useCallback(
     (connection: Connection) => {
+      const sourceId = Number(connection.source);
+      const targetId = Number(connection.target);
+
+      // Guard: self-links are nonsensical in DiVoid.
+      if (connection.source === connection.target) {
+        toast.warning('Cannot link a node to itself');
+        return;
+      }
+
+      // Optimistic local edge — replaced by the server-reconciled set on refetch.
       setEdges((eds) => addEdge(connection, eds));
+
+      linkNodes.mutate({ sourceId, targetId });
     },
-    [setEdges],
+    [setEdges, linkNodes],
+  );
+
+  // ── Delete edge with undo (#266) ──────────────────────────────────────────
+  // xyflow fires onEdgesDelete (via deleteKeyCode='Delete') with the array of
+  // edges the user pressed Delete on. We dispatch useUnlinkNodes for each and
+  // surface a sonner toast with an Undo action that re-links within ~5 s.
+  const handleEdgesDelete = useCallback(
+    (deletedEdges: Edge[]) => {
+      for (const edge of deletedEdges) {
+        const sourceId = Number(edge.source);
+        const targetId = Number(edge.target);
+
+        unlinkNodes.mutate(
+          { sourceId, targetId },
+          {
+            onSuccess: () => {
+              toast('Link removed', {
+                duration: 5000,
+                action: {
+                  label: 'Undo',
+                  onClick: () => {
+                    linkNodes.mutate(
+                      { sourceId, targetId },
+                      {
+                        onError: () => {
+                          toast.error('Could not restore link. Please try again.');
+                        },
+                      },
+                    );
+                  },
+                },
+              });
+            },
+          },
+        );
+      }
+    },
+    [unlinkNodes, linkNodes],
   );
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -537,9 +603,12 @@ export function WorkspaceCanvas() {
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        defaultEdgeOptions={defaultEdgeOptions}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}
+        onEdgesDelete={handleEdgesDelete}
         onNodeDragStop={handleNodeDragStop}
         onViewportChange={handleViewportChange}
         onPaneClick={handlePaneClick}
@@ -548,8 +617,9 @@ export function WorkspaceCanvas() {
         fitView={false}
         minZoom={0.1}
         maxZoom={4}
-        nodesConnectable={false}
-        deleteKeyCode={null}
+        nodesConnectable={true}
+        connectionMode={ConnectionMode.Loose}
+        deleteKeyCode="Delete"
         onlyRenderVisibleElements
       >
         <Background />
