@@ -3,6 +3,7 @@ using Backend.Models.Nodes;
 using Backend.Services.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Pooshit.AspNetCore.Services.Data;
 using Pooshit.AspNetCore.Services.Formatters.DataStream;
 using Pooshit.AspNetCore.Services.Patches;
 
@@ -73,6 +74,23 @@ namespace Backend.Controllers.V1
             }
             return nodeService.ListPaged(filter);
         }
+
+        /// <summary>
+        /// returns all link adjacency rows where either endpoint is in <paramref name="ids"/>.
+        /// used by the workspace viewport to fetch edges incident to visible nodes in one round-trip.
+        /// </summary>
+        /// <param name="ids">comma-separated list of node ids whose incident links are requested</param>
+        /// <param name="filter">paging filter</param>
+        /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
+        /// <returns>page of link adjacency pairs in the standard list envelope</returns>
+        [HttpGet("links")]
+        [Authorize(Policy = "read")]
+        public Task<AsyncPageResponseWriter<NodeLink>> ListLinks([FromQuery] long[] ids, [FromQuery] ListFilter filter, CancellationToken ct)
+        {
+            logger.LogInformation("Listing links for {Count} nodes", ids?.Length ?? 0);
+            return nodeService.ListLinks(ids ?? [], filter, ct);
+        }
+
 
         /// <summary>
         /// get data of a node

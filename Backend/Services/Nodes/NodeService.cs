@@ -4,6 +4,7 @@ using Backend.Extensions;
 using Backend.Models.Nodes;
 using Backend.Query;
 using Backend.Services.Embeddings;
+using Pooshit.AspNetCore.Services.Data;
 using Pooshit.AspNetCore.Services.Errors.Exceptions;
 using Pooshit.AspNetCore.Services.Formatters.DataStream;
 using Pooshit.AspNetCore.Services.Patches;
@@ -203,6 +204,15 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (filter.NoStatus)
             predicate &= n => n.Status == null || n.Status == "";
 
+        if (filter.Bounds?.Length == 4)
+        {
+            double xMin = filter.Bounds[0];
+            double yMin = filter.Bounds[1];
+            double xMax = filter.Bounds[2];
+            double yMax = filter.Bounds[3];
+            predicate &= n => n.X >= xMin && n.X <= xMax && n.Y >= yMin && n.Y <= yMax;
+        }
+
         return predicate?.Content;
     }
 
@@ -286,6 +296,16 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         terminal.ApplyFilter(filter, mapper);
         terminal.Where(terminalPredicate);
 
+        // bounds filter on the terminal hop — composes with path (per design doc §6.4 / §15.1 step 6)
+        if (filter.Bounds?.Length == 4)
+        {
+            double xMin = filter.Bounds[0];
+            double yMin = filter.Bounds[1];
+            double xMax = filter.Bounds[2];
+            double yMax = filter.Bounds[3];
+            terminal.Where(n => n.X >= xMin && n.X <= xMax && n.Y >= yMin && n.Y <= yMax);
+        }
+
         if (isSemantic)
             ApplySemanticSearch(terminal, filter, mapper);
 
@@ -328,10 +348,30 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             new OrderByCriteria(mapper["id"].Field, ascending: true));
     }
 
+    /// <summary>
+    /// validates the <c>Bounds</c> array on <paramref name="filter"/> if present.
+    /// throws <see cref="InvalidOperationException"/> (→ HTTP 400) when the array
+    /// is present but has a length other than 4, or when xMin &gt; xMax / yMin &gt; yMax.
+    /// </summary>
+    static void ValidateBounds(NodeFilter filter)
+    {
+        if (filter.Bounds == null)
+            return;
+        if (filter.Bounds.Length != 4)
+            throw new ArgumentException("bounds must contain exactly 4 values: xMin,yMin,xMax,yMax", "bounds");
+        if (filter.Bounds[0] > filter.Bounds[2])
+            throw new ArgumentException("bounds xMin must be less than or equal to xMax", "bounds");
+        if (filter.Bounds[1] > filter.Bounds[3])
+            throw new ArgumentException("bounds yMin must be less than or equal to yMax", "bounds");
+    }
+
+
     /// <inheritdoc />
     public async Task<AsyncPageResponseWriter<NodeDetails>> ListPaged(NodeFilter filter = null)
     {
         filter ??= new();
+
+        ValidateBounds(filter);
 
         bool isSemantic = !string.IsNullOrWhiteSpace(filter.Query);
 
@@ -374,6 +414,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         ct.ThrowIfCancellationRequested();
 
         filter ??= new();
+
+        ValidateBounds(filter);
 
         bool isSemantic = !string.IsNullOrWhiteSpace(filter.Query);
 
@@ -464,6 +506,28 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         transaction.Commit();
     }
+
+    /// <inheritdoc />
+    public Task<AsyncPageResponseWriter<NodeLink>> ListLinks(long[] ids, ListFilter filter, CancellationToken ct)
+    {
+        filter ??= new();
+        if (filter.Count is null or > 500)
+            filter.Count = 500;
+
+        LoadOperation<NodeLink> operation = database.Load<NodeLink>(l => l.SourceId, l => l.TargetId)
+                                                    .Where(l => l.SourceId.In(ids) || l.TargetId.In(ids));
+        operation.ApplyFilter(filter);
+
+        LoadOperation<NodeLink> countOp = database.Load<NodeLink>(DB.Count())
+                                                  .Where(l => l.SourceId.In(ids) || l.TargetId.In(ids));
+
+        return Task.FromResult(new AsyncPageResponseWriter<NodeLink>(
+            operation.ExecuteEntitiesAsync(ct),
+            async () => await countOp.ExecuteScalarAsync<long>(),
+            filter.Continue
+        ));
+    }
+
 
     /// <inheritdoc />
     public Task<NodeDetails> GetNodeById(long nodeId)

@@ -53,4 +53,22 @@ public class Node
     [Index("status")]
     [Index("nodestatus")]
     public string Status { get; set; }
+
+    /// <summary>
+    /// X position of the node in the shared workspace canvas (world units).
+    /// default 0.0; patchable via <c>PATCH /api/nodes/{id}</c> with <c>replace /X</c>.
+    /// </summary>
+    [AllowPatch]
+    [Index("position")]
+    [DefaultValue(0.0)]
+    public double X { get; set; }
+
+    /// <summary>
+    /// Y position of the node in the shared workspace canvas (world units).
+    /// default 0.0; patchable via <c>PATCH /api/nodes/{id}</c> with <c>replace /Y</c>.
+    /// </summary>
+    [AllowPatch]
+    [Index("position")]
+    [DefaultValue(0.0)]
+    public double Y { get; set; }
 }

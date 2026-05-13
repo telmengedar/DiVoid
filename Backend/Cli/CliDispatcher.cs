@@ -5,6 +5,7 @@ using Backend.Models.Auth;
 using Backend.Models.Users;
 using Backend.Services.Auth;
 using Backend.Services.Embeddings;
+using Backend.Services.Layout;
 using Backend.Services.Users;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -30,8 +31,11 @@ public static class CliDispatcher {
             case "backfill-embeddings":
                 await BackfillEmbeddingsAsync();
                 break;
+            case "layout-nodes":
+                await LayoutNodesAsync();
+                break;
             default:
-                Console.Error.WriteLine($"Unknown verb '{verb}'. Supported verbs: create-admin, backfill-embeddings");
+                Console.Error.WriteLine($"Unknown verb '{verb}'. Supported verbs: create-admin, backfill-embeddings, layout-nodes");
                 Environment.Exit(1);
                 break;
         }
@@ -78,6 +82,46 @@ public static class CliDispatcher {
             Environment.Exit(1);
         }
     }
+
+    static async Task LayoutNodesAsync() {
+        IServiceCollection services = new ServiceCollection();
+
+        IConfiguration configuration = new ConfigurationBuilder()
+            .AddJsonFile("appsettings.json", optional: true)
+            .AddEnvironmentVariables()
+            .Build();
+
+        services.AddSingleton(configuration);
+        services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Information));
+        services.ConfigureDatabaseService(configuration);
+        services.AddTransient<LayoutNodesService>();
+
+        await using ServiceProvider provider = services.BuildServiceProvider();
+
+        // Ensure schema exists
+        Init.DatabaseModelService schemaSvc = new(provider.GetRequiredService<Pooshit.Ocelot.Entities.IEntityManager>());
+        try {
+            await schemaSvc.StartAsync(default);
+        } catch (Exception ex) {
+            Console.Error.WriteLine($"error: failed to initialise database schema: {ex.Message}");
+            Environment.Exit(1);
+            return;
+        }
+
+        LayoutNodesService layoutService = provider.GetRequiredService<LayoutNodesService>();
+        ILogger logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("CliDispatcher");
+
+        try {
+            await layoutService.RunAsync();
+            logger.LogInformation("event=cli.layout-nodes exitCode=0");
+            Environment.Exit(0);
+        } catch (Exception ex) {
+            Console.Error.WriteLine($"error: {ex.Message}");
+            logger.LogError(ex, "event=cli.layout-nodes exitCode=1");
+            Environment.Exit(1);
+        }
+    }
+
 
     static async Task CreateAdminAsync(string[] args) {
         string name = null;

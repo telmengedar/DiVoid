@@ -53,6 +53,12 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
         yield return new FieldMapping<NodeDetails, string>("contentType",
                                                         DB.Property<Node>(n => n.ContentType, "node"),
                                                         (n, v) => n.ContentType = v);
+        yield return new FieldMapping<NodeDetails, double>("x",
+                                                        DB.Property<Node>(n => n.X, "node"),
+                                                        (n, v) => n.X = v);
+        yield return new FieldMapping<NodeDetails, double>("y",
+                                                        DB.Property<Node>(n => n.Y, "node"),
+                                                        (n, v) => n.Y = v);
 
         if (!string.IsNullOrWhiteSpace(filter?.Query)) {
             // similarity = 1.0 - cosineDistance(queryEmbedding, nodeEmbedding)

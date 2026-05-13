@@ -44,4 +44,12 @@ public class NodeFilter : ListFilter
     /// supplying <c>minSimilarity</c> without <c>query</c> returns HTTP 400.
     /// </summary>
     public float? MinSimilarity { get; set; }
+
+    /// <summary>
+    /// viewport bounding rectangle expressed as four comma-separated doubles:
+    /// <c>xMin,yMin,xMax,yMax</c> (world units, inclusive bounds).
+    /// when present, only nodes whose <c>X</c> and <c>Y</c> fall inside the rectangle are returned.
+    /// length must be exactly 4; xMin must be ≤ xMax and yMin must be ≤ yMax — otherwise HTTP 400.
+    /// </summary>
+    public double[] Bounds { get; set; }
 }
