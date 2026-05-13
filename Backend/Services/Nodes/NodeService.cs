@@ -250,19 +250,33 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         }
 
         if (filter.Status?.Length > 0)
+        {
+            // Build the status-values predicate (IN or LIKE chain).
+            PredicateExpression<Node> statusValuePredicate;
             if (filter.Status.Any(s => s.ContainsWildcards()))
             {
-                PredicateExpression<Node> statusPredicate = null;
+                statusValuePredicate = null;
                 foreach (string statusFilter in filter.Status)
-                    statusPredicate |= n => n.Status.Like(statusFilter);
-                predicate &= statusPredicate;
+                    statusValuePredicate |= n => n.Status.Like(statusFilter);
             } else
             {
-                predicate &= n => n.Status.In(filter.Status);
+                statusValuePredicate = new PredicateExpression<Node>(n => n.Status.In(filter.Status));
             }
 
-        if (filter.NoStatus)
+            if (filter.NoStatus)
+            {
+                // When both status=<list> and nostatus=true are present, the intent is OR:
+                // "give me nodes whose status is in the list OR nodes with no status."
+                // ANDing the two predicates would yield an impossible WHERE clause.
+                predicate &= statusValuePredicate | new PredicateExpression<Node>(n => n.Status == null || n.Status == "");
+            } else
+            {
+                predicate &= statusValuePredicate;
+            }
+        } else if (filter.NoStatus)
+        {
             predicate &= n => n.Status == null || n.Status == "";
+        }
 
         if (filter.Bounds?.Length == 4)
         {
