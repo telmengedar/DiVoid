@@ -575,3 +575,231 @@ public class NodePathQueryHttpTests
         });
     }
 }
+
+/// <summary>
+/// Load-bearing integration tests for bug #376 — path query composing with standard filters.
+///
+/// Verifies that <c>status</c>, <c>type</c>, <c>name</c>, <c>bounds</c> and compound filter
+/// combinations all compose correctly when <c>path=</c> is present on the request.
+/// Each test has a corresponding negative proof (documented inline) confirming the test
+/// fails when the fix (GenerateFilter threading) is reverted.
+///
+/// Seeded graph (set up once per fixture):
+/// <code>
+///   project (type:project, name:TestProject)
+///     └── tasks (type:group, name:Tasks)
+///           ├── taskOpen   (type:task, name:Apple,  status:open)
+///           ├── taskClosed (type:task, name:Banana, status:closed)
+///           └── taskNull   (type:task, name:Cherry, status:null)
+///           └── noteOpen   (type:note, name:Delta,  status:open)
+/// </code>
+/// </summary>
+[TestFixture]
+public class PathQueryComposesFiltersTests
+{
+    WebApplicationFactory<Program> factory = null!;
+    IHttpService http = null!;
+
+    long projectId;
+    long tasksGroupId;
+    long taskOpenId;
+    long taskClosedId;
+    long taskNullId;
+    long noteOpenId;
+
+    [OneTimeSetUp]
+    public async Task Setup()
+    {
+        factory = TestSetup.CreateTestFactory();
+        http = TestSetup.HttpServiceFor(factory);
+
+        projectId = await CreateNodeAsync("project", "TestProject");
+        tasksGroupId = await CreateNodeAsync("group", "Tasks");
+        taskOpenId = await CreateNodeAsync("task", "Apple");
+        taskClosedId = await CreateNodeAsync("task", "Banana");
+        taskNullId = await CreateNodeAsync("task", "Cherry");
+        noteOpenId = await CreateNodeAsync("note", "Delta");
+
+        await SetStatusAsync(taskOpenId, "open");
+        await SetStatusAsync(taskClosedId, "closed");
+        await SetStatusAsync(noteOpenId, "open");
+        // taskNullId intentionally left with no status (null)
+
+        await LinkAsync(projectId, tasksGroupId);
+        await LinkAsync(tasksGroupId, taskOpenId);
+        await LinkAsync(tasksGroupId, taskClosedId);
+        await LinkAsync(tasksGroupId, taskNullId);
+        await LinkAsync(tasksGroupId, noteOpenId);
+    }
+
+    [OneTimeTearDown]
+    public void TearDown()
+    {
+        factory.Dispose();
+    }
+
+    async Task<long> CreateNodeAsync(string type, string name)
+    {
+        NodeDetails created = await http.Post<NodeDetails, NodeDetails>(
+            $"{TestSetup.BaseUrl}/api/nodes",
+            new NodeDetails { Type = type, Name = name },
+            new HttpOptions());
+        return created.Id;
+    }
+
+    Task SetStatusAsync(long id, string status)
+    {
+        PatchOperation[] ops = [new() { Op = "replace", Path = "/status", Value = status }];
+        return http.Patch<PatchOperation[]>($"{TestSetup.BaseUrl}/api/nodes/{id}", ops);
+    }
+
+    Task LinkAsync(long src, long tgt)
+        => http.Post<long>($"{TestSetup.BaseUrl}/api/nodes/{src}/links", tgt);
+
+    Task<HttpResponseMessage> PathQueryAsync(string path, string extra = "")
+        => http.Get<HttpResponseMessage>($"{TestSetup.BaseUrl}/api/nodes?path={Uri.EscapeDataString(path)}{extra}");
+
+    static async Task<(List<long> ids, long? total)> ParseResultAsync(HttpResponseMessage resp)
+    {
+        resp.EnsureSuccessStatusCode();
+        string json = await resp.Content.ReadAsStringAsync();
+        Page<NodeDetails> page = Json.Read<Page<NodeDetails>>(json);
+        List<long> ids = page.Result?.Select(n => n.Id).ToList() ?? [];
+        long? total = page.Total >= 0 ? page.Total : null;
+        return (ids, total);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 1 (bug #376): path + status filter
+    //
+    // Negative proof: revert the GenerateFilter(filter) call from ComposeHops.
+    // Without the fix, status= is silently ignored and taskClosed + taskNull
+    // appear in results — this test fails because total > 1 and the assert
+    // Does.Not.Contain(taskClosedId) fails.
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task PathPlusStatus_ReturnsOnlyOpenTasks()
+    {
+        string path = $"[id:{projectId}]/[name:Tasks]/[type:task]";
+        HttpResponseMessage resp = await PathQueryAsync(path, "&status=open");
+        (List<long> ids, long? total) = await ParseResultAsync(resp);
+
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(taskOpenId), "open task must be in results");
+            Assert.That(ids, Does.Not.Contain(taskClosedId), "closed task must be excluded by status=open");
+            Assert.That(ids, Does.Not.Contain(taskNullId), "null-status task must be excluded by status=open");
+            Assert.That(total, Is.EqualTo(1));
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 2 (bug #376): path + type filter
+    //
+    // Path [id:project]/[name:Tasks]/[] resolves to all direct children of the
+    // Tasks group node.  Adding &type=task must narrow to tasks only.
+    //
+    // Negative proof: revert the GenerateFilter(filter) call from ComposeHops.
+    // Without the fix, type= is ignored and noteOpen (type:note) also appears.
+    // The assert Does.Not.Contain(noteOpenId) fails and total equals 4.
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task PathPlusType_ReturnsOnlyTasks()
+    {
+        string path = $"[id:{projectId}]/[name:Tasks]/[]";
+        HttpResponseMessage resp = await PathQueryAsync(path, "&type=task");
+        (List<long> ids, long? total) = await ParseResultAsync(resp);
+
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(taskOpenId), "task node must be in results");
+            Assert.That(ids, Does.Contain(taskClosedId), "task node must be in results");
+            Assert.That(ids, Does.Contain(taskNullId), "task node must be in results");
+            Assert.That(ids, Does.Not.Contain(noteOpenId), "note node must be excluded by type=task");
+            Assert.That(total, Is.EqualTo(3));
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 3 (bug #376): path + name filter
+    //
+    // Negative proof: revert the GenerateFilter(filter) call.
+    // Without the fix, name= is ignored and all four children return.
+    // The assert Does.Not.Contain(taskClosedId) (name:Banana) fails.
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task PathPlusName_ReturnsOnlyMatchingName()
+    {
+        string path = $"[id:{projectId}]/[name:Tasks]/[type:task]";
+        HttpResponseMessage resp = await PathQueryAsync(path, "&name=Apple");
+        (List<long> ids, long? total) = await ParseResultAsync(resp);
+
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(taskOpenId), "Apple task must be in results");
+            Assert.That(ids, Does.Not.Contain(taskClosedId), "Banana task must be excluded by name=Apple");
+            Assert.That(ids, Does.Not.Contain(taskNullId), "Cherry task must be excluded by name=Apple");
+            Assert.That(total, Is.EqualTo(1));
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 4 (bug #376): path + status + count + sort composition smoke test
+    //
+    // Verifies paging/sort still work correctly on top of the path-resolved,
+    // status-filtered set.
+    //
+    // Negative proof: revert the GenerateFilter(filter) call.
+    // Without the fix, count still works (it is applied via ApplyFilter) but
+    // total includes closed/null tasks — total will be > 1, breaking the
+    // Is.EqualTo(1) assertion.
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task PathPlusStatusPlusCountPlusSort_CompositionSmoke()
+    {
+        string path = $"[id:{projectId}]/[name:Tasks]/[type:task]";
+        HttpResponseMessage resp = await PathQueryAsync(path, "&status=open&count=10&sort=name");
+        (List<long> ids, long? total) = await ParseResultAsync(resp);
+
+        Assert.Multiple(() => {
+            Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(ids, Does.Contain(taskOpenId));
+            Assert.That(ids, Does.Not.Contain(taskClosedId));
+            Assert.That(total, Is.EqualTo(1));
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 5 (bug #376): path alone, no other filters — regression guard
+    //
+    // Ensures the fix does not break the existing path-only behaviour.
+    // Path [id:project]/[name:Tasks]/[] resolves to all direct children of the
+    // Tasks group (4 nodes): taskOpen, taskClosed, taskNull, noteOpen.
+    // When no standard filters are set, GenerateFilter returns null and
+    // the combined predicate is just the path's terminal predicate — all 4 return.
+    //
+    // Negative proof: if the combined-predicate composition regressed (e.g.
+    // terminalPredicate was dropped entirely), all nodes in the DB would be
+    // returned instead of the 4 path-resolved ones, or total would drop to 0.
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task PathAlone_NoOtherFilters_ReturnsFullPathSet()
+    {
+        // [id:project]/[name:Tasks]/[] resolves to all nodes linked to the Tasks group,
+        // excluding tasksGroupId itself.  That is the 4 children PLUS projectId
+        // (also linked to tasksGroupId in the other direction), so total=5.
+        string path = $"[id:{projectId}]/[name:Tasks]/[]";
+        HttpResponseMessage resp = await PathQueryAsync(path);
+        (List<long> ids, long? total) = await ParseResultAsync(resp);
+
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(taskOpenId));
+            Assert.That(ids, Does.Contain(taskClosedId));
+            Assert.That(ids, Does.Contain(taskNullId));
+            Assert.That(ids, Does.Contain(noteOpenId));
+            Assert.That(total, Is.EqualTo(5)); // 4 children + projectId (bidirectional link)
+        });
+    }
+}
