@@ -366,19 +366,20 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             ? GenerateHopFilter(hops[0])
             : n => n.Id.In(currentHopOp);
 
+        // standard filter predicates (status, type, name, id, nostatus, linkedto, bounds) compose
+        // with the path-resolved terminal set — same pipeline as the plain-list branch.
+        // Both predicates are AND-ed into a single Where call: Ocelot's LoadOperation.Where
+        // replaces the existing clause on each call, so callers must combine manually.
+        Expression<Func<Node, bool>> standardPredicate = GenerateFilter(filter);
+        PredicateExpression<Node> combined = null;
+        if (terminalPredicate != null)
+            combined &= new PredicateExpression<Node>(terminalPredicate);
+        if (standardPredicate != null)
+            combined &= new PredicateExpression<Node>(standardPredicate);
+
         LoadOperation<Node> terminal = mapper.CreateOperation(database, filter.Fields);
         terminal.ApplyFilter(filter, mapper);
-        terminal.Where(terminalPredicate);
-
-        // bounds filter on the terminal hop — composes with path (per design doc §6.4 / §15.1 step 6)
-        if (filter.Bounds?.Length == 4)
-        {
-            double xMin = filter.Bounds[0];
-            double yMin = filter.Bounds[1];
-            double xMax = filter.Bounds[2];
-            double yMax = filter.Bounds[3];
-            terminal.Where(n => n.X >= xMin && n.X <= xMax && n.Y >= yMin && n.Y <= yMax);
-        }
+        terminal.Where(combined?.Content);
 
         if (isSemantic)
             ApplySemanticSearch(terminal, filter, mapper);
