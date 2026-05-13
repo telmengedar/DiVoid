@@ -2,40 +2,55 @@
 /**
  * Render-stability regression test — negative proof (DiVoid #275, #271).
  *
- * This file captures the NEGATIVE proof for the render-stability load-bearing test:
+ * ## Investigation finding: the original negative proof was wrong
  *
- *   "Introduce an obviously-unstable hook (e.g. construct the nodes array inline
- *    without memo); the test must FAIL with the harness firing. Restore; passes.
- *    Capture both."
+ * The original test used `onNodesChange` to trigger the loop. React Flow's
+ * `onNodesChange` fires only on USER INTERACTIONS (drag, select) — NOT when
+ * the `nodes` prop reference changes. In jsdom/happy-dom with no simulated
+ * interactions, the loop never fires. Jenny un-skipped it and it passed in
+ * 882ms with the harness silent. The test proved nothing.
  *
- * How this works:
- *   1. We mount an instrumented WorkspaceCanvas variant where the `nodes` array
- *      is constructed inline (new array reference every render) instead of via
- *      useMemo. This mimics the render-loop vector identified in the design doc.
- *   2. We force a state update that causes a re-render, which causes xyflow to
- *      see a new nodes array, which triggers onNodesChange, which triggers another
- *      render — the classic xyflow unstable-nodes loop.
- *   3. The console.error → throw harness in setup.ts catches the React
- *      "Maximum update depth exceeded" error and turns it into a hard test failure.
+ * ## The real loop vector in WorkspaceCanvas
  *
- * NEGATIVE proof outcome: when the unstable implementation is active, this test
- * FAILS (the harness fires).
+ *   // Without useMemo:
+ *   const xyNodes = visibleDetails.map(toXyflowNode); // new ref every render
+ *   useEffect(() => { setNodes(merged); }, [xyNodes, setNodes]);
  *
- * The companion file WorkspacePage.test.tsx contains the POSITIVE proof:
- * the stable implementation mounts without triggering the harness.
+ *   Loop: render → new xyNodes ref → effect fires → setNodes → re-render → ...
  *
- * DiVoid task #230, rule #271.
+ * ## Why the harness does NOT fire
+ *
+ * setup.ts watches console.error for "Maximum update depth exceeded". That
+ * message is only emitted for SYNCHRONOUS render-phase updates. useEffect-based
+ * loops are async — React queues them between flushes. The harness never fires.
+ * Instead the tests TIME OUT (confirmed by Jenny: 4 positive tests timeout when
+ * useMemo is removed from xyNodes).
+ *
+ * ## Negative proof design
+ *
+ * We cannot mount an uncontrolled loop in test (it causes OOM in ~60s).
+ * We instead use two controlled micro-components that isolate the invariant:
+ *
+ *   - UNSTABLE: useEffect depends on a new-ref-per-render array → render count
+ *     grows to the safety cap. The cap element appears in the DOM.
+ *   - STABLE: useEffect depends on a memoized array → render count stays low.
+ *
+ * The safety cap is enforced via a ref (not setState) to avoid adding more
+ * re-renders. The unstable component renders until it hits MAX_RENDERS, then
+ * replaces itself with a sentinel `data-testid="loop-capped"`.
+ *
+ * DiVoid task #230, rules #271 #275.
  */
 
 import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { ReactFlow, type Node, type Edge } from '@xyflow/react';
+import { useNodesState, type Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { BASE_URL, viewportPage, adjacencyPage } from '@/test/msw/handlers';
 
 // ─── MSW server ───────────────────────────────────────────────────────────────
@@ -99,45 +114,101 @@ vi.mock('next-themes', () => ({
   useTheme: vi.fn(() => ({ resolvedTheme: 'dark', setTheme: vi.fn() })),
 }));
 
-// ─── Unstable canvas component ────────────────────────────────────────────────
-//
-// This deliberately constructs `nodes` as a NEW array on EVERY render
-// (no useMemo, no useNodesState). This is the anti-pattern the design doc
-// warns about. xyflow's onNodesChange fires when nodes change, which triggers
-// a setState call, which triggers a re-render, which constructs a new array,
-// which fires onNodesChange again — the classic loop.
-//
-// When this component is used, the render-stability harness MUST fire.
-// When WorkspaceCanvas (with useMemo) is used, the harness must NOT fire.
+// ─── Safety cap ───────────────────────────────────────────────────────────────
+// The unstable component will be stopped at this render count to prevent OOM.
+const MAX_RENDERS = 30;
 
-function UnstableCanvasWithoutMemo() {
-  const [counter, setCounter] = useState(0);
+// ─── Unstable component (NEGATIVE PROOF) ─────────────────────────────────────
+//
+// Real loop vector: useNodesState + useEffect([unmemoizedArray]) + setNodes.
+//
+// Loop path:
+//   render → sourceData is new ref → useEffect fires → setNodes → re-render
+//   → sourceData is new ref again → useEffect fires again → ...
+//
+// The render count ref (not state) increments each render. Once MAX_RENDERS is
+// reached, the component renders a sentinel div instead of calling setNodes,
+// breaking the loop safely.
 
-  // Force a re-render after mount to expose the instability.
+/**
+ * Minimal reproduction of the WorkspaceCanvas loop vector without React Flow.
+ *
+ * WorkspaceCanvas uses useNodesState (backed by useState) with a sync useEffect.
+ * useNodesState is intentionally excluded here to keep the loop component fast —
+ * the invariant being tested is pure React: useEffect + setState with an unstable
+ * dependency array causes runaway re-renders regardless of which setState variant
+ * is used.
+ *
+ * The React Flow-specific version (with useNodesState + ReactFlow) causes OOM
+ * because React Flow's internal event system accumulates too much state. This
+ * minimal version hits the cap cleanly.
+ */
+function UnstableCanvasRealLoopVector() {
+  const renderCount = useRef(0);
+  renderCount.current += 1;
+  const capped = renderCount.current >= MAX_RENDERS;
+
+  // BAD: new array reference every render — the loop source.
+  // This is the anti-pattern WorkspaceCanvas avoids with useMemo.
+  const sourceData = [renderCount.current, renderCount.current + 1];
+
+  // useState + useEffect mirrors what WorkspaceCanvas does with
+  // useNodesState + the sync useEffect.
+  const [, setState] = useState(sourceData);
+
+  // Loop source: sourceData is a new reference every render.
+  // Once capped, skip the setState call to stop the loop.
   useEffect(() => {
-    setCounter((c) => c + 1);
-  }, []); // intentional single trigger
+    if (capped) return;
+    setState([renderCount.current + 1000]); // drive a real state change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceData, capped]);
 
-  // BAD: inline construction — new array reference every render.
-  // This is the render-loop vector. In a real scenario this would be:
-  //   const nodes = queryResult.data.map(toXyflowNode); // inline, no useMemo
-  const nodes: Node[] = [
-    { id: '1', position: { x: counter, y: 0 }, data: { label: 'Node 1' } },
-    { id: '2', position: { x: 100, y: counter }, data: { label: 'Node 2' } },
-  ];
-  const edges: Edge[] = [{ id: 'e1-2', source: '1', target: '2' }];
+  if (capped) {
+    return <div data-testid="loop-capped" data-renders={renderCount.current} />;
+  }
 
   return (
-    <div style={{ width: 400, height: 300 }}>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={() => {
-          // This triggers a re-render → new array → onNodesChange fires → loop.
-          setCounter((c) => c + 1);
-        }}
-        colorMode="dark"
-      />
+    <div data-testid="unstable-canvas">
+      <div data-testid="render-count" data-value={renderCount.current} />
+    </div>
+  );
+}
+
+// ─── Stable component (POSITIVE PROOF COUNTERPART) ───────────────────────────
+//
+// useMemo gives sourceData a stable identity. The useEffect fires once (on mount)
+// and the loop is broken. Render count stays low.
+//
+// This mirrors WorkspaceCanvas's:
+//   const xyNodes = useMemo(() => visibleDetails.map(toXyflowNode), [visibleDetails]);
+//   useEffect(() => { setNodes(merged); }, [xyNodes, setNodes]);
+
+function StableCanvasWithMemoVector() {
+  const renderCount = useRef(0);
+  renderCount.current += 1;
+
+  const [queryVersion] = useState(0); // stable unless data changes
+
+  // GOOD: useMemo → same reference between renders → useEffect fires once.
+  const sourceData = useMemo(() => [
+    { id: '1', position: { x: 0, y: 0 }, data: { label: 'Stable node 1' } },
+    { id: '2', position: { x: 100, y: 100 }, data: { label: 'Stable node 2' } },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [queryVersion]);
+
+  const [nodes, setNodes] = useNodesState(sourceData);
+  const edges: Edge[] = [];
+  void edges;
+
+  useEffect(() => {
+    setNodes(sourceData);
+  }, [sourceData, setNodes]); // stable dep → fires once → no loop
+
+  return (
+    <div style={{ width: 400, height: 300 }} data-testid="stable-canvas">
+      <div data-testid="render-count" data-value={renderCount.current} />
+      <div data-testid="node-count" data-value={nodes.length} />
     </div>
   );
 }
@@ -146,75 +217,82 @@ function UnstableCanvasWithoutMemo() {
 
 describe('WorkspaceCanvas — render-stability negative proof', () => {
   /**
-   * NEGATIVE PROOF:
-   * The UnstableCanvasWithoutMemo component constructs the nodes array inline
-   * and calls setState in onNodesChange on every change event. This creates a
-   * render loop. The harness in setup.ts promotes the React
-   * "Maximum update depth exceeded" console.error to a thrown Error, so this
-   * test SHOULD FAIL if the harness is active and the loop fires.
+   * NEGATIVE PROOF (load-bearing):
    *
-   * Expected outcome when run against the unstable implementation:
-   *   - React logs "Maximum update depth exceeded" to console.error.
-   *   - setup.ts afterEach throws: "React render-stability error during test: ..."
-   *   - Test FAILS. This is the EXPECTED negative-proof failure.
+   * The unstable component hits the render cap (MAX_RENDERS = 30) because
+   * its useEffect loop drives continuous re-renders.
    *
-   * The positive proof (stable implementation passes) is in WorkspacePage.test.tsx.
+   * Observable outcome: `data-testid="loop-capped"` appears in the DOM with
+   * `data-renders >= MAX_RENDERS`.
    *
-   * NOTE: This test is intentionally designed to FAIL when verifying the negative
-   * proof. To run the negative proof verification, uncomment the `expect.fail`
-   * line below and observe the harness firing. The test is left passing here
-   * (by not using the UnstableCanvasWithoutMemo directly in the assertion path)
-   * so the CI suite stays green, but the infrastructure for the negative proof
-   * is present and documented.
+   * This test FAILS if the loop doesn't fire — meaning the negative proof is
+   * broken and the test should be re-investigated.
    *
-   * The actual negative proof was captured manually:
-   *   - Mounted UnstableCanvasWithoutMemo → setup.ts afterEach fired with
-   *     "React render-stability error during test: Maximum update depth exceeded"
-   *   - Test result: FAIL (as expected for the negative proof)
-   *   - Restored stable WorkspaceCanvas → test PASSES
+   * Note: ReactFlow is intentionally excluded from UnstableCanvasRealLoopVector
+   * to keep the loop lightweight (prevent OOM). The invariant being tested is
+   * pure React: useEffect + setState with an unstable dependency = runaway renders.
+   * WorkspaceCanvas uses useNodesState (which is backed by useState) with the
+   * same pattern.
    */
-  it('UnstableCanvas_NegativeProof_DocumentsLoopVector', () => {
-    // This test documents the negative-proof mechanism without running it
-    // in CI (which would break the suite). The actual negative proof was
-    // verified manually and recorded in the PR body and DiVoid doc node.
-    //
-    // To reproduce the negative proof locally:
-    //   1. Replace <WorkspacePage /> in WorkspacePage.test.tsx with
-    //      <UnstableCanvasWithoutMemo />
-    //   2. Run: npx vitest run src/features/workspace/WorkspacePage.test.tsx
-    //   3. The harness fires: "React render-stability error during test:
-    //      Maximum update depth exceeded"
-    //   4. Restore — tests pass.
-    //
-    // The UnstableCanvasWithoutMemo component is defined above this test
-    // to make the loop vector explicit and inspectable.
-    expect(UnstableCanvasWithoutMemo).toBeDefined();
-
-    // Positive assertion: the stable WorkspacePage does NOT loop.
-    // (Full positive proof is in WorkspacePage.test.tsx.)
-  });
-
-  /**
-   * Live negative proof — mount the unstable component and assert the render
-   * loop fires. This test is expected to be observed to FAIL when the harness
-   * catches the loop, then the component is verified to be the cause.
-   *
-   * We skip this in CI to keep the suite green. Remove `.skip` to run manually.
-   */
-  it.skip('UnstableCanvas_LiveNegativeProof_HarnessFires', async () => {
+  it('unstable useEffect sync causes runaway re-renders (negative proof)', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
     render(
       <MemoryRouter>
         <QueryClientProvider client={qc}>
-          <UnstableCanvasWithoutMemo />
+          <UnstableCanvasRealLoopVector />
         </QueryClientProvider>
       </MemoryRouter>,
     );
 
-    // Wait for the loop to fire. The harness (afterEach in setup.ts)
-    // will convert the console.error to a thrown Error.
-    await waitFor(() => {
-      expect(screen.getByTestId('rf__wrapper')).toBeInTheDocument();
-    }, { timeout: 2000 });
+    // The loop-capped sentinel must appear, proving render count hit the cap.
+    const capped = await waitFor(
+      () => screen.getByTestId('loop-capped'),
+      { timeout: 5000 },
+    );
+
+    // Confirm the render count reached the cap.
+    const renders = parseInt(capped.getAttribute('data-renders') ?? '0', 10);
+    expect(renders).toBeGreaterThanOrEqual(MAX_RENDERS);
+  });
+
+  /**
+   * POSITIVE PROOF (counterpart):
+   *
+   * The stable component settles at a low render count. useMemo gives sourceData
+   * a stable identity → useEffect fires once → no loop.
+   *
+   * Observable outcome: `data-testid="render-count"` shows a low `data-value`
+   * after settling (< 10, typically 2–4).
+   *
+   * This mirrors the protection useMemo on xyNodes provides in WorkspaceCanvas.
+   */
+  it('stable useMemo sync keeps render count bounded (positive proof)', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <StableCanvasWithMemoVector />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(
+      () => expect(screen.getByTestId('stable-canvas')).toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+
+    // Wait for effects to settle.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+
+    // Read the final render count.
+    const counterEl = screen.getByTestId('render-count');
+    const renderCount = parseInt(counterEl.getAttribute('data-value') ?? '0', 10);
+
+    // Stable component settles in a few renders. 10 is a generous upper bound.
+    expect(renderCount).toBeLessThan(10);
   });
 });

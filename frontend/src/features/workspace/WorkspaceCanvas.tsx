@@ -35,15 +35,10 @@ import {
   useNodesState,
   useEdgesState,
   addEdge,
-  type Node,
   type Edge,
-  type NodeChange,
-  type EdgeChange,
   type Connection,
   type Viewport,
   type OnNodeDrag,
-  type NodeMouseHandler,
-  type OnConnectEnd,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useTheme } from 'next-themes';
@@ -53,7 +48,7 @@ import { toast } from 'sonner';
 import { useNodesInViewport, type ViewportBounds } from './useNodesInViewport';
 import { useNodeAdjacency } from './useNodeAdjacency';
 import { useMoveNode } from './useMoveNode';
-import { NodeCardRenderer, type NodeCardData } from './NodeCardRenderer';
+import { NodeCardRenderer, type NodeCardData, type WorkspaceNode } from './NodeCardRenderer';
 import { CreateNodeDialog } from '@/features/nodes/CreateNodeDialog';
 import { useCreateNode } from '@/features/nodes/mutations';
 import {
@@ -102,13 +97,13 @@ function computePaddedBounds(
   ];
 }
 
-/** Convert a PositionedNodeDetails into an xyflow Node<NodeCardData>. */
-function toXyflowNode(n: PositionedNodeDetails): Node<NodeCardData> {
+/** Convert a PositionedNodeDetails into an xyflow WorkspaceNode. */
+function toXyflowNode(n: PositionedNodeDetails): WorkspaceNode {
   return {
     id:       String(n.id),
     type:     'nodeCard',
     position: { x: n.x, y: n.y },
-    data:     n,
+    data:     n as NodeCardData,
   };
 }
 
@@ -237,7 +232,7 @@ export function WorkspaceCanvas() {
   // ── Controlled xyflow state ───────────────────────────────────────────────
   // We use controlled state so xyflow's local drag deltas apply immediately
   // while the PATCH fires in the background.
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node<NodeCardData>>(xyNodes);
+  const [nodes, setNodes, onNodesChange] = useNodesState<WorkspaceNode>(xyNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(xyEdges);
 
   // Sync server data into xyflow state whenever query results change.
@@ -268,7 +263,7 @@ export function WorkspaceCanvas() {
   }, [xyEdges, setEdges]);
 
   // ── Drag-end handler ──────────────────────────────────────────────────────
-  const handleNodeDragStop = useCallback<OnNodeDrag<Node<NodeCardData>>>(
+  const handleNodeDragStop = useCallback<OnNodeDrag<WorkspaceNode>>(
     (_event, node) => {
       moveNode.mutate({
         id: Number(node.id),

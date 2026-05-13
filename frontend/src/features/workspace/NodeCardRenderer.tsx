@@ -20,17 +20,32 @@
  */
 
 import { memo } from 'react';
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
 import { useNavigate } from 'react-router-dom';
 import { ROUTES } from '@/lib/constants';
 import type { PositionedNodeDetails } from '@/types/divoid';
 import { cn } from '@/lib/cn';
 
-/** The data payload stored in each xyflow Node object. */
-export type NodeCardData = PositionedNodeDetails;
+/**
+ * The data payload stored in each xyflow Node's `data` field.
+ *
+ * React Flow requires `TData extends Record<string, unknown>` — the intersection
+ * with `Record<string, unknown>` satisfies that constraint while keeping full
+ * type safety on the known fields.
+ */
+export type NodeCardData = PositionedNodeDetails & Record<string, unknown>;
+
+/**
+ * Full xyflow Node type for workspace nodes.
+ *
+ * `NodeProps<T>` in @xyflow/react v12 takes the full Node type as its
+ * parameter (not just the data type), so components should be typed as
+ * `NodeProps<WorkspaceNode>` rather than `NodeProps<NodeCardData>`.
+ */
+export type WorkspaceNode = Node<NodeCardData>;
 
 /** Minimal set of props compared for re-render equality. */
-function propsAreEqual(prev: NodeProps<NodeCardData>, next: NodeProps<NodeCardData>) {
+function propsAreEqual(prev: NodeProps<WorkspaceNode>, next: NodeProps<WorkspaceNode>) {
   // Re-render only when the data content or selection state changes.
   return (
     prev.data.id === next.data.id &&
@@ -65,7 +80,7 @@ function statusColour(status: string): string {
   }
 }
 
-function NodeCardRendererInner({ data, selected }: NodeProps<NodeCardData>) {
+function NodeCardRendererInner({ data, selected }: NodeProps<WorkspaceNode>) {
   const navigate = useNavigate();
 
   const handleClick = () => {
