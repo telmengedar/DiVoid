@@ -1,9 +1,14 @@
+using System.Collections;
+using System.Reflection;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
 using Backend.Services.Nodes;
 using Backend.tests.Fixtures;
 using Pooshit.AspNetCore.Services.Errors.Exceptions;
+using Pooshit.AspNetCore.Services.Formatters.DataStream;
 using Pooshit.AspNetCore.Services.Patches;
+using Pooshit.Ocelot.Clients;
+using Pooshit.Ocelot.Entities;
 
 namespace Backend.tests.Tests;
 
@@ -803,5 +808,56 @@ public class NodeServiceTests
         Pooshit.AspNetCore.Services.Data.Page<NodeDetails> page =
             Pooshit.Json.Json.Read<Pooshit.AspNetCore.Services.Data.Page<NodeDetails>>(json);
         return page.Result?.ToList() ?? [];
+    }
+
+    // -----------------------------------------------------------------------
+    // ListLinks — CancellationToken params-object-array trap (bug #305)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Regression test for bug #305.
+    ///
+    /// Pooshit.Ocelot's ExecuteEntitiesAsync has signature ExecuteEntitiesAsync(params object[]).
+    /// Passing a CancellationToken resolves to that overload, making the CT a SQL parameter value.
+    /// SQLite silently stringifies it; Npgsql throws:
+    ///   "Writing values of System.Threading.CancellationToken is not supported for parameters
+    ///    having no NpgsqlDbType or DataTypeName"
+    ///
+    /// This test uses a DispatchProxy IDBClient spy that rejects CancellationToken parameters
+    /// exactly as Npgsql does, so the regression surfaces on SQLite as well.
+    ///
+    /// NEGATIVE PROOF: restore `operation.ExecuteEntitiesAsync(ct)` at NodeService.cs:525 and
+    /// this test fails with InvalidOperationException("CancellationToken SQL parameter detected:
+    /// System.Threading.CancellationToken is not a bindable SQL value").
+    /// POSITIVE PROOF: with the fix (`operation.ExecuteEntitiesAsync()`) this test passes — the
+    /// spy's SetAsync is called with only the IN-clause long parameters.
+    /// </summary>
+    [Test]
+    public async Task ListLinks_WithCancellationToken_DoesNotPassCtToSqlLayer()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        // Create two linked nodes so ListLinks has real rows to return.
+        NodeDetails a = await Create(svc, name: "LinkA");
+        NodeDetails b = await Create(svc, name: "LinkB");
+        await svc.LinkNodes(a.Id, b.Id);
+
+        // Wrap the real IDBClient in a spy that rejects CancellationToken SQL parameters.
+        IDBClient spyClient = CancellationTokenRejectingDbClientSpy.Wrap(fixture.EntityManager.DBClient);
+        IEntityManager spyManager = new EntityManager(spyClient);
+
+        NodeService spySvc = new(spyManager, DisabledCapability);
+        using CancellationTokenSource cts = new();
+
+        AsyncPageResponseWriter<NodeLink> writer = await spySvc.ListLinks(
+            [a.Id, b.Id], new Pooshit.AspNetCore.Services.Data.ListFilter { Count = 100 }, cts.Token);
+
+        // Consuming the writer triggers the actual ExecuteEntitiesAsync call.
+        // The spy throws if it sees a CancellationToken as a SQL parameter.
+        Assert.DoesNotThrowAsync(async () => {
+            using MemoryStream ms = new();
+            await writer.Write(ms);
+        }, "ListLinks must not pass CancellationToken to the SQL layer (bug #305 regression)");
     }
 }

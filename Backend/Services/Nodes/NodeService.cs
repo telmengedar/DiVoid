@@ -522,7 +522,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                                                   .Where(l => l.SourceId.In(ids) || l.TargetId.In(ids));
 
         return Task.FromResult(new AsyncPageResponseWriter<NodeLink>(
-            operation.ExecuteEntitiesAsync(ct),
+            operation.ExecuteEntitiesAsync(),
             async () => await countOp.ExecuteScalarAsync<long>(),
             filter.Continue
         ));
