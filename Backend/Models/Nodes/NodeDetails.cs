@@ -37,4 +37,16 @@ public class NodeDetails
     /// null — and omitted from the JSON response — when no <c>query</c> was supplied.
     /// </summary>
     public float? Similarity { get; set; }
+
+    /// <summary>
+    /// X position in the shared workspace canvas (world units).
+    /// null when the field was not requested via <c>?fields=</c>.
+    /// </summary>
+    public double? X { get; set; }
+
+    /// <summary>
+    /// Y position in the shared workspace canvas (world units).
+    /// null when the field was not requested via <c>?fields=</c>.
+    /// </summary>
+    public double? Y { get; set; }
 }

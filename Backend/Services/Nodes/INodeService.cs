@@ -1,5 +1,6 @@
 using System.Threading;
 using Backend.Models.Nodes;
+using Pooshit.AspNetCore.Services.Data;
 using Pooshit.AspNetCore.Services.Formatters.DataStream;
 using Pooshit.AspNetCore.Services.Patches;
 
@@ -66,6 +67,16 @@ public interface INodeService
     /// <param name="data">data to upload</param>
     /// <param name="ct">cancellation token</param>
     Task UploadContent(long nodeId, string contentType, Stream data, CancellationToken ct = default);
+
+    /// <summary>
+    /// lists link adjacency rows where either endpoint is in <paramref name="ids"/>.
+    /// used by the workspace viewport to fetch edges incident to visible nodes in a single round-trip.
+    /// </summary>
+    /// <param name="ids">node ids whose incident links are requested</param>
+    /// <param name="filter">paging/sort filter</param>
+    /// <param name="ct">cancellation token</param>
+    /// <returns>page of link adjacency pairs</returns>
+    Task<AsyncPageResponseWriter<LinkAdjacency>> ListLinks(long[] ids, ListFilter filter, CancellationToken ct);
 
     /// <summary>
     /// deletes an existing node
