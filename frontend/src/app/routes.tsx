@@ -4,7 +4,7 @@
  * PR 1 routes: /, /callback, /logout
  * PR 2 routes: /search, /nodes/:id
  * PR 4 routes: /workspace (stub)
- * PR 5 routes: /tasks, /tasks/:projectId (stub)
+ * PR 5 step 1 routes: /tasks, /tasks/orgs/:orgId, /tasks/projects/:projectId
  *
  * Auth-gated routes are wrapped in ProtectedRoute.
  * Public routes (/callback, /logout) are never gated.
@@ -97,7 +97,7 @@ export function AppRoutes() {
           }
         />
 
-        {/* PR 5 — tasks (stub) */}
+        {/* PR 5 step 1 — task drill-down: org → project → task list */}
         <Route
           path={ROUTES.TASKS}
           element={
@@ -109,7 +109,17 @@ export function AppRoutes() {
           }
         />
         <Route
-          path={`${ROUTES.TASKS}/:projectId`}
+          path="/tasks/orgs/:orgId"
+          element={
+            <ProtectedRoute>
+              <AppShell>
+                <TasksPage />
+              </AppShell>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/tasks/projects/:projectId"
           element={
             <ProtectedRoute>
               <AppShell>

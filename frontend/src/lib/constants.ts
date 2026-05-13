@@ -39,6 +39,10 @@ export const ROUTES = {
   NODE_DETAIL: (id: number) => `/nodes/${id}`,
   WORKSPACE: '/workspace',
   TASKS: '/tasks',
+  /** Task drill-down: org list → project list → task list */
+  TASKS_ORG: (orgId: number) => `/tasks/orgs/${orgId}`,
+  TASKS_PROJECT: (projectId: number) => `/tasks/projects/${projectId}`,
+  /** @deprecated Use TASKS_ORG / TASKS_PROJECT for the drill-down flow. */
   PROJECT_TASKS: (projectId: number) => `/tasks/${projectId}`,
 } as const;
 
