@@ -3,14 +3,37 @@
  * Load-bearing tests for drag-to-connect, disconnect-with-undo, floating edges,
  * and bug-#317 graceful handling (DiVoid task #352, #287, #266).
  *
- * Six test subjects (each with positive + negative proof):
+ * Six test subjects, each with a positive proof AND a runnable negative proof:
  *
- * 1. Drag-connect dispatches link mutation.
- * 2. Self-link guard.
- * 3. Edge delete dispatches unlink.
- * 4. Undo toast re-links.
- * 5. FloatingEdge renders via intersection geometry (not handle anchors).
- * 6. Bug #317 graceful handling — already-linked 500 treated as success.
+ * 1. Drag-connect wiring: onConnect prop on <ReactFlow> is wired to handleConnect
+ *    and calling it dispatches the link mutation.
+ * 2. Self-link guard: onConnect({source:'X', target:'X'}) → toast.warning, no mutation.
+ * 3. Edge-delete wiring: onEdgesDelete prop on <ReactFlow> is wired to handleEdgesDelete
+ *    and calling it dispatches the unlink mutation.
+ * 4. Undo toast: delete → undo action → re-link POST fires.
+ * 5. FloatingEdge intersection geometry: getIntersectionPoint returns a boundary point.
+ * 6. Bug #317 graceful handling — already-linked 500 treated as success (unchanged).
+ *
+ * ## How wiring tests work (Tests 1–4)
+ *
+ * xyflow's onConnect / onEdgesDelete cannot be driven via DOM events in jsdom —
+ * jsdom has no pointer event model for drag lines. Instead we:
+ *   1. Mount WorkspaceCanvas (via WorkspacePage) with all providers.
+ *   2. After the <ReactFlow> element renders, walk the React fiber tree from
+ *      the rf__wrapper element to locate the fiber node whose memoizedProps
+ *      contain `onConnect` (the ReactFlow component's props).
+ *   3. Call those props directly. This is load-bearing: if `onConnect={handleConnect}`
+ *      is deleted from the <ReactFlow> JSX in WorkspaceCanvas, the fiber walk
+ *      finds undefined/noop and the assertion that POST /nodes/1/links fires will fail.
+ *
+ * ## Negative proof strategy
+ *
+ * For each test 1–4 the negative proof is structural: removing the relevant JSX prop
+ * or guard block from WorkspaceCanvas.tsx breaks the corresponding test because:
+ *   - Without `onConnect={handleConnect}`: calling rfProps.onConnect fires nothing → POST absent.
+ *   - Without the self-link guard: onConnect({source:'1',target:'1'}) calls linkNodes → POST fires → test fails.
+ *   - Without `onEdgesDelete={handleEdgesDelete}`: calling rfProps.onEdgesDelete fires nothing → DELETE absent.
+ *   - Without the undo action wiring: capturedAction is null → test fails.
  *
  * DiVoid task #352, rules #275.
  */
@@ -22,8 +45,10 @@ import { MemoryRouter } from 'react-router-dom';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { type ReactNode } from 'react';
+import { type Connection, type Edge } from '@xyflow/react';
 import { BASE_URL } from '@/test/msw/handlers';
 import { DivoidApiError } from '@/types/divoid';
+import { getIntersectionPoint, type NodeRect } from './FloatingEdge';
 
 // ─── MSW server ───────────────────────────────────────────────────────────────
 
@@ -34,6 +59,8 @@ const server = setupServer(
       createdAt: '2026-01-01T00:00:00Z', permissions: ['read', 'write'],
     }),
   ),
+  http.get(`${BASE_URL}/nodes`, () => HttpResponse.json({ result: [], total: 0 })),
+  http.get(`${BASE_URL}/nodes/links`, () => HttpResponse.json({ result: [], total: 0 })),
   http.post(`${BASE_URL}/nodes/:id/links`, () => new HttpResponse(null, { status: 204 })),
   http.delete(`${BASE_URL}/nodes/:sourceId/links/:targetId`, () => new HttpResponse(null, { status: 204 })),
 );
@@ -118,40 +145,81 @@ function makeWrapper(qc: QueryClient) {
   };
 }
 
+/**
+ * Walk the React fiber tree starting from a DOM element to find the nearest
+ * fiber node whose memoizedProps contains all of the given keys.
+ *
+ * This is how we extract the `onConnect` and `onEdgesDelete` props that
+ * WorkspaceCanvas passes to <ReactFlow>. If those props are removed from the
+ * JSX, this function either returns null or returns props without the expected
+ * keys, causing the wiring tests to fail.
+ */
+function findFiberProps(
+  element: Element,
+  requiredKeys: string[],
+): Record<string, unknown> | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fiberKey = Object.keys(element).find((k) => k.startsWith('__reactFiber'));
+  if (!fiberKey) return null;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fiber: any = (element as any)[fiberKey];
+
+  // Walk upward through the fiber tree.
+  while (fiber) {
+    const props = fiber.memoizedProps as Record<string, unknown> | null;
+    if (props && requiredKeys.every((k) => k in props)) {
+      return props;
+    }
+    fiber = fiber.return;
+  }
+  return null;
+}
+
+/**
+ * Mount WorkspacePage and wait for the ReactFlow wrapper to appear.
+ * Returns { rfWrapper, qc } so tests can use the wrapper element for fiber walks.
+ */
+async function mountWorkspaceCanvas() {
+  const { WorkspacePage } = await import('./WorkspacePage');
+  const qc = makeQC();
+
+  render(
+    <MemoryRouter initialEntries={['/workspace']}>
+      <QueryClientProvider client={qc}>
+        <WorkspacePage />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+
+  const rfWrapper = await waitFor(
+    () => screen.getByTestId('rf__wrapper'),
+    { timeout: 5000 },
+  );
+
+  return { rfWrapper, qc };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Test 1: Drag-connect dispatches link mutation
+// Test 1: Drag-connect dispatches link mutation via JSX wiring
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Test 1: drag-connect dispatches link mutation', () => {
+describe('Test 1: drag-connect dispatches link mutation via JSX wiring', () => {
   /**
    * POSITIVE PROOF:
-   * Simulating xyflow's onConnect with {source:'1', target:'2'} calls
-   * useLinkNodes with {sourceId:1, targetId:2}.
+   * Mount WorkspaceCanvas, extract the onConnect prop from the ReactFlow
+   * element's fiber, call it with {source:'1', target:'2'}, and assert that
+   * POST /nodes/1/links is dispatched with body 2.
    *
-   * Strategy: render WorkspaceCanvas through WorkspacePage, capture the
-   * POST request to /nodes/1/links via MSW, assert it was called with
-   * the correct body.
+   * Load-bearing contract: if `onConnect={handleConnect}` is deleted from the
+   * <ReactFlow> JSX in WorkspaceCanvas.tsx, findFiberProps will return a props
+   * object with onConnect absent or pointing to xyflow's default noop — calling
+   * it will NOT fire our mutation and the MSW assertion will fail.
    */
-  it('onConnect({source:"1", target:"2"}) calls useLinkNodes mutate with {sourceId:1,targetId:2}', async () => {
+  it('calling rfProps.onConnect({source:"1",target:"2"}) dispatches POST /nodes/1/links', async () => {
     const linkRequests: { nodeId: string; body: unknown }[] = [];
 
     server.use(
-      http.get(`${BASE_URL}/nodes`, ({ request }) => {
-        const url = new URL(request.url);
-        if (url.searchParams.get('bounds')) {
-          return HttpResponse.json({
-            result: [
-              { id: 1, type: 'task', name: 'First task', status: 'open', x: 100, y: 200 },
-              { id: 2, type: 'documentation', name: 'Some doc', status: null, x: 300, y: 200 },
-            ],
-            total: 2,
-          });
-        }
-        return HttpResponse.json({ result: [], total: 0 });
-      }),
-      http.get(`${BASE_URL}/nodes/links`, () =>
-        HttpResponse.json({ result: [], total: 0 }),
-      ),
       http.post(`${BASE_URL}/nodes/:nodeId/links`, async ({ params, request }) => {
         const body = await request.text();
         linkRequests.push({ nodeId: params.nodeId as string, body: JSON.parse(body) });
@@ -159,50 +227,30 @@ describe('Test 1: drag-connect dispatches link mutation', () => {
       }),
     );
 
-    const { WorkspacePage } = await import('./WorkspacePage');
-    const qc = makeQC();
-    render(
-      <MemoryRouter initialEntries={['/workspace']}>
-        <QueryClientProvider client={qc}>
-          <WorkspacePage />
-        </QueryClientProvider>
-      </MemoryRouter>,
-    );
+    const { rfWrapper } = await mountWorkspaceCanvas();
 
-    // Wait for canvas to mount.
-    await waitFor(() => {
-      expect(screen.getByTestId('rf__wrapper')).toBeInTheDocument();
-    }, { timeout: 5000 });
+    // Extract the onConnect prop from the ReactFlow fiber.
+    const rfProps = findFiberProps(rfWrapper, ['onConnect', 'onEdgesDelete']);
+    expect(rfProps, 'ReactFlow fiber props not found — onConnect may be unwired').not.toBeNull();
+    expect(typeof rfProps!.onConnect, 'onConnect is not a function — JSX prop may be missing').toBe('function');
 
-    // Simulate xyflow's onConnect — find the ReactFlow wrapper and fire the
-    // internal connect event. We call handleConnect directly via the ReactFlow
-    // internal event mechanism by invoking a custom event on the rf wrapper.
-    // The most reliable way: locate the ReactFlow pane and call the connection
-    // handler by dispatching a custom event that xyflow processes.
-    //
-    // Since xyflow doesn't expose onConnect via DOM events, we instead test
-    // the useLinkNodes hook directly in the same query context.
-    //
-    // This validates the positive proof: when a Connection arrives with
-    // source='1' and target='2', the mutation fires.
-    const { useLinkNodes } = await import('@/features/nodes/mutations');
-    const { result } = renderHook(() => useLinkNodes(), { wrapper: makeWrapper(qc) });
+    const connection: Connection = { source: '1', target: '2', sourceHandle: null, targetHandle: null };
 
     await act(async () => {
-      result.current.mutate({ sourceId: 1, targetId: 2 });
+      (rfProps!.onConnect as (c: Connection) => void)(connection);
     });
 
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    // The link mutation must have fired.
+    await waitFor(() => expect(linkRequests.length).toBeGreaterThan(0), { timeout: 3000 });
     expect(linkRequests.some((r) => r.nodeId === '1' && r.body === 2)).toBe(true);
   });
 
   /**
    * NEGATIVE PROOF:
-   * If linkNodes.mutate is NOT called (we never invoke it), no POST fires.
+   * If onConnect is never invoked, no POST fires.
    */
-  it('no POST fires when onConnect is never triggered', async () => {
+  it('no POST fires when onConnect is never called', async () => {
     const linkRequests: unknown[] = [];
-
     server.use(
       http.post(`${BASE_URL}/nodes/:nodeId/links`, async ({ request }) => {
         linkRequests.push(await request.text());
@@ -210,74 +258,63 @@ describe('Test 1: drag-connect dispatches link mutation', () => {
       }),
     );
 
-    // Deliberately do NOT call the mutation.
+    await mountWorkspaceCanvas();
+    // Deliberately do NOT call onConnect.
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
-
     expect(linkRequests).toHaveLength(0);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test 2: Self-link guard
+// Test 2: Self-link guard fires through the real onConnect handler
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Test 2: self-link guard', () => {
+describe('Test 2: self-link guard fires through the real handleConnect', () => {
   /**
    * POSITIVE PROOF:
-   * handleConnect({source:'1', target:'1'}) does NOT dispatch the mutation
-   * and shows toast.warning.
+   * Extract onConnect from the <ReactFlow> fiber, call it with
+   * {source:'1', target:'1'}. The guard in handleConnect fires, shows
+   * toast.warning, and does NOT dispatch any POST.
    *
-   * We test this by exercising the guard logic: import WorkspaceCanvas,
-   * find the onConnect callback via React's internals — but the most reliable
-   * test is through the useLinkNodes hook in a wrapper that mirrors what
-   * WorkspaceCanvas does, bypassing the guard by not calling it.
-   *
-   * Instead we test the guard logic directly: render WorkspaceCanvas, spy on
-   * useLinkNodes, then call the pane's onConnect handler with source===target.
-   *
-   * Approach: use a spy on `useLinkNodes` to assert it is NOT called when
-   * source === target, and IS called when source !== target.
+   * Load-bearing contract:
+   *   - If `onConnect={handleConnect}` is removed from JSX: rfProps.onConnect
+   *     is xyflow's default noop, which doesn't call toast.warning → test fails.
+   *   - If the guard block is removed from handleConnect: onConnect(same-source)
+   *     calls linkNodes.mutate → POST fires → linkRequests.length > 0 → test fails.
    */
-  it('self-link guard: onConnect source===target → toast.warning, no mutation', async () => {
+  it('onConnect({source:"1",target:"1"}) → toast.warning, no POST', async () => {
     const linkRequests: unknown[] = [];
     server.use(
       http.post(`${BASE_URL}/nodes/:nodeId/links`, async ({ request }) => {
         linkRequests.push(await request.text());
         return new HttpResponse(null, { status: 204 });
       }),
-      http.get(`${BASE_URL}/nodes`, () =>
-        HttpResponse.json({ result: [], total: 0 }),
-      ),
-      http.get(`${BASE_URL}/nodes/links`, () =>
-        HttpResponse.json({ result: [], total: 0 }),
-      ),
     );
 
-    // We test the guard by directly exercising the handleConnect logic from
-    // WorkspaceCanvas. Since handleConnect is an internal callback, we validate
-    // the contract through the hook layer: the guard prevents linkNodes.mutate
-    // from being called when source === target.
-    //
-    // The guard: if (connection.source === connection.target) { toast.warning; return; }
-    // We reproduce this exactly to prove the condition triggers the toast.
-    const connectionSource: string = '1';
-    const connectionTarget: string = '1';
+    const { rfWrapper } = await mountWorkspaceCanvas();
 
-    if (connectionSource === connectionTarget) {
-      // Guard fires — shows toast, does NOT call mutation.
-      mockToastWarning('Cannot link a node to itself');
-      // Deliberately do NOT call useLinkNodes.mutate here.
-    }
+    const rfProps = findFiberProps(rfWrapper, ['onConnect', 'onEdgesDelete']);
+    expect(rfProps, 'ReactFlow fiber props not found').not.toBeNull();
+    expect(typeof rfProps!.onConnect).toBe('function');
 
+    const selfConnection: Connection = { source: '1', target: '1', sourceHandle: null, targetHandle: null };
+
+    await act(async () => {
+      (rfProps!.onConnect as (c: Connection) => void)(selfConnection);
+    });
+
+    // Guard fired → warning toast shown.
     expect(mockToastWarning).toHaveBeenCalledWith('Cannot link a node to itself');
+    // Guard fired → mutation NOT called.
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
     expect(linkRequests).toHaveLength(0);
   });
 
   /**
    * NEGATIVE PROOF:
-   * Without the guard (source !== target), the mutation IS called.
+   * Different source/target: guard does NOT fire, mutation IS called.
    */
-  it('self-link guard: onConnect source!==target → mutation is called', async () => {
+  it('onConnect({source:"1",target:"2"}) → no warning toast, POST fires', async () => {
     const linkRequests: unknown[] = [];
     server.use(
       http.post(`${BASE_URL}/nodes/:nodeId/links`, async ({ request }) => {
@@ -286,30 +323,38 @@ describe('Test 2: self-link guard', () => {
       }),
     );
 
-    // Guard is NOT triggered — different nodes means we call the mutation.
-    const { useLinkNodes } = await import('@/features/nodes/mutations');
-    const qc = makeQC();
-    const { result } = renderHook(() => useLinkNodes(), { wrapper: makeWrapper(qc) });
-    await act(async () => { result.current.mutate({ sourceId: 1, targetId: 2 }); });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const { rfWrapper } = await mountWorkspaceCanvas();
 
+    const rfProps = findFiberProps(rfWrapper, ['onConnect', 'onEdgesDelete']);
+    expect(rfProps).not.toBeNull();
+
+    const connection: Connection = { source: '1', target: '2', sourceHandle: null, targetHandle: null };
+
+    await act(async () => {
+      (rfProps!.onConnect as (c: Connection) => void)(connection);
+    });
+
+    await waitFor(() => expect(linkRequests.length).toBeGreaterThan(0), { timeout: 3000 });
     expect(mockToastWarning).not.toHaveBeenCalled();
-    expect(linkRequests.length).toBeGreaterThan(0);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test 3: Edge delete dispatches unlink
+// Test 3: Edge delete dispatches unlink via JSX wiring
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Test 3: edge delete dispatches unlink', () => {
+describe('Test 3: edge delete dispatches unlink via JSX wiring', () => {
   /**
    * POSITIVE PROOF:
-   * Invoking useUnlinkNodes.mutate dispatches DELETE /nodes/1/links/2.
-   * This validates that the affordance (Delete key → onEdgesDelete → useUnlinkNodes)
-   * produces the correct API call.
+   * Extract onEdgesDelete from the <ReactFlow> fiber, call it with an array
+   * containing edge {source:'1', target:'2'}. Assert that
+   * DELETE /nodes/1/links/2 is dispatched.
+   *
+   * Load-bearing contract: if `onEdgesDelete={handleEdgesDelete}` is deleted
+   * from the <ReactFlow> JSX, rfProps.onEdgesDelete is xyflow's default noop
+   * → DELETE never fires → assertion fails.
    */
-  it('useUnlinkNodes dispatches DELETE when edge is deleted', async () => {
+  it('calling rfProps.onEdgesDelete([{source:"1",target:"2"}]) dispatches DELETE', async () => {
     const unlinkRequests: { sourceId: string; targetId: string }[] = [];
     server.use(
       http.delete(`${BASE_URL}/nodes/:sourceId/links/:targetId`, ({ params }) => {
@@ -321,24 +366,29 @@ describe('Test 3: edge delete dispatches unlink', () => {
       }),
     );
 
-    const { useUnlinkNodes } = await import('@/features/nodes/mutations');
-    const qc = makeQC();
-    const { result } = renderHook(() => useUnlinkNodes(), { wrapper: makeWrapper(qc) });
+    const { rfWrapper } = await mountWorkspaceCanvas();
+
+    const rfProps = findFiberProps(rfWrapper, ['onConnect', 'onEdgesDelete']);
+    expect(rfProps, 'ReactFlow fiber props not found — onEdgesDelete may be unwired').not.toBeNull();
+    expect(typeof rfProps!.onEdgesDelete, 'onEdgesDelete is not a function').toBe('function');
+
+    const deletedEdges: Edge[] = [
+      { id: '1-2', source: '1', target: '2', type: 'floating' },
+    ];
 
     await act(async () => {
-      result.current.mutate({ sourceId: 1, targetId: 2 });
+      (rfProps!.onEdgesDelete as (edges: Edge[]) => void)(deletedEdges);
     });
 
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(unlinkRequests).toHaveLength(1);
+    await waitFor(() => expect(unlinkRequests).toHaveLength(1), { timeout: 3000 });
     expect(unlinkRequests[0]).toEqual({ sourceId: '1', targetId: '2' });
   });
 
   /**
    * NEGATIVE PROOF:
-   * If useUnlinkNodes.mutate is never called, DELETE is not dispatched.
+   * If onEdgesDelete is never invoked, no DELETE fires.
    */
-  it('no DELETE fires when onEdgesDelete is not triggered', async () => {
+  it('no DELETE fires when onEdgesDelete is never called', async () => {
     const unlinkRequests: unknown[] = [];
     server.use(
       http.delete(`${BASE_URL}/nodes/:sourceId/links/:targetId`, () => {
@@ -347,27 +397,30 @@ describe('Test 3: edge delete dispatches unlink', () => {
       }),
     );
 
-    // Deliberately do NOT call the mutation.
+    await mountWorkspaceCanvas();
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
-
     expect(unlinkRequests).toHaveLength(0);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test 4: Undo toast re-links
+// Test 4: Undo toast re-links via JSX wiring
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Test 4: undo toast re-links', () => {
+describe('Test 4: undo toast re-links via JSX wiring', () => {
   /**
    * POSITIVE PROOF:
-   * When an edge is deleted and the undo action is clicked, useLinkNodes is
-   * called with the original source/target pair.
+   * Dispatch onEdgesDelete through the real <ReactFlow> fiber prop, capture
+   * the sonner toast action.onClick that handleEdgesDelete registers, invoke
+   * it, and assert that POST /nodes/1/links fires (re-link).
    *
-   * We test this by: deleting a link, capturing the toast action's onClick,
-   * then invoking it and verifying the re-link POST fires.
+   * Load-bearing contract:
+   *   - If `onEdgesDelete={handleEdgesDelete}` is removed: no DELETE fires,
+   *     toast() is never called, capturedUndoAction stays null → test fails.
+   *   - If the Undo action wiring inside handleEdgesDelete is removed:
+   *     toast() is called but without action.onClick → capturedUndoAction null → test fails.
    */
-  it('clicking Undo in the delete toast re-links the pair', async () => {
+  it('clicking Undo in the delete toast re-links the pair via the real wiring', async () => {
     const unlinkRequests: unknown[] = [];
     const linkRequests: unknown[] = [];
 
@@ -382,199 +435,141 @@ describe('Test 4: undo toast re-links', () => {
       }),
     );
 
-    // Capture the toast action so we can invoke it.
+    // Capture the Undo action from the sonner toast call.
     let capturedUndoAction: (() => void) | null = null;
-    mockToast.mockImplementation((_msg: unknown, opts?: { action?: { onClick: () => void } }) => {
-      if (opts?.action?.onClick) {
-        capturedUndoAction = opts.action.onClick;
-      }
-    });
+    mockToast.mockImplementation(
+      (_msg: unknown, opts?: { action?: { onClick: () => void } }) => {
+        if (opts?.action?.onClick) {
+          capturedUndoAction = opts.action.onClick;
+        }
+      },
+    );
 
-    const { useUnlinkNodes, useLinkNodes } = await import('@/features/nodes/mutations');
-    const qc = makeQC();
+    const { rfWrapper } = await mountWorkspaceCanvas();
 
-    // Delete the link — this is what onEdgesDelete does.
-    const { result: unlinkResult } = renderHook(() => useUnlinkNodes(), { wrapper: makeWrapper(qc) });
-    const { result: linkResult }   = renderHook(() => useLinkNodes(),   { wrapper: makeWrapper(qc) });
+    const rfProps = findFiberProps(rfWrapper, ['onConnect', 'onEdgesDelete']);
+    expect(rfProps, 'ReactFlow fiber props not found').not.toBeNull();
+    expect(typeof rfProps!.onEdgesDelete).toBe('function');
+
+    const deletedEdges: Edge[] = [
+      { id: '1-2', source: '1', target: '2', type: 'floating' },
+    ];
 
     await act(async () => {
-      unlinkResult.current.mutate(
-        { sourceId: 1, targetId: 2 },
-        {
-          onSuccess: () => {
-            mockToast('Link removed', {
-              duration: 5000,
-              action: {
-                label: 'Undo',
-                onClick: () => {
-                  linkResult.current.mutate({ sourceId: 1, targetId: 2 });
-                },
-              },
-            });
-          },
-        },
-      );
+      (rfProps!.onEdgesDelete as (edges: Edge[]) => void)(deletedEdges);
     });
 
-    await waitFor(() => expect(unlinkResult.current.isSuccess).toBe(true));
-    expect(capturedUndoAction).not.toBeNull();
-    expect(unlinkRequests).toHaveLength(1);
+    // DELETE should have fired.
+    await waitFor(() => expect(unlinkRequests).toHaveLength(1), { timeout: 3000 });
 
-    // Click Undo.
+    // Undo action must have been captured from the toast.
+    await waitFor(() => expect(capturedUndoAction).not.toBeNull(), { timeout: 3000 });
+
+    // Click Undo — this should re-link.
     await act(async () => {
       capturedUndoAction!();
     });
 
-    await waitFor(() => expect(linkResult.current.isSuccess).toBe(true));
-    // The re-link POST should have fired.
-    expect(linkRequests.length).toBeGreaterThan(0);
+    await waitFor(() => expect(linkRequests.length).toBeGreaterThan(0), { timeout: 3000 });
   });
 
   /**
    * NEGATIVE PROOF:
-   * If the undo action is NOT invoked, no re-link POST fires.
+   * If onEdgesDelete is never called, no undo action is registered and no re-link fires.
    */
-  it('letting the toast expire without clicking Undo does NOT re-link', async () => {
+  it('no re-link fires when the delete toast is never triggered', async () => {
     const linkRequests: unknown[] = [];
     server.use(
-      http.delete(`${BASE_URL}/nodes/:sourceId/links/:targetId`, () =>
-        new HttpResponse(null, { status: 204 }),
-      ),
       http.post(`${BASE_URL}/nodes/:nodeId/links`, async ({ request }) => {
         linkRequests.push(await request.text());
         return new HttpResponse(null, { status: 204 });
       }),
     );
 
-    const { useUnlinkNodes } = await import('@/features/nodes/mutations');
-    const qc = makeQC();
-    const { result } = renderHook(() => useUnlinkNodes(), { wrapper: makeWrapper(qc) });
-
-    await act(async () => {
-      // Delete the link but do NOT invoke the undo action.
-      result.current.mutate({ sourceId: 1, targetId: 2 });
-    });
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-
-    // No re-link call — undo was never triggered.
+    await mountWorkspaceCanvas();
+    // Deliberately do NOT call onEdgesDelete.
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    expect(mockToast).not.toHaveBeenCalled();
     expect(linkRequests).toHaveLength(0);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test 5: FloatingEdge renders via intersection geometry
+// Test 5: FloatingEdge intersection geometry (imported, not replicated)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Test 5: FloatingEdge renders without going through handle anchors', () => {
+describe('Test 5: FloatingEdge renders via intersection geometry (not center fallback)', () => {
   /**
    * POSITIVE PROOF:
-   * FloatingEdge with two nodes at known positions produces a path that starts
-   * on the boundary of the source rect and ends on the boundary of the target
-   * rect — NOT at hard-coded handle positions (right/left edges at 50% height).
+   * getIntersectionPoint(rect, targetX, targetY) returns a point that lies on
+   * the boundary of the rectangle — not the center.
    *
-   * We test the geometry helpers directly (unit test on the math) since the
-   * full SVG render requires jsdom ResizeObserver/layout that isn't available.
+   * This is load-bearing because getIntersectionPoint is imported directly from
+   * FloatingEdge.tsx. If the production function is replaced with a center-only
+   * fallback (returning {x: cx, y: cy}), the boundary assertion fails:
+   * the center (150, 225) is NOT on the boundary of rect {x:80,y:205,w:140,h:40}.
+   *
+   * Load-bearing contract: replacing getIntersectionPoint body with
+   * `return { x: cx, y: cy }` makes the onRight/onLeft/onBottom/onTop check
+   * for the diagonal case fail (center is strictly inside the rect).
    */
-  it('getIntersectionPoint returns a point on the rectangle boundary', () => {
-    // Import the module under test — we re-export the helpers for testability.
-    // Since helpers are not exported, we replicate the geometry inline to prove
-    // the contract. This is acceptable: the real proof is in FloatingEdge.tsx
-    // and the integration tests above exercise that path via WorkspacePage.
-    //
-    // Geometry: source rect centered at (150, 225), 140×40.
-    // Target center: (350, 225). Line is horizontal → intersection is right edge.
-    const rect = { x: 80, y: 205, width: 140, height: 40 };
+  it('getIntersectionPoint: horizontal line → right edge intersection', () => {
+    // Source rect centered at (150, 225), 140×40.
+    // Target directly to the right → line is horizontal → intersection is right edge.
+    const rect: NodeRect = { x: 80, y: 205, width: 140, height: 40 };
     const targetX = 350;
-    const targetY = 225;
+    const targetY = 225; // Same Y as center → horizontal line.
 
-    const cx = rect.x + rect.width / 2;  // 150
-    const cy = rect.y + rect.height / 2; // 225
-    const dx = targetX - cx;  // 200
-    const dy = targetY - cy;  // 0
+    const { x, y } = getIntersectionPoint(rect, targetX, targetY);
 
-    const hw = rect.width / 2;  // 70
-    const hh = rect.height / 2; // 20
+    // Right edge of rect is at x = 80 + 140 = 220.
+    expect(x).toBeCloseTo(220, 5);
+    expect(y).toBeCloseTo(225, 5);
+  });
 
-    const candidates: number[] = [];
-    if (dx !== 0) {
-      const tRight = hw / dx;   // 70/200 = 0.35
-      if (tRight > 0 && Math.abs(dy * tRight) <= hh) candidates.push(tRight);
-      const tLeft = -hw / dx;   // -70/200 < 0 — not added
-      if (tLeft > 0 && Math.abs(dy * tLeft) <= hh) candidates.push(tLeft);
-    }
+  it('getIntersectionPoint: diagonal line → boundary point (NOT center)', () => {
+    const rect: NodeRect = { x: 80, y: 205, width: 140, height: 40 };
+    const cx = rect.x + rect.width / 2;   // 150
+    const cy = rect.y + rect.height / 2;  // 225
 
-    const t = Math.min(...candidates);
-    const ix = cx + dx * t; // 150 + 200 * 0.35 = 220 = rect.x + rect.width
-    const iy = cy + dy * t; // 225
+    // Target diagonally below-right.
+    const { x, y } = getIntersectionPoint(rect, 350, 350);
 
-    // The intersection should be at the right edge of the source rect.
-    expect(ix).toBeCloseTo(rect.x + rect.width, 5);
-    expect(iy).toBeCloseTo(225, 5);
-
-    // Specifically NOT at a handle position. The default xyflow handle for a
-    // source handle at Position.Right would be at x = rect.x + rect.width,
-    // y = rect.y + rect.height / 2 — which happens to match here because the
-    // line is horizontal. The key invariant is that the result comes from
-    // geometry, not a hard-coded handle anchor.
-    // Prove it works for a non-horizontal line too (diagonal):
-    const diagTargetX = 350;
-    const diagTargetY = 350;
-    const dx2 = diagTargetX - cx;  // 200
-    const dy2 = diagTargetY - cy;  // 125
-
-    const candidates2: number[] = [];
-    if (dx2 !== 0) {
-      const tR = hw / dx2;  // 70/200 = 0.35
-      if (tR > 0 && Math.abs(dy2 * tR) <= hh) candidates2.push(tR);
-      const tL = -hw / dx2;
-      if (tL > 0 && Math.abs(dy2 * tL) <= hh) candidates2.push(tL);
-    }
-    if (dy2 !== 0) {
-      const tB = hh / dy2;  // 20/125 = 0.16
-      if (tB > 0 && Math.abs(dx2 * tB) <= hw) candidates2.push(tB);
-      const tT = -hh / dy2;
-      if (tT > 0 && Math.abs(dx2 * tT) <= hw) candidates2.push(tT);
-    }
-
-    const t2 = Math.min(...candidates2);
-    const ix2 = cx + dx2 * t2;
-    const iy2 = cy + dy2 * t2;
-
-    // For a diagonal line, the intersection is NOT at the right-edge midpoint.
-    // Verify the hit point is on the boundary (within 0.5px).
-    const onRight  = Math.abs(ix2 - (rect.x + rect.width))  < 0.5 && iy2 >= rect.y && iy2 <= rect.y + rect.height;
-    const onLeft   = Math.abs(ix2 - rect.x)                 < 0.5 && iy2 >= rect.y && iy2 <= rect.y + rect.height;
-    const onBottom = Math.abs(iy2 - (rect.y + rect.height)) < 0.5 && ix2 >= rect.x && ix2 <= rect.x + rect.width;
-    const onTop    = Math.abs(iy2 - rect.y)                 < 0.5 && ix2 >= rect.x && ix2 <= rect.x + rect.width;
+    // The result must be on one of the four sides.
+    const onRight  = Math.abs(x - (rect.x + rect.width))  < 0.5 && y >= rect.y && y <= rect.y + rect.height;
+    const onLeft   = Math.abs(x - rect.x)                 < 0.5 && y >= rect.y && y <= rect.y + rect.height;
+    const onBottom = Math.abs(y - (rect.y + rect.height)) < 0.5 && x >= rect.x && x <= rect.x + rect.width;
+    const onTop    = Math.abs(y - rect.y)                 < 0.5 && x >= rect.x && x <= rect.x + rect.width;
     expect(onRight || onLeft || onBottom || onTop).toBe(true);
+
+    // And specifically NOT the center — that would be the broken fallback.
+    const isCenter = Math.abs(x - cx) < 0.5 && Math.abs(y - cy) < 0.5;
+    expect(isCenter).toBe(false);
   });
 
   /**
    * NEGATIVE PROOF:
-   * Without the intersection algorithm (just returning the center point),
-   * the result would be the center — which is NOT on the boundary.
+   * The center of the rect is strictly inside the rect — NOT on any boundary.
+   * This proves that if getIntersectionPoint returned the center, the above
+   * test would fail. (A direct regression check for the center-only fallback.)
    */
-  it('center fallback is NOT on the boundary (proves geometry is needed)', () => {
-    const rect = { x: 80, y: 205, width: 140, height: 40 };
-    const cx = rect.x + rect.width / 2;  // 150
-    const cy = rect.y + rect.height / 2; // 225
+  it('center fallback (cx,cy) is NOT on the boundary — proves geometry is required', () => {
+    const rect: NodeRect = { x: 80, y: 205, width: 140, height: 40 };
+    const cx = rect.x + rect.width / 2;   // 150
+    const cy = rect.y + rect.height / 2;  // 225
 
-    // Without geometry, naive fallback returns center.
-    const naiveX = cx;
-    const naiveY = cy;
+    const onRight  = Math.abs(cx - (rect.x + rect.width))  < 0.5;
+    const onLeft   = Math.abs(cx - rect.x)                 < 0.5;
+    const onBottom = Math.abs(cy - (rect.y + rect.height)) < 0.5;
+    const onTop    = Math.abs(cy - rect.y)                 < 0.5;
 
-    // Center is strictly inside the rect — not on any boundary.
-    const onRight  = Math.abs(naiveX - (rect.x + rect.width))  < 0.5;
-    const onLeft   = Math.abs(naiveX - rect.x)                 < 0.5;
-    const onBottom = Math.abs(naiveY - (rect.y + rect.height)) < 0.5;
-    const onTop    = Math.abs(naiveY - rect.y)                 < 0.5;
+    // Center is strictly interior — not on any edge.
     expect(onRight || onLeft || onBottom || onTop).toBe(false);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test 6: Bug #317 graceful handling
+// Test 6: Bug #317 graceful handling (unchanged — accepted by Jenny)
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('Test 6: bug #317 — already-linked 500 treated as success', () => {

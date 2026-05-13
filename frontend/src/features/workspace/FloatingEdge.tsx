@@ -23,7 +23,7 @@ import { useInternalNode, BaseEdge, getStraightPath, type EdgeProps } from '@xyf
 
 // ─── Geometry helpers ─────────────────────────────────────────────────────────
 
-interface NodeRect {
+export interface NodeRect {
   x: number;
   y: number;
   width: number;
@@ -43,8 +43,10 @@ interface EdgeParams {
  *
  * Falls back to the rectangle's center when the segment is degenerate (zero
  * length) so the edge still renders rather than crashing.
+ *
+ * Exported for unit testing (DiVoid task #352, rule #275).
  */
-function getIntersectionPoint(
+export function getIntersectionPoint(
   rect: NodeRect,
   targetX: number,
   targetY: number,
@@ -88,8 +90,10 @@ function getIntersectionPoint(
 /**
  * Given two InternalNode rects, returns the intersection points on each rect's
  * boundary along the center-to-center axis.
+ *
+ * Exported for unit testing (DiVoid task #352, rule #275).
  */
-function getEdgeParams(source: NodeRect, target: NodeRect): EdgeParams {
+export function getEdgeParams(source: NodeRect, target: NodeRect): EdgeParams {
   const sourceCx = source.x + source.width / 2;
   const sourceCy = source.y + source.height / 2;
   const targetCx = target.x + target.width / 2;
