@@ -24,6 +24,18 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     readonly IEntityManager database = database;
     readonly IEmbeddingCapability embeddingCapability = embeddingCapability;
 
+    /// <summary>
+    /// computes the golden-angle auto-position offset for a new node given its id and an anchor position.
+    /// angle = (id * 2.4) mod (2π), radius = 80.
+    /// deterministic per id — same id always produces the same offset from the anchor.
+    /// </summary>
+    static (double X, double Y) ComputeAutoPosition(long nodeId, double anchorX, double anchorY)
+    {
+        const double radius = 80.0;
+        double angle = (nodeId * 2.4) % (2.0 * Math.PI);
+        return (anchorX + radius * Math.Cos(angle), anchorY + radius * Math.Sin(angle));
+    }
+
     /// <inheritdoc />
     public async Task<NodeDetails> CreateNode(NodeDetails node)
     {
@@ -42,11 +54,59 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                 Type = node.Type
             };
 
+        double insertX = node.X ?? 0.0;
+        double insertY = node.Y ?? 0.0;
         long nodeId = await database.Insert<Node>()
-                              .Columns(n => n.TypeId, n => n.Name, n => n.Status)
-                              .Values(type.Id, node.Name, node.Status)
+                              .Columns(n => n.TypeId, n => n.Name, n => n.Status, n => n.X, n => n.Y)
+                              .Values(type.Id, node.Name, node.Status, insertX, insertY)
                               .ReturnID()
                               .ExecuteAsync(transaction);
+
+        // create any requested links atomically with the node
+        long[] links = node.Links;
+        if (links?.Length > 0)
+        {
+            foreach (long targetId in links)
+            {
+                await database.Insert<NodeLink>()
+                              .Columns(l => l.SourceId, l => l.TargetId)
+                              .Values(nodeId, targetId)
+                              .ExecuteAsync(transaction);
+            }
+
+            // auto-position: only when caller did not explicitly set a position (both X and Y are 0 or absent)
+            if (insertX == 0.0 && insertY == 0.0)
+            {
+                // load positions of all linked targets in one query; preserve links-order tie-breaker
+                Dictionary<long, Node> targetById = [];
+                await foreach (Node t in database.Load<Node>(n => n.Id, n => n.X, n => n.Y)
+                                                  .Where(n => n.Id.In(links))
+                                                  .ExecuteEntitiesAsync())
+                {
+                    targetById[t.Id] = t;
+                }
+
+                Node anchor = null;
+                foreach (long linkId in links)
+                {
+                    if (targetById.TryGetValue(linkId, out Node t) && (t.X != 0.0 || t.Y != 0.0))
+                    {
+                        anchor = t;
+                        break;
+                    }
+                }
+
+                if (anchor != null)
+                {
+                    (double newX, double newY) = ComputeAutoPosition(nodeId, anchor.X, anchor.Y);
+                    await database.Update<Node>()
+                                  .Set(n => n.X == newX, n => n.Y == newY)
+                                  .Where(n => n.Id == nodeId)
+                                  .ExecuteAsync(transaction);
+                }
+            }
+        }
+
         transaction.Commit();
         return await GetNodeById(nodeId);
     }
