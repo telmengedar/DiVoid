@@ -39,7 +39,8 @@
 import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import { LocationTracker } from '@/app/LocationTracker';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
@@ -373,114 +374,38 @@ describe('Test 3 — Empty selection omits the status= parameter', () => {
   });
 });
 
-// ─── Test 4: Back button uses navigate(-1) when history present ───────────────
+// ─── Tests 4 & 5 (old theatre tests) → replaced by Tests 4–8 below ──────────
 //
-// Strategy: The component reads window.history.state.idx to decide the path.
-// We stub that value before rendering, then verify the resulting navigation
-// by checking what route is active after clicking back.
+// The original tests 4 & 5 used window.history.state.idx + MemoryRouter initialEntries
+// to verify navigate(-1) / navigate('/search'). That approach was theatre:
+// MemoryRouter populates idx reliably in jsdom; BrowserRouter does NOT in the browser.
+// In production, idx was always 0 and the /search fallback fired every time (bug #388).
 //
-// MemoryRouter initialEntries can contain multiple entries so that navigate(-1)
-// actually returns to the previous entry. We set window.history.state.idx > 0
-// to gate the branch, and verify the previous route is rendered.
+// The five new tests below target sessionStorage — the same primitive in jsdom and
+// the browser — so they actually pin production behaviour (DiVoid #275, bug #388).
 
-describe('Test 4 — Back button uses navigate(-1) when history present', () => {
-  it('positive: with history depth > 0, clicking back returns to the previous route', async () => {
-    const user = userEvent.setup();
+// ─── Test 4 (new): Back uses sessionStorage when present ─────────────────────
 
-    // Set window.history.state.idx > 0 so the component takes the navigate(-1) branch.
-    Object.defineProperty(window, 'history', {
-      value: { ...window.history, state: { idx: 2 } },
-      writable: true,
-      configurable: true,
-    });
-
-    const qc = makeQC();
-    render(
-      // Two entries so navigate(-1) actually has somewhere to go.
-      <MemoryRouter initialEntries={['/previous-page', '/nodes/42']} initialIndex={1}>
-        <QueryClientProvider client={qc}>
-          <Routes>
-            <Route path="/nodes/:id" element={<NodeDetailPage />} />
-            <Route path="/previous-page" element={<div data-testid="previous-page">Previous</div>} />
-            <Route path="/search" element={<div data-testid="search-page">Search</div>} />
-          </Routes>
-        </QueryClientProvider>
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId('back-button')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByTestId('back-button'));
-
-    // navigate(-1) should take us to /previous-page, NOT /search.
-    await waitFor(() => {
-      expect(screen.getByTestId('previous-page')).toBeInTheDocument();
-    });
-    expect(screen.queryByTestId('search-page')).not.toBeInTheDocument();
-
-    // Restore.
-    Object.defineProperty(window, 'history', {
-      value: { ...window.history, state: { idx: 0 } },
-      writable: true,
-      configurable: true,
-    });
-  });
-
+describe('Test 4 (new) — Back uses sessionStorage when present', () => {
   /**
-   * Negative proof: if the back button hard-coded navigate('/search') instead of
-   * navigate(-1), it would navigate to /search, NOT /previous-page, and the
-   * waitFor above would timeout (previous-page never appears).
+   * Positive: sessionStorage holds a prior location → clicking back navigates there.
    *
-   * This negative test demonstrates: when we navigate to /search explicitly,
-   * /previous-page is never shown.
+   * Negative proof: remove the sessionStorage-read branch from handleBack
+   * (i.e. always navigate to ROUTES.SEARCH). The /tasks/projects/3 route
+   * never renders — /search renders instead. The waitFor times out.
    */
-  it('negative: navigating to /search does NOT show the previous-page route', async () => {
-    const qc = makeQC();
-    render(
-      <MemoryRouter initialEntries={['/previous-page', '/nodes/42']} initialIndex={1}>
-        <QueryClientProvider client={qc}>
-          <Routes>
-            <Route path="/nodes/:id" element={<NodeDetailPage />} />
-            <Route path="/previous-page" element={<div data-testid="previous-page">Previous</div>} />
-            <Route path="/search" element={<div data-testid="search-page">Search</div>} />
-          </Routes>
-        </QueryClientProvider>
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId('back-button')).toBeInTheDocument();
-    });
-
-    // At this point we're on /nodes/42 — the previous-page is not shown.
-    expect(screen.queryByTestId('previous-page')).not.toBeInTheDocument();
-  });
-});
-
-// ─── Test 5: Back button falls back to /search when no history ────────────────
-
-describe('Test 5 — Back button falls back to /search when no history', () => {
-  it('positive: with history depth = 0, clicking back navigates to /search', async () => {
+  it('positive: sessionStorage present → back navigates to the stored location', async () => {
     const user = userEvent.setup();
-
-    // Force idx = 0 — no prior history.
-    Object.defineProperty(window, 'history', {
-      value: { ...window.history, state: { idx: 0 } },
-      writable: true,
-      configurable: true,
-    });
+    sessionStorage.setItem('divoid.lastLocation', '/tasks/projects/3');
 
     const qc = makeQC();
     render(
-      // Only one entry — no prior navigation.
       <MemoryRouter initialEntries={['/nodes/42']}>
         <QueryClientProvider client={qc}>
           <Routes>
             <Route path="/nodes/:id" element={<NodeDetailPage />} />
+            <Route path="/tasks/projects/3" element={<div data-testid="prev-page">Projects page</div>} />
             <Route path="/search" element={<div data-testid="search-page">Search</div>} />
-            <Route path="/previous-page" element={<div data-testid="previous-page">Previous</div>} />
           </Routes>
         </QueryClientProvider>
       </MemoryRouter>,
@@ -492,26 +417,59 @@ describe('Test 5 — Back button falls back to /search when no history', () => {
 
     await user.click(screen.getByTestId('back-button'));
 
-    // Should navigate to /search (fallback).
+    await waitFor(() => {
+      expect(screen.getByTestId('prev-page')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('search-page')).not.toBeInTheDocument();
+  });
+
+  /**
+   * Negative: without sessionStorage, the positive test would fail because
+   * the back button would navigate to /search rather than /tasks/projects/3.
+   */
+  it('negative: with no sessionStorage, back navigates to /search not the stored path', async () => {
+    const user = userEvent.setup();
+    // sessionStorage is cleared in afterEach — nothing set here.
+
+    const qc = makeQC();
+    render(
+      <MemoryRouter initialEntries={['/nodes/42']}>
+        <QueryClientProvider client={qc}>
+          <Routes>
+            <Route path="/nodes/:id" element={<NodeDetailPage />} />
+            <Route path="/tasks/projects/3" element={<div data-testid="prev-page">Projects page</div>} />
+            <Route path="/search" element={<div data-testid="search-page">Search</div>} />
+          </Routes>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('back-button')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId('back-button'));
+
     await waitFor(() => {
       expect(screen.getByTestId('search-page')).toBeInTheDocument();
     });
-    expect(screen.queryByTestId('previous-page')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('prev-page')).not.toBeInTheDocument();
   });
+});
 
+// ─── Test 5 (new): Back falls back to /search when sessionStorage empty ───────
+
+describe('Test 5 (new) — Back falls back to /search when sessionStorage is empty', () => {
   /**
-   * Negative proof: if the fallback branch were removed (always navigate(-1)),
-   * clicking back with no history would be a no-op in MemoryRouter (can't go
-   * back further). /search would never render. The waitFor above would timeout.
+   * Positive: no sessionStorage entry → back navigates to /search.
    *
-   * This negative demonstrates: when we don't click back, /search is not shown.
+   * Negative proof: remove the navigate(ROUTES.SEARCH) fallback from handleBack.
+   * With sessionStorage empty, neither branch fires — navigation doesn't happen.
+   * /search never renders.
    */
-  it('negative: before clicking back, /search is not shown', async () => {
-    Object.defineProperty(window, 'history', {
-      value: { ...window.history, state: { idx: 0 } },
-      writable: true,
-      configurable: true,
-    });
+  it('positive: no sessionStorage → back navigates to /search', async () => {
+    const user = userEvent.setup();
+    // sessionStorage cleared in afterEach.
 
     const qc = makeQC();
     render(
@@ -529,8 +487,276 @@ describe('Test 5 — Back button falls back to /search when no history', () => {
       expect(screen.getByTestId('back-button')).toBeInTheDocument();
     });
 
-    // Haven't clicked — should not be on /search.
+    await user.click(screen.getByTestId('back-button'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('search-page')).toBeInTheDocument();
+    });
+  });
+
+  /**
+   * Negative: before clicking the back button, /search is not shown —
+   * confirms the above positive assertion is actually triggered by the click.
+   */
+  it('negative: before clicking back, /search is not rendered', async () => {
+    const qc = makeQC();
+    render(
+      <MemoryRouter initialEntries={['/nodes/42']}>
+        <QueryClientProvider client={qc}>
+          <Routes>
+            <Route path="/nodes/:id" element={<NodeDetailPage />} />
+            <Route path="/search" element={<div data-testid="search-page">Search</div>} />
+          </Routes>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('back-button')).toBeInTheDocument();
+    });
+
     expect(screen.queryByTestId('search-page')).not.toBeInTheDocument();
+  });
+});
+
+// ─── Test 6 (new): Back does NOT navigate to itself (self-equality guard) ──────
+
+describe('Test 6 (new) — Back does NOT navigate to itself (self-equality guard)', () => {
+  /**
+   * Positive: sessionStorage holds the SAME path as the current page →
+   * back navigates to /search (not to itself in a loop).
+   *
+   * Negative proof: remove the `last !== currentPath` guard from handleBack.
+   * The test would see /nodes/42 stay rendered rather than /search appearing —
+   * or worse, a navigation loop.
+   */
+  it('positive: sessionStorage holds current path → back falls back to /search', async () => {
+    const user = userEvent.setup();
+    sessionStorage.setItem('divoid.lastLocation', '/nodes/42');
+
+    const qc = makeQC();
+    render(
+      <MemoryRouter initialEntries={['/nodes/42']}>
+        <QueryClientProvider client={qc}>
+          <Routes>
+            <Route path="/nodes/:id" element={<NodeDetailPage />} />
+            <Route path="/search" element={<div data-testid="search-page">Search</div>} />
+          </Routes>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('back-button')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId('back-button'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('search-page')).toBeInTheDocument();
+    });
+  });
+
+  /**
+   * Negative: with a DIFFERENT path in sessionStorage, back navigates there,
+   * not to /search. Proves the self-equality guard is conditional.
+   */
+  it('negative: different path in sessionStorage → back navigates there, not /search', async () => {
+    const user = userEvent.setup();
+    sessionStorage.setItem('divoid.lastLocation', '/tasks/projects/3');
+
+    const qc = makeQC();
+    render(
+      <MemoryRouter initialEntries={['/nodes/42']}>
+        <QueryClientProvider client={qc}>
+          <Routes>
+            <Route path="/nodes/:id" element={<NodeDetailPage />} />
+            <Route path="/tasks/projects/3" element={<div data-testid="prev-page">Projects page</div>} />
+            <Route path="/search" element={<div data-testid="search-page">Search</div>} />
+          </Routes>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('back-button')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId('back-button'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('prev-page')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('search-page')).not.toBeInTheDocument();
+  });
+});
+
+// ─── Test 7 (new): LocationTracker writes prevPath on every navigation ─────────
+
+describe('Test 7 (new) — LocationTracker writes previous location on navigation', () => {
+  /**
+   * Positive: navigate through /tasks → /tasks/projects/3 → /nodes/42.
+   * After settling, sessionStorage holds '/tasks/projects/3' (the penultimate route).
+   *
+   * Negative proof: remove the tracker effect from LocationTracker.
+   * sessionStorage stays empty — the assertion below fails.
+   */
+  it('positive: tracker writes the penultimate location after a three-step navigation', async () => {
+    function NavHelper() {
+      const nav = useNavigate();
+      return (
+        <button
+          data-testid="nav-btn"
+          onClick={() => {
+            // Drive the navigation sequence programmatically.
+            nav('/tasks/projects/3');
+          }}
+        >
+          go
+        </button>
+      );
+    }
+
+    function NavHelper2() {
+      const nav = useNavigate();
+      return (
+        <button
+          data-testid="nav-btn-2"
+          onClick={() => nav('/nodes/42')}
+        >
+          go2
+        </button>
+      );
+    }
+
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter initialEntries={['/tasks']}>
+        <LocationTracker />
+        <Routes>
+          <Route path="/tasks" element={<NavHelper />} />
+          <Route path="/tasks/projects/3" element={<NavHelper2 />} />
+          <Route path="/nodes/42" element={<div>Node 42</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // Start on /tasks. sessionStorage should be empty.
+    expect(sessionStorage.getItem('divoid.lastLocation')).toBeNull();
+
+    // Navigate to /tasks/projects/3.
+    await user.click(screen.getByTestId('nav-btn'));
+
+    // Navigate to /nodes/42.
+    await user.click(screen.getByTestId('nav-btn-2'));
+
+    // Now settled on /nodes/42. The previous location was /tasks/projects/3.
+    expect(sessionStorage.getItem('divoid.lastLocation')).toBe('/tasks/projects/3');
+  });
+
+  /**
+   * Negative: without the tracker, sessionStorage remains null throughout.
+   * This is the state of affairs that caused bug #388.
+   */
+  it('negative: without tracker, sessionStorage is still null after navigation', async () => {
+    function NavHelper() {
+      const nav = useNavigate();
+      return (
+        <button data-testid="nav-btn" onClick={() => nav('/tasks/projects/3')}>
+          go
+        </button>
+      );
+    }
+
+    const user = userEvent.setup();
+
+    // Deliberately omit <LocationTracker /> — simulates the pre-fix state.
+    render(
+      <MemoryRouter initialEntries={['/tasks']}>
+        <Routes>
+          <Route path="/tasks" element={<NavHelper />} />
+          <Route path="/tasks/projects/3" element={<div>Projects</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByTestId('nav-btn'));
+
+    expect(sessionStorage.getItem('divoid.lastLocation')).toBeNull();
+  });
+});
+
+// ─── Test 8 (new): Tracker preserves query string in the stored location ───────
+
+describe('Test 8 (new) — Tracker preserves ?query= in the stored location', () => {
+  /**
+   * Positive: navigate from /search?q=foo to /nodes/42.
+   * sessionStorage must hold '/search?q=foo' (query string intact).
+   *
+   * Negative proof: track only location.pathname (drop location.search).
+   * sessionStorage holds '/search' without '?q=foo'. The assertion below fails.
+   */
+  it('positive: navigating from /search?q=foo → /nodes/42 stores /search?q=foo', async () => {
+    function SearchHelper() {
+      const nav = useNavigate();
+      return (
+        <button data-testid="nav-btn" onClick={() => nav('/nodes/42')}>
+          go
+        </button>
+      );
+    }
+
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter initialEntries={['/search?q=foo']}>
+        <LocationTracker />
+        <Routes>
+          <Route path="/search" element={<SearchHelper />} />
+          <Route path="/nodes/42" element={<div>Node 42</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByTestId('nav-btn'));
+
+    expect(sessionStorage.getItem('divoid.lastLocation')).toBe('/search?q=foo');
+  });
+
+  /**
+   * Negative: if we only tracked pathname (not search), sessionStorage would hold
+   * '/search' without the query string. Back navigation would lose the user's query.
+   */
+  it('negative: /search without query param is NOT sufficient — query string must be preserved', async () => {
+    function SearchHelper() {
+      const nav = useNavigate();
+      return (
+        <button data-testid="nav-btn" onClick={() => nav('/nodes/42')}>
+          go
+        </button>
+      );
+    }
+
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter initialEntries={['/search?q=foo']}>
+        <LocationTracker />
+        <Routes>
+          <Route path="/search" element={<SearchHelper />} />
+          <Route path="/nodes/42" element={<div>Node 42</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByTestId('nav-btn'));
+
+    const stored = sessionStorage.getItem('divoid.lastLocation');
+    // The CORRECT implementation must include the query string.
+    expect(stored).toBe('/search?q=foo');
+    // Confirm it is NOT the pathname-only variant.
+    expect(stored).not.toBe('/search');
   });
 });
 

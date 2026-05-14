@@ -22,7 +22,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
@@ -321,24 +321,33 @@ export function NodeDetailPage() {
   const { id: idParam } = useParams<{ id: string }>();
   const nodeId = idParam ? parseInt(idParam, 10) : 0;
   const navigate = useNavigate();
+  const location = useLocation();
 
   /**
    * Navigate back to wherever the user came from.
-   * If there is no prior history entry (URL pasted directly, new tab),
-   * fall back to /search — the previous default.
    *
-   * Detection: window.history.state.idx is the depth counter that
-   * react-router-dom 7 / the browser maintains. A value > 0 means
-   * at least one prior entry exists in the session history stack.
+   * Detection: reads sessionStorage('divoid.lastLocation') written by
+   * LocationTracker in routes.tsx. This is a plain sessionStorage read —
+   * the same primitive in jsdom and the browser — unlike
+   * window.history.state.idx which is a react-router-dom 7 internal counter
+   * that is reliably populated under MemoryRouter (tests) but NOT under
+   * BrowserRouter (production). PR #55's fix fell into that trap.
+   *
+   * Self-equality guard: if sessionStorage holds the current path (e.g. the
+   * user navigated node→node and the last entry happens to be this node),
+   * fall back to /search to avoid a self-navigation loop.
+   *
+   * Bug #388.
    */
   const handleBack = useCallback(() => {
-    const historyIdx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
-    if (historyIdx > 0) {
-      navigate(-1);
+    const last = sessionStorage.getItem('divoid.lastLocation');
+    const currentPath = location.pathname + location.search;
+    if (last && last !== currentPath) {
+      navigate(last);
     } else {
       navigate(ROUTES.SEARCH);
     }
-  }, [navigate]);
+  }, [navigate, location.pathname, location.search]);
 
   const { data: node, isFetching, error } = useNode(nodeId);
   const { data: whoami } = useWhoami();

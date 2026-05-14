@@ -8,10 +8,15 @@
  *
  * Auth-gated routes are wrapped in ProtectedRoute.
  * Public routes (/callback, /logout) are never gated.
+ *
+ * LocationTracker: a side-effect-only component that writes the previous in-app
+ * location to sessionStorage('divoid.lastLocation') on every navigation.
+ * NodeDetailPage reads this key for its back button (bug #388).
  */
 
 import { lazy, Suspense } from 'react';
 import { Routes, Route } from 'react-router-dom';
+import { LocationTracker } from './LocationTracker';
 import { ProtectedRoute } from '@/features/auth/ProtectedRoute';
 import { Callback } from '@/features/auth/Callback';
 import { LogoutLanding } from '@/features/auth/LogoutLanding';
@@ -43,9 +48,11 @@ function RouteLoadingFallback() {
   );
 }
 
+
 export function AppRoutes() {
   return (
     <Suspense fallback={<RouteLoadingFallback />}>
+      <LocationTracker />
       <Routes>
         {/* ── Public routes (no auth required) ── */}
         <Route path={ROUTES.CALLBACK} element={<Callback />} />
