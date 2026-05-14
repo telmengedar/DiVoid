@@ -46,14 +46,15 @@
  */
 
 import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { BASE_URL } from '@/test/msw/handlers';
 import type { Page, NodeDetails } from '@/types/divoid';
+import { AppRoutes } from '@/app/routes';
 
 // ─── MSW server ───────────────────────────────────────────────────────────────
 
@@ -184,6 +185,17 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: v
 
 function makeQC() {
   return new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+}
+
+/**
+ * LocationCapture — mounts inside a Router and writes the current pathname to
+ * the provided snapshot object on every navigation.  The snapshot is a plain
+ * mutable object so callers can read `.value` after `waitFor`.
+ */
+function LocationCapture({ snapshot }: { snapshot: { value: string } }) {
+  const location = useLocation();
+  snapshot.value = location.pathname;
+  return null;
 }
 
 function renderTasksPage(initialPath: string) {
@@ -395,11 +407,12 @@ describe('Test 4 — Clicking a project pill navigates to /tasks/projects/:id', 
    */
   it('positive: click "Ocelot" pill → URL becomes /tasks/projects/4', async () => {
     const user = userEvent.setup();
-    let currentPath = '/tasks/projects/3';
+    const locationSnapshot = { value: '' };
 
     render(
       <MemoryRouter initialEntries={['/tasks/projects/3']}>
         <QueryClientProvider client={makeQC()}>
+          <LocationCapture snapshot={locationSnapshot} />
           <Routes>
             <Route path="/tasks/projects/:projectId" element={<TasksPageComponent />} />
           </Routes>
@@ -414,12 +427,10 @@ describe('Test 4 — Clicking a project pill navigates to /tasks/projects/:id', 
 
     await user.click(screen.getByTestId('project-pill-4'));
 
-    // After click, the route should update and the page remounts with projectId=4.
+    // After click the router must have navigated to /tasks/projects/4.
     await waitFor(() => {
-      // The task-list data-testid must still be present (navigation to new project).
-      expect(screen.getByTestId('task-list')).toBeInTheDocument();
+      expect(locationSnapshot.value).toBe('/tasks/projects/4');
     });
-    void currentPath; // suppress unused warning
   });
 
   /**
@@ -545,40 +556,36 @@ describe('Test 6 — Org change with mismatched project surfaces inline message'
 
 describe('Test 7 — /tasks/orgs/:orgId redirects to /tasks', () => {
   /**
-   * Positive: navigate to /tasks/orgs/2 → URL ends up at /tasks.
+   * Positive: navigate to /tasks/orgs/2 using the production AppRoutes → URL ends up at /tasks.
+   * This exercises the real <Navigate to="/tasks" replace /> at routes.tsx:122.
+   * Removing that Navigate from routes.tsx must make this test fail.
    */
-  it('positive: /tasks/orgs/2 redirects to /tasks', async () => {
-    let renderedPath = '';
-
-    function PathCapture() {
-      renderedPath = window.location?.pathname ?? '';
-      return <div data-testid="tasks-landing">tasks</div>;
-    }
+  it('positive: /tasks/orgs/2 redirects to /tasks (via production AppRoutes)', async () => {
+    const locationSnapshot = { value: '' };
 
     render(
       <MemoryRouter initialEntries={['/tasks/orgs/2']}>
         <QueryClientProvider client={makeQC()}>
-          <Routes>
-            <Route path="/tasks" element={<PathCapture />} />
-            <Route path="/tasks/orgs/:orgId" element={<Navigate to="/tasks" replace />} />
-            <Route path="/tasks/projects/:projectId" element={<TasksPageComponent />} />
-          </Routes>
+          <LocationCapture snapshot={locationSnapshot} />
+          <AppRoutes />
         </QueryClientProvider>
       </MemoryRouter>,
     );
 
+    // After the redirect fires the pathname must be /tasks.
     await waitFor(() => {
-      expect(screen.getByTestId('tasks-landing')).toBeInTheDocument();
+      expect(locationSnapshot.value).toBe('/tasks');
     });
   });
 
   /**
-   * Negative proof: without the <Navigate /> redirect, navigating to
-   * /tasks/orgs/2 would render TasksPage (or nothing if unmatched),
-   * not the /tasks landing.
-   * This test asserts that the /tasks landing IS shown after the redirect.
+   * Negative proof: without the <Navigate /> redirect in routes.tsx, navigating to
+   * /tasks/orgs/2 would stay at /tasks/orgs/2 (or render the unmatched fallback),
+   * NOT redirect to /tasks.
+   * Removing <Navigate to="/tasks" replace /> from routes.tsx:122 must cause the
+   * positive test above to fail with locationSnapshot.value === '/tasks/orgs/2'.
    */
-  it('negative: without redirect, /tasks/orgs/2 would render TasksPage not landing', async () => {
+  it('negative: without redirect, /tasks/orgs/2 stays at /tasks/orgs/2', async () => {
     // Simulate the pre-redirect state: /tasks/orgs/:orgId renders TasksPage directly.
     render(
       <MemoryRouter initialEntries={['/tasks/orgs/2']}>
