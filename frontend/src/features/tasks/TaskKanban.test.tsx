@@ -49,7 +49,7 @@ const tasksGroupFixture: Page<NodeDetails> = {
 };
 
 let capturedUrls: string[] = [];
-let capturedPatchBodies: unknown[] = [];
+let capturedPatchCalls: { id: number; body: unknown }[] = [];
 let patchShouldFail = false;
 
 const server = setupServer(
@@ -64,9 +64,9 @@ const server = setupServer(
     if (path) return HttpResponse.json(taskFixtures);
     return HttpResponse.json(emptyPage);
   }),
-  http.patch(`${BASE_URL}/nodes/:id`, async ({ request }) => {
+  http.patch(`${BASE_URL}/nodes/:id`, async ({ request, params }) => {
     const body = await request.json();
-    capturedPatchBodies.push(body);
+    capturedPatchCalls.push({ id: Number(params.id), body });
     if (patchShouldFail) {
       return HttpResponse.json({ code: 'error', text: 'Server error' }, { status: 500 });
     }
@@ -78,7 +78,7 @@ beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => {
   server.resetHandlers();
   capturedUrls = [];
-  capturedPatchBodies = [];
+  capturedPatchCalls = [];
   patchShouldFail = false;
   sessionStorage.clear();
   vi.clearAllMocks();
@@ -154,38 +154,6 @@ function renderWithProviders(ui: React.ReactElement, initialPath = '/') {
 }
 
 /**
- * Walks React fiber tree from a DOM node to find the nearest fiber
- * with a given prop key. Returns the prop value or undefined.
- *
- * PR #53 + #55 technique: instead of simulating real pointer events through
- * dnd-kit's sensor pipeline (fragile), we locate the DndContext's onDragEnd
- * handler and call it directly with synthetic {active, over} data.
- */
-function findFiberProp<T>(
-  domNode: Element,
-  propName: string,
-): T | undefined {
-  // Find the fiber key on the DOM node (React injects it).
-  const fiberKey = Object.keys(domNode).find(
-    (k) => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance'),
-  );
-  if (!fiberKey) return undefined;
-
-  let fiber = (domNode as unknown as Record<string, unknown>)[fiberKey] as {
-    memoizedProps?: Record<string, unknown>;
-    return?: unknown;
-  } | null;
-
-  while (fiber) {
-    if (fiber.memoizedProps && propName in fiber.memoizedProps) {
-      return fiber.memoizedProps[propName] as T;
-    }
-    fiber = fiber.return as typeof fiber;
-  }
-  return undefined;
-}
-
-/**
  * Finds the DndContext element in the DOM and extracts its onDragEnd handler
  * via the fiber-walking technique.
  */
@@ -226,17 +194,15 @@ function getDndContextOnDragEnd(
 // ─── Lazy imports ─────────────────────────────────────────────────────────────
 
 let TaskListView: typeof import('./TaskListView').TaskListView;
-let TaskKanbanBoard: typeof import('./TaskKanbanBoard').TaskKanbanBoard;
 let useKanbanColumns: typeof import('./useKanbanColumns').useKanbanColumns;
 
 beforeAll(async () => {
-  const [taskMod, boardMod, hookMod] = await Promise.all([
+  const [taskMod, , hookMod] = await Promise.all([
     import('./TaskListView'),
     import('./TaskKanbanBoard'),
     import('./useKanbanColumns'),
   ]);
   TaskListView = taskMod.TaskListView;
-  TaskKanbanBoard = boardMod.TaskKanbanBoard;
   useKanbanColumns = hookMod.useKanbanColumns;
 });
 
@@ -378,17 +344,20 @@ describe('Test 3 — Drag end fires PATCH with the column status', () => {
     });
 
     await waitFor(() => {
-      expect(capturedPatchBodies.length).toBeGreaterThan(0);
+      expect(capturedPatchCalls.length).toBeGreaterThan(0);
     });
 
-    expect(capturedPatchBodies[0]).toEqual([
-      { op: 'replace', path: '/status', value: 'in-progress' },
-    ]);
+    // Must assert BOTH the node id (URL) and the body — body-only would miss
+    // a stale-closure bug that PATCHes /nodes/0 with the correct body.
+    expect(capturedPatchCalls[0]).toEqual({
+      id: 30,
+      body: [{ op: 'replace', path: '/status', value: 'in-progress' }],
+    });
   });
 
   /**
    * Negative proof: if the onDragEnd handler does not dispatch the mutation,
-   * capturedPatchBodies stays empty.
+   * capturedPatchCalls stays empty.
    */
   it('negative: no drag → no PATCH fires', async () => {
     const user = userEvent.setup();
@@ -409,7 +378,7 @@ describe('Test 3 — Drag end fires PATCH with the column status', () => {
     // No drag dispatched.
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(capturedPatchBodies).toHaveLength(0);
+    expect(capturedPatchCalls).toHaveLength(0);
   });
 });
 
@@ -442,7 +411,7 @@ describe('Test 4 — Drop on same column is a no-op', () => {
 
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(capturedPatchBodies).toHaveLength(0);
+    expect(capturedPatchCalls).toHaveLength(0);
   });
 
   /**
@@ -474,7 +443,7 @@ describe('Test 4 — Drop on same column is a no-op', () => {
     });
 
     await waitFor(() => {
-      expect(capturedPatchBodies.length).toBeGreaterThan(0);
+      expect(capturedPatchCalls.length).toBeGreaterThan(0);
     });
   });
 });
@@ -583,7 +552,7 @@ describe('Test 6 — Optimistic state clears on PATCH success', () => {
 
     // Wait for PATCH to resolve and cache to invalidate + refetch.
     await waitFor(() => {
-      expect(capturedPatchBodies.length).toBeGreaterThan(0);
+      expect(capturedPatchCalls.length).toBeGreaterThan(0);
     });
 
     // After the refetch (taskFixtures: card 30 = 'open'), the override is cleared
@@ -680,7 +649,7 @@ describe('Test 7 — Optimistic state reverts on PATCH error + toast.error fires
     });
 
     await waitFor(() => {
-      expect(capturedPatchBodies.length).toBeGreaterThan(0);
+      expect(capturedPatchCalls.length).toBeGreaterThan(0);
     });
 
     expect(toastErrorMock).not.toHaveBeenCalled();
@@ -722,7 +691,7 @@ describe('Test 8 — View toggle persists to sessionStorage and survives remount
    * We verify: before any toggle, remount shows list view (not board).
    */
   it('negative: without toggling, remount shows list view (default)', async () => {
-    const { container, unmount } = renderWithProviders(<TaskListView projectId={20} />);
+    const { unmount } = renderWithProviders(<TaskListView projectId={20} />);
 
     await waitFor(() => {
       expect(screen.getByTestId('tasks-view-toggle')).toBeInTheDocument();
@@ -832,7 +801,7 @@ describe('Test 10 — PointerSensor activation distance respected', () => {
    *
    * The real activation constraint enforcement is verified by asserting no PATCH
    * is captured after a click (because onDragEnd's PATCH branch is the only path
-   * to capturedPatchBodies).
+   * to capturedPatchCalls).
    */
   it('positive: clicking a card does not fire PATCH and navigates to NODE_DETAIL', async () => {
     const user = userEvent.setup();
@@ -852,7 +821,7 @@ describe('Test 10 — PointerSensor activation distance respected', () => {
 
     // No PATCH should have fired from a click.
     await new Promise((r) => setTimeout(r, 50));
-    expect(capturedPatchBodies).toHaveLength(0);
+    expect(capturedPatchCalls).toHaveLength(0);
   });
 
   /**
@@ -880,7 +849,7 @@ describe('Test 10 — PointerSensor activation distance respected', () => {
     });
 
     await waitFor(() => {
-      expect(capturedPatchBodies.length).toBeGreaterThan(0);
+      expect(capturedPatchCalls.length).toBeGreaterThan(0);
     });
   });
 });

@@ -4,11 +4,18 @@
  * Responsibilities:
  *  - Owns DndContext with PointerSensor (distance:5) + KeyboardSensor.
  *  - Owns the optimistic-move Map<nodeId, TaskStatus>.
- *  - On drag end: writes optimistic override → fires usePatchNode PATCH.
+ *  - On drag end: writes optimistic override → fires PATCH via useApiClient directly.
  *  - On success: clears the override (cache invalidation delivers real status).
  *  - On error: clears override (revert) + toast.error.
  *  - Renders one TaskKanbanColumn per visible status via useKanbanColumns.
  *  - DragOverlay renders the dragged card cleanly without layout thrash.
+ *
+ * NOTE: We call useApiClient().patch() directly in handleDragEnd rather than
+ * usePatchNode(id) because usePatchNode binds id into a closure at hook-call time.
+ * setPatchTargetId(nodeId) only schedules the next render, so patchMutation on the
+ * current render was built with the OLD id (initially 0) — every drag would PATCH
+ * /nodes/0 → 404. Passing id at call time avoids this stale-closure trap entirely.
+ * The principled refactor (accept id at mutate() time) is tracked as DiVoid task #393.
  *
  * Task: DiVoid node #384
  */
@@ -26,9 +33,11 @@ import {
 } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
 import type { NodeDetails } from '@/types/divoid';
 import { TASK_STATUSES, type TaskStatus } from '@/features/nodes/schemas';
-import { usePatchNode } from '@/features/nodes/mutations';
+import { useApiClient } from '@/lib/useApiClient';
+import { API } from '@/lib/constants';
 import type { TaskFilterStatus } from './useTaskStatusFilter';
 import { useKanbanColumns } from './useKanbanColumns';
 import { TaskKanbanColumn } from './TaskKanbanColumn';
@@ -45,6 +54,11 @@ export function TaskKanbanBoard({ tasks, selectedStatuses }: TaskKanbanBoardProp
   );
   const [activeTask, setActiveTask] = useState<NodeDetails | null>(null);
 
+  // Use the API client and query client directly so the id is captured at
+  // call time (not at hook-call time) — avoids the stale-closure /nodes/0 trap.
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -58,15 +72,6 @@ export function TaskKanbanBoard({ tasks, selectedStatuses }: TaskKanbanBoardProp
     }),
   );
 
-  // usePatchNode requires a fixed id at hook call time; we use a mutable
-  // ref pattern via a callback that instantiates the mutation per node.
-  // However, React rules prohibit conditional hook calls, so we instead
-  // expose a generic patch factory approach. Since each drag resolves to
-  // exactly one node id, we track the "pending" id in state and call
-  // usePatchNode unconditionally with it (defaulting to 0 when idle).
-  const [patchTargetId, setPatchTargetId] = useState<number>(0);
-  const patchMutation = usePatchNode(patchTargetId);
-
   const columns = useKanbanColumns({ tasks, selectedStatuses, optimisticOverrides });
 
   const handleDragStart = useCallback(
@@ -78,7 +83,7 @@ export function TaskKanbanBoard({ tasks, selectedStatuses }: TaskKanbanBoardProp
   );
 
   const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
+    async (event: DragEndEvent) => {
       const { active, over } = event;
       setActiveTask(null);
 
@@ -103,39 +108,35 @@ export function TaskKanbanBoard({ tasks, selectedStatuses }: TaskKanbanBoardProp
       newOverrides.set(nodeId, targetStatus);
       setOptimisticOverrides(newOverrides);
 
-      // 2. Set the patch target id, then fire the mutation.
-      setPatchTargetId(nodeId);
-      patchMutation.mutate(
-        [{ op: 'replace', path: '/status', value: targetStatus }],
-        {
-          onSuccess: () => {
-            // Clear this override — the invalidate-refetch will deliver the
-            // canonical status. Keeping the override would cause a flicker.
-            setOptimisticOverrides((prev) => {
-              const next = new Map(prev);
-              next.delete(nodeId);
-              return next;
-            });
-          },
-          onError: (error) => {
-            // Revert: clear the override so the card returns to its real column.
-            setOptimisticOverrides((prev) => {
-              const next = new Map(prev);
-              next.delete(nodeId);
-              return next;
-            });
-            // Show the error (toastError is internal to usePatchNode, but we
-            // want an explicit contextual message here too).
-            const message =
-              error && typeof error === 'object' && 'text' in error
-                ? (error as { text: string }).text
-                : 'Failed to update task status.';
-            toast.error(message);
-          },
-        },
-      );
+      // 2. PATCH the node — id is known at call time, no stale-closure risk.
+      try {
+        await client.patch<void>(API.NODES.DETAIL(nodeId), [
+          { op: 'replace', path: '/status', value: targetStatus },
+        ]);
+        // Success: clear the override — cache invalidation delivers real status.
+        setOptimisticOverrides((prev) => {
+          const next = new Map(prev);
+          next.delete(nodeId);
+          return next;
+        });
+        // Invalidate so any list/linkedto views pick up the status change.
+        queryClient.invalidateQueries({ queryKey: ['nodes', 'list'] });
+        queryClient.invalidateQueries({ queryKey: ['nodes', 'linkedto'] });
+      } catch (error) {
+        // Revert: clear the override so the card returns to its real column.
+        setOptimisticOverrides((prev) => {
+          const next = new Map(prev);
+          next.delete(nodeId);
+          return next;
+        });
+        const message =
+          error && typeof error === 'object' && 'text' in error
+            ? (error as { text: string }).text
+            : 'Failed to update task status.';
+        toast.error(message);
+      }
     },
-    [tasks, optimisticOverrides, patchMutation],
+    [tasks, optimisticOverrides, client, queryClient],
   );
 
   return (
