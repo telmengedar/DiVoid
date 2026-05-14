@@ -15,7 +15,7 @@
  */
 
 import { lazy, Suspense } from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { LocationTracker } from './LocationTracker';
 import { ProtectedRoute } from '@/features/auth/ProtectedRoute';
 import { Callback } from '@/features/auth/Callback';
@@ -104,7 +104,8 @@ export function AppRoutes() {
           }
         />
 
-        {/* PR 5 step 1 — task drill-down: org → project → task list */}
+        {/* PR 5 — inline org + project pill rows (DiVoid task #391) */}
+        {/* /tasks — empty-state landing with pill rows */}
         <Route
           path={ROUTES.TASKS}
           element={
@@ -115,16 +116,12 @@ export function AppRoutes() {
             </ProtectedRoute>
           }
         />
+        {/* /tasks/orgs/:orgId — legacy drill-down URL; redirect to /tasks */}
         <Route
           path="/tasks/orgs/:orgId"
-          element={
-            <ProtectedRoute>
-              <AppShell>
-                <TasksPage />
-              </AppShell>
-            </ProtectedRoute>
-          }
+          element={<Navigate to="/tasks" replace />}
         />
+        {/* /tasks/projects/:projectId — canonical task list URL */}
         <Route
           path="/tasks/projects/:projectId"
           element={

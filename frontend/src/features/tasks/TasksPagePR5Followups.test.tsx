@@ -23,9 +23,9 @@
  *    Positive: history depth = 0 → navigate('/search') is called.
  *    Negative: remove fallback → navigate('/search') is NOT called.
  *
- * 6. Create-task button is only on TaskListView, not OrgListView or ProjectListView.
- *    Positive: TaskListView has the button; OrgListView and ProjectListView do not.
- *    Negative: lifting button to TasksPage → it appears in OrgListView and ProjectListView.
+ * 6. Create-task button is only on TaskListView, not OrgPillRow or ProjectPillRow.
+ *    Positive: TaskListView has the button; OrgPillRow and ProjectPillRow do not.
+ *    Negative: lifting button to TasksPage → it appears in OrgPillRow and ProjectPillRow.
  *
  * 7. Create-task dialog pre-populates type=task, status=new, links=[tasksGroupId].
  *    Positive: submit form → POST body has type=task, status=new, then link to group.
@@ -216,20 +216,20 @@ function renderWithProviders(ui: React.ReactElement, initialPath = '/') {
 // ─── Lazy imports (mocks must be registered before import) ────────────────────
 
 let TaskListView: typeof import('./TaskListView').TaskListView;
-let OrgListView: typeof import('./OrgListView').OrgListView;
-let ProjectListView: typeof import('./ProjectListView').ProjectListView;
+let OrgPillRow: typeof import('./OrgPillRow').OrgPillRow;
+let ProjectPillRow: typeof import('./ProjectPillRow').ProjectPillRow;
 let NodeDetailPage: typeof import('@/features/nodes/NodeDetailPage').NodeDetailPage;
 
 beforeAll(async () => {
-  const [taskMod, orgMod, projMod, detailMod] = await Promise.all([
+  const [taskMod, orgPillMod, projPillMod, detailMod] = await Promise.all([
     import('./TaskListView'),
-    import('./OrgListView'),
-    import('./ProjectListView'),
+    import('./OrgPillRow'),
+    import('./ProjectPillRow'),
     import('@/features/nodes/NodeDetailPage'),
   ]);
   TaskListView = taskMod.TaskListView;
-  OrgListView = orgMod.OrgListView;
-  ProjectListView = projMod.ProjectListView;
+  OrgPillRow = orgPillMod.OrgPillRow;
+  ProjectPillRow = projPillMod.ProjectPillRow;
   NodeDetailPage = detailMod.NodeDetailPage;
 });
 
@@ -763,7 +763,7 @@ describe('Test 8 (new) — Tracker preserves ?query= in the stored location', ()
 // ─── Test 6: + New task button is only on TaskListView ────────────────────────
 
 describe('Test 6 — + New task button is only on TaskListView', () => {
-  it('positive: TaskListView has the New task button; OrgListView and ProjectListView do not', async () => {
+  it('positive: TaskListView has the New task button; OrgPillRow and ProjectPillRow do not', async () => {
     // TaskListView has the button.
     const { unmount: unmountTask } = renderWithProviders(<TaskListView projectId={20} />);
 
@@ -772,36 +772,32 @@ describe('Test 6 — + New task button is only on TaskListView', () => {
     });
     unmountTask();
 
-    // OrgListView does NOT have the button.
-    renderWithProviders(<OrgListView />);
+    // OrgPillRow does NOT have the button.
+    renderWithProviders(<OrgPillRow selectedOrgId={undefined} onOrgSelect={() => {}} />);
     await waitFor(() => {
-      expect(screen.getByText('Mamgo')).toBeInTheDocument();
+      expect(screen.getByTestId('org-pill-row')).toBeInTheDocument();
     });
     expect(screen.queryByTestId('new-task-button')).not.toBeInTheDocument();
   });
 
-  it('positive: ProjectListView also does not have the New task button', async () => {
-    renderWithProviders(<ProjectListView orgId={10} />);
+  it('positive: ProjectPillRow also does not have the New task button', async () => {
+    renderWithProviders(<ProjectPillRow orgId={10} selectedProjectId={undefined} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Backend')).toBeInTheDocument();
+      expect(screen.getByTestId('project-pill-row')).toBeInTheDocument();
     });
 
     expect(screen.queryByTestId('new-task-button')).not.toBeInTheDocument();
   });
 
   /**
-   * Negative proof: if the button were lifted to TasksPage (so it appeared in
-   * all views), rendering OrgListView would still not show it because we're
-   * rendering OrgListView directly. But if a wrapper added the button above
-   * OrgListView, we'd need a page-level test.
-   *
-   * This negative confirms: data-testid="new-task-button" is absent on OrgListView.
+   * Negative proof: OrgPillRow cannot accidentally contain the New task button.
+   * The button belongs only in TaskListView.
    */
-  it('negative: OrgListView cannot accidentally contain the New task button', async () => {
-    renderWithProviders(<OrgListView />);
+  it('negative: OrgPillRow cannot accidentally contain the New task button', async () => {
+    renderWithProviders(<OrgPillRow selectedOrgId={undefined} onOrgSelect={() => {}} />);
     await waitFor(() => {
-      expect(screen.getByText('Mamgo')).toBeInTheDocument();
+      expect(screen.getByTestId('org-pill-row')).toBeInTheDocument();
     });
     // Must NOT appear.
     expect(screen.queryByTestId('new-task-button')).toBeNull();
