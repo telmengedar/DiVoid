@@ -90,7 +90,7 @@ const server = setupServer(
   http.get(`${BASE_URL}/users/me`, () =>
     HttpResponse.json({
       id: 1, name: 'Toni', email: 'toni@mamgo.io', enabled: true,
-      createdAt: '2026-01-01T00:00:00Z', permissions: ['read', 'write'],
+      createdAt: '2026-01-01T00:00:00Z', permissions: ['read', 'write'], homeNodeId: null,
     }),
   ),
   http.get(`${BASE_URL}/nodes`, ({ request }) => {

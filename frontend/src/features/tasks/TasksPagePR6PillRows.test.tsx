@@ -129,7 +129,7 @@ const server = setupServer(
     return HttpResponse.json({ code: 'notfound', text: 'not found' }, { status: 404 });
   }),
   http.get(`${BASE_URL}/users/me`, () =>
-    HttpResponse.json({ id: 1, name: 'Toni', email: 'toni@mamgo.io', enabled: true, createdAt: '2026-01-01T00:00:00Z', permissions: ['read', 'write'] }),
+    HttpResponse.json({ id: 1, name: 'Toni', email: 'toni@mamgo.io', enabled: true, createdAt: '2026-01-01T00:00:00Z', permissions: ['read', 'write'], homeNodeId: null }),
   ),
 );
 

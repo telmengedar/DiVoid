@@ -4,9 +4,14 @@
  * Data: useNodeListLinkedTo(selectedOrgId, { type: ['project'], sort: 'name' }).
  * Default-selected = the current projectId from the URL.
  *
+ * When `homeProjectIds` is provided (a Set of project ids), only projects
+ * whose ids are in the set are rendered — this is the client-side intersection
+ * of "linked to selected org" AND "linked to home node" (option B from #400).
+ * When `homeProjectIds` is null/undefined, all org-linked projects are shown.
+ *
  * Clicking a pill navigates to /tasks/projects/:id.
  *
- * Task: DiVoid node #391
+ * Task: DiVoid node #391, #400
  */
 
 import { useNavigate } from 'react-router-dom';
@@ -19,9 +24,15 @@ interface ProjectPillRowProps {
   orgId: number;
   /** The project pill that should appear selected. */
   selectedProjectId: number | undefined;
+  /**
+   * When provided, only projects whose ids are in this set are shown.
+   * Client-side intersection of org-linked + home-node-linked projects.
+   * null/undefined = no filtering (show all org projects).
+   */
+  homeProjectIds?: Set<number> | null;
 }
 
-export function ProjectPillRow({ orgId, selectedProjectId }: ProjectPillRowProps) {
+export function ProjectPillRow({ orgId, selectedProjectId, homeProjectIds }: ProjectPillRowProps) {
   const navigate = useNavigate();
   const { data, isLoading, isError } = useNodeListLinkedTo(orgId, {
     type: ['project'],
@@ -40,7 +51,13 @@ export function ProjectPillRow({ orgId, selectedProjectId }: ProjectPillRowProps
     );
   }
 
-  const projects: NodeDetails[] = data?.result ?? [];
+  const allProjects: NodeDetails[] = data?.result ?? [];
+
+  // Apply home-node intersection filter in-render when set is provided.
+  const projects =
+    homeProjectIds != null
+      ? allProjects.filter((p) => homeProjectIds.has(p.id))
+      : allProjects;
 
   return (
     <div
