@@ -129,9 +129,13 @@ export function TaskKanbanBoard({ tasks, selectedStatuses }: TaskKanbanBoardProp
           next.delete(nodeId);
           return next;
         });
-        // Invalidate so any list/linkedto views pick up the status change.
-        queryClient.invalidateQueries({ queryKey: ['nodes', 'list'] });
-        queryClient.invalidateQueries({ queryKey: ['nodes', 'linkedto'] });
+        // Invalidate the entire 'nodes' prefix — list, linkedto, path, detail — so
+        // ALL views (including the path-query that backs this Kanban) pick up the
+        // new status. TanStack matches by prefix; ~10 queries in practice. Cheap.
+        // Bug #411: the old narrow invalidations ['nodes','list'] + ['nodes','linkedto']
+        // missed the path-query key ['nodes','path',...] used by useNodePath, leaving
+        // the cache stale and snapping the card back to its pre-drag column.
+        queryClient.invalidateQueries({ queryKey: ['nodes'] });
       } catch (error) {
         // Revert: clear the override so the card returns to its real column.
         setOptimisticOverrides((prev) => {
