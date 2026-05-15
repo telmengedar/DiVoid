@@ -35,4 +35,11 @@ public class UserDetails {
     /// Allowed values: admin, write, read.
     /// </summary>
     public string[] Permissions { get; set; }
+
+    /// <summary>
+    /// optional id of the user's "home node" — the graph anchor used by the
+    /// frontend to filter selectors to the user's working set.
+    /// Null when not set.
+    /// </summary>
+    public long? HomeNodeId { get; set; }
 }

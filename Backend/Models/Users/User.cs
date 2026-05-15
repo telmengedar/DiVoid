@@ -49,4 +49,13 @@ public class User {
     [AllowPatch]
     [JsonColumn]
     public string Permissions { get; set; }
+
+    /// <summary>
+    /// Optional id of the user's "home node" — the graph anchor used by the
+    /// frontend to filter selectors (e.g. orgs / projects pill rows) to the
+    /// user's working set. Pure frontend hint; backend does NOT enforce
+    /// visibility based on this value.
+    /// </summary>
+    [AllowPatch]
+    public long? HomeNodeId { get; set; }
 }

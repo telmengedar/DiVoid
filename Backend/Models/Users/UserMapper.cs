@@ -34,5 +34,8 @@ public class UserMapper : FieldMapper<UserDetails, User> {
         yield return new FieldMapping<UserDetails, string>("permissions",
                                                            u => (string)(object)u.Permissions,
                                                            (u, v) => u.Permissions = string.IsNullOrEmpty(v) ? [] : Json.Read<string[]>(v) ?? []);
+        yield return new FieldMapping<UserDetails, long?>("homenodeid",
+                                                          u => u.HomeNodeId,
+                                                          (u, v) => u.HomeNodeId = v);
     }
 }
