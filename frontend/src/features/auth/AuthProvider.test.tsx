@@ -50,11 +50,18 @@ vi.mock('@/lib/constants', () => ({
 
 // Mock react-oidc-context so the provider renders without attempting real
 // Keycloak discovery (network) or triggering auth redirects in jsdom.
+// events must be present because DiVoidAuthEventWatcher wires event handlers.
 vi.mock('react-oidc-context', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useAuth: vi.fn(() => ({
     isAuthenticated: false,
     user: undefined,
+    events: {
+      addSilentRenewError: vi.fn(() => () => {}),
+      addAccessTokenExpired: vi.fn(() => () => {}),
+      addUserSignedOut: vi.fn(() => () => {}),
+      addUserLoaded: vi.fn(() => () => {}),
+    },
   })),
 }));
 

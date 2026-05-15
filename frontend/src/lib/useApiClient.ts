@@ -21,14 +21,22 @@
  *       auth.user?.access_token during render, which would consume
  *       mockReturnValueOnce() calls in unit tests before the fetch runs.
  *
+ * Fix (b) — DiVoid bug #403:
+ *   The signinRedirect closure reads terminalAuthFailure from a ref. When true,
+ *   it is a no-op: the session is conclusively dead and ProtectedRoute will fire
+ *   a single redirect. This collapses the N-concurrent-query amplification where
+ *   each in-flight TanStack Query independently calls signinRedirect on 401.
+ *
  * Design: docs/architecture/frontend-bootstrap.md §5.4
  * Fixes: DiVoid bug #257 — per-render reconstruction looped.
+ *        DiVoid bug #403 — concurrent 401s each called signinRedirect independently.
  */
 
 import { useMemo, useRef } from 'react';
 import { useAuth } from 'react-oidc-context';
 import { createApiClient } from '@/lib/api';
 import { API_BASE_URL } from '@/lib/constants';
+import { useDiVoidAuthContext } from '@/features/auth/AuthProvider';
 import type { ApiClient } from '@/lib/api';
 import type { AuthContextProps } from 'react-oidc-context';
 
@@ -42,12 +50,18 @@ import type { AuthContextProps } from 'react-oidc-context';
  */
 export function useApiClient(): ApiClient {
   const auth = useAuth();
+  const { terminalAuthFailure } = useDiVoidAuthContext();
 
   // Keep a mutable ref to the latest auth object so the stable closures
   // below can always read the freshest token and callables without
   // needing to be recreated.
   const authRef = useRef<AuthContextProps>(auth);
   authRef.current = auth;
+
+  // Keep a mutable ref to the latest terminalAuthFailure flag so the stable
+  // signinRedirect closure can check it without being recreated on each change.
+  const terminalRef = useRef<boolean>(terminalAuthFailure);
+  terminalRef.current = terminalAuthFailure;
 
   // Create the client exactly once. The three closures delegate to authRef
   // so they are always up-to-date without recomputing the memo.
@@ -56,11 +70,17 @@ export function useApiClient(): ApiClient {
       createApiClient(
         () => authRef.current.user?.access_token,
         () => authRef.current.signinSilent(),
-        () => authRef.current.signinRedirect(),
+        () => {
+          // Short-circuit: when the session is conclusively dead, do not call
+          // signinRedirect from each concurrent in-flight query. ProtectedRoute
+          // will fire one redirect via its own useEffect guard (bug #403 fix a).
+          if (terminalRef.current) return;
+          authRef.current.signinRedirect();
+        },
         API_BASE_URL,
       ),
     // Empty deps: client reference is intentionally stable for the lifetime
-    // of the component. Freshness is handled by authRef.
+    // of the component. Freshness is handled by authRef and terminalRef.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
