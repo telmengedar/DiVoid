@@ -23,7 +23,7 @@ import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { BASE_URL } from '@/test/msw/handlers';
@@ -150,6 +150,27 @@ function LocationCapture({ snapshot }: { snapshot: { value: string } }) {
   return null;
 }
 
+/**
+ * NodeListObserver — active subscriber for a ['nodes', 'list', key] query.
+ *
+ * Used in W2-Test 1 to verify that broad ['nodes'] prefix invalidation fires.
+ * Because TanStack Query only refetches queries that have active subscribers,
+ * we mount this component alongside WikiContentView so the sibling query
+ * stays active. When invalidateQueries({queryKey: ['nodes']}) fires, the
+ * broad prefix match marks this query stale and triggers a refetch — the
+ * queryFn runs again and increments the counter tracked by the test.
+ */
+function NodeListObserver({
+  queryKey,
+  queryFn,
+}: {
+  queryKey: readonly unknown[];
+  queryFn: () => Promise<unknown>;
+}) {
+  useQuery({ queryKey: queryKey as unknown[], queryFn, staleTime: 0 });
+  return null;
+}
+
 // Lazy handles — imported after mocks are registered.
 let WikiContentViewComponent: typeof import('./WikiContentView').WikiContentView;
 let WikiLayoutComponent: typeof import('./WikiLayout').WikiLayout;
@@ -165,21 +186,33 @@ beforeAll(async () => {
 
 // ─── W2-Test 1 — Edit-and-save round-trip ─────────────────────────────────────
 //
-// Substitution failure: remove `queryClient.invalidateQueries({queryKey: ['nodes']})`
-// from WikiMarkdownEditor.handleSave → after save, the MSW re-fetch returns old
-// content → rendered markdown still shows "Original content." →
-// waitFor 'Updated content.' times out with:
-//   AssertionError: expected the element to be found but it wasn't
-//   (Unable to find element with text: /Updated content\./)
+// This test pins TWO things:
 //
-// Also: remove the `mutation.mutate(...)` call from handleSave entirely →
-// POST /content is never sent → contentBody never updates →
-// same waitFor failure.
+// 1. The mutation fires: remove `mutation.mutate(...)` from handleSave →
+//    POST /content is never sent → capturedContentBody stays '' →
+//    `expect(capturedContentBody).toContain('Updated content.')` fails with:
+//      AssertionError: expected '' to contain 'Updated content.'
+//
+// 2. The broad ['nodes'] invalidation fires (Section 8.2):
+//    WikiContentView passes extraInvalidationKeys={[['nodes']]} to
+//    MarkdownEditorSurface, so MarkdownEditorSurface.handleSave calls
+//    queryClient.invalidateQueries({queryKey: ['nodes']}) in onSuccess.
+//    This broad invalidation refetches the sibling ['nodes'] list query that
+//    the test has pre-seeded with a QueryClient.prefetchQuery call.
+//
+//    Substitution: pass extraInvalidationKeys={[]} (empty) instead →
+//    only the narrow nodeContentQueryKey(42) fires (from useUploadContent's
+//    built-in onSuccess) but NOT the broad ['nodes'] prefix →
+//    the sibling list query is NOT refetched →
+//    listFetchCount stays 1 (initial prefetch only) →
+//    `expect(listFetchCount).toBeGreaterThan(1)` fails with:
+//      AssertionError: expected 1 to be above 1
 
 describe('W2-Test 1 — edit-and-save round-trip', () => {
-  it('positive: click Edit, change textarea, click Save → MSW captures POST /content with new body, rendered markdown updates', async () => {
+  it('positive: click Edit, change textarea, click Save → POST /content fires, rendered markdown updates, broad ["nodes"] invalidation refetches sibling list query', async () => {
     let capturedContentBody = '';
-    let fetchCount = 0;
+    let contentFetchCount = 0;
+    let siblingFetchCount = 0;
 
     server.use(
       http.post(`${BASE_URL}/nodes/42/content`, async ({ request }) => {
@@ -187,8 +220,8 @@ describe('W2-Test 1 — edit-and-save round-trip', () => {
         return new HttpResponse(null, { status: 200 });
       }),
       http.get(`${BASE_URL}/nodes/42/content`, () => {
-        fetchCount++;
-        if (fetchCount === 1) {
+        contentFetchCount++;
+        if (contentFetchCount === 1) {
           return new HttpResponse('# Hello Wiki\n\nOriginal content.', {
             headers: { 'Content-Type': 'text/markdown; charset=utf-8' },
           });
@@ -200,24 +233,44 @@ describe('W2-Test 1 — edit-and-save round-trip', () => {
       }),
     );
 
+    // Sibling queryFn — tracked by the NodeListObserver active subscriber.
+    // When invalidateQueries({queryKey: ['nodes']}) fires (the broad ['nodes']
+    // prefix), TanStack Query marks all matching keys stale, including
+    // ['nodes', 'list', 'wiki-sibling'], and refetches active subscribers.
+    // siblingFetchCount will advance past its initial value only if the broad
+    // invalidation fires (narrow nodeContentQueryKey(42) does NOT match
+    // ['nodes', 'list', 'wiki-sibling']).
+    const siblingQueryKey = ['nodes', 'list', 'wiki-sibling'] as const;
+    const siblingQueryFn = async () => {
+      siblingFetchCount++;
+      return emptyPage;
+    };
+
     render(
       <MemoryRouter>
         <QueryClientProvider client={makeQC()}>
+          {/* Active subscriber — must be inside the same QueryClientProvider */}
+          <NodeListObserver queryKey={siblingQueryKey} queryFn={siblingQueryFn} />
           <WikiContentViewComponent node={nodeWithMarkdown} />
         </QueryClientProvider>
       </MemoryRouter>,
     );
 
-    // Wait for initial content to render.
+    // Wait for initial content to render and sibling query to settle.
     await waitFor(() => {
       expect(screen.getByText('Original content.')).toBeInTheDocument();
     });
+    await waitFor(() => {
+      expect(siblingFetchCount).toBeGreaterThan(0);
+    });
+
+    const siblingCountBeforeSave = siblingFetchCount;
 
     // Click the Edit toggle.
     const editBtn = screen.getByTestId('wiki-edit-btn');
     await userEvent.click(editBtn);
 
-    // Textarea is now visible with initial content.
+    // Textarea is now visible.
     const textarea = screen.getByTestId('wiki-editor-textarea') as HTMLTextAreaElement;
     expect(textarea).toBeInTheDocument();
 
@@ -229,13 +282,29 @@ describe('W2-Test 1 — edit-and-save round-trip', () => {
     const saveBtn = screen.getByTestId('wiki-editor-save');
     await userEvent.click(saveBtn);
 
-    // MSW captures the POST with the new body (load-bearing: Section 13.2 — checks call args).
+    // Load-bearing pin 1: MSW captures the POST with the new body.
     await waitFor(() => {
       expect(capturedContentBody).toContain('Updated content.');
     });
 
-    // After broad ['nodes'] invalidation + refetch, rendered markdown shows updated content.
-    // This pins the cache outcome (Section 8.4) — not just the spy call.
+    // Load-bearing pin 2 (Section 8.2 — broad ['nodes'] invalidation):
+    // WikiContentView passes extraInvalidationKeys={[['nodes']]} to
+    // MarkdownEditorSurface. After save, the broad prefix invalidation fires
+    // and refetches the active sibling subscriber. siblingFetchCount must
+    // advance past the pre-save value.
+    //
+    // Substitution: pass extraInvalidationKeys={[]} instead →
+    // only narrow nodeContentQueryKey(42) fires (from useUploadContent) →
+    // sibling ['nodes', 'list', 'wiki-sibling'] is NOT invalidated →
+    // siblingFetchCount stays at siblingCountBeforeSave →
+    // this assertion fails with: expected N to be above N
+    await waitFor(() => {
+      expect(siblingFetchCount).toBeGreaterThan(siblingCountBeforeSave);
+    });
+
+    // Load-bearing pin 3 (Section 8.4 — rendered content updates):
+    // After broad + narrow invalidation + content refetch, rendered markdown
+    // shows the updated text.
     await waitFor(() => {
       expect(screen.getByText('Updated content.')).toBeInTheDocument();
     });
