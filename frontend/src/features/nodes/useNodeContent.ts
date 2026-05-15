@@ -30,10 +30,20 @@ export function nodeContentQueryKey(id: number) {
 /**
  * Fetches the content blob for a node as a UTF-8 string.
  * Disabled when `id` is 0 or falsy or when not authenticated.
+ *
+ * Pass `options.enabled = false` to suppress the fetch (e.g. when the node
+ * has no contentType and the backend would return an error). The default
+ * behaviour (enabled = true) is unchanged so existing callers are unaffected.
+ *
+ * Empty-content gating (task #294): callers should pass
+ *   `options: { enabled: isTextShaped(node.contentType) }`
+ * so the hook never fires for nodes with no text-shaped content.
  */
-export function useNodeContent(id: number) {
+export function useNodeContent(id: number, options?: { enabled?: boolean }) {
   const auth = useAuth();
   const client = useApiClient();
+
+  const callerEnabled = options?.enabled ?? true;
 
   return useQuery<string>({
     queryKey: nodeContentQueryKey(id),
@@ -41,7 +51,7 @@ export function useNodeContent(id: number) {
       const response = await client.fetchRaw(API.NODES.CONTENT(id), signal);
       return response.text();
     },
-    enabled: auth.isAuthenticated && id > 0,
+    enabled: auth.isAuthenticated && id > 0 && callerEnabled,
     staleTime: 5 * 60_000,
   });
 }

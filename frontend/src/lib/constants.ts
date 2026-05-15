@@ -44,6 +44,10 @@ export const ROUTES = {
   TASKS_PROJECT: (projectId: number) => `/tasks/projects/${projectId}`,
   /** @deprecated Use TASKS_ORG / TASKS_PROJECT for the drill-down flow. */
   PROJECT_TASKS: (projectId: number) => `/tasks/${projectId}`,
+  /** Wiki entry point — redirects to home node or first node. */
+  WIKI: '/wiki',
+  /** Wiki drill-down: view and browse a specific node as wiki article. */
+  WIKI_NODE: (id: number) => `/wiki/${id}`,
 } as const;
 
 /** DiVoid API endpoint paths (relative to API_BASE_URL). */

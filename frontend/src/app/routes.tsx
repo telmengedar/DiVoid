@@ -32,6 +32,14 @@ const TasksPage = lazy(() =>
   import('@/features/tasks/TasksPage').then((m) => ({ default: m.TasksPage })),
 );
 
+// Wiki W1 routes (task #413).
+const WikiPage = lazy(() =>
+  import('@/features/wiki/WikiPage').then((m) => ({ default: m.WikiPage })),
+);
+const WikiLayout = lazy(() =>
+  import('@/features/wiki/WikiLayout').then((m) => ({ default: m.WikiLayout })),
+);
+
 // PR 2 routes — search + node detail.
 const SearchPage = lazy(() =>
   import('@/features/nodes/SearchPage').then((m) => ({ default: m.SearchPage })),
@@ -128,6 +136,30 @@ export function AppRoutes() {
             <ProtectedRoute>
               <AppShell>
                 <TasksPage />
+              </AppShell>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Wiki W1 (task #413) — read-only wiki surface */}
+        {/* /wiki — entry redirect (home node or first node) */}
+        <Route
+          path={ROUTES.WIKI}
+          element={
+            <ProtectedRoute>
+              <AppShell>
+                <WikiPage />
+              </AppShell>
+            </ProtectedRoute>
+          }
+        />
+        {/* /wiki/:id — three-column wiki article view */}
+        <Route
+          path="/wiki/:id"
+          element={
+            <ProtectedRoute>
+              <AppShell>
+                <WikiLayout />
               </AppShell>
             </ProtectedRoute>
           }

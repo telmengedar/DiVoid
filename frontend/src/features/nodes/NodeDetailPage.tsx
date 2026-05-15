@@ -38,6 +38,7 @@ import { LinkNodeDialog } from './LinkNodeDialog';
 import { ContentUploadZone } from './ContentUploadZone';
 import { MarkdownEditorSurface, isTextShaped } from './MarkdownEditorSurface';
 import { NodeResultTable } from '@/components/common/NodeResultTable';
+import { StatusBadge } from '@/components/common/StatusBadge';
 import { DivoidApiError } from '@/types/divoid';
 import type { NodeDetails } from '@/types/divoid';
 import { ROUTES } from '@/lib/constants';
@@ -54,27 +55,6 @@ function MetadataRow({ label, value }: { label: string; value: React.ReactNode }
   );
 }
 
-function StatusBadge({ status }: { status: string | null }) {
-  if (!status) return <span className="text-muted-foreground">—</span>;
-
-  const colorMap: Record<string, string> = {
-    open: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400',
-    'in-progress': 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400',
-    closed: 'bg-muted text-muted-foreground',
-    new: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400',
-    fixed: 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400',
-  };
-
-  const classes =
-    colorMap[status] ?? 'bg-muted text-muted-foreground';
-
-  return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${classes}`}>
-      {status}
-    </span>
-  );
-}
-
 // ─── Content region ───────────────────────────────────────────────────────────
 
 interface ContentRegionProps {
@@ -86,7 +66,7 @@ interface ContentRegionProps {
 type ContentMode = 'read' | 'edit';
 
 function ContentRegion({ nodeId, contentType, canWrite }: ContentRegionProps) {
-  const { data: content, isFetching, error } = useNodeContent(nodeId);
+  const { data: content, isFetching, error } = useNodeContent(nodeId, { enabled: isTextShaped(contentType) });
   const [mode, setMode] = useState<ContentMode>('read');
   const [showUpload, setShowUpload] = useState(false);
 
