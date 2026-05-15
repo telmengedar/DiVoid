@@ -372,9 +372,10 @@ describe('Test 4 — WikiContentView does NOT fetch /content for empty-content n
       </MemoryRouter>,
     );
 
-    // Placeholder renders immediately.
-    expect(screen.getByTestId('wiki-no-content')).toBeInTheDocument();
-    expect(screen.getByTestId('wiki-no-content')).toHaveTextContent('(no content yet)');
+    // W2: empty-state now shows action buttons instead of bare "(no content yet)".
+    expect(screen.getByTestId('wiki-empty-state')).toBeInTheDocument();
+    expect(screen.getByTestId('wiki-add-markdown-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('wiki-upload-file-btn')).toBeInTheDocument();
 
     // Give any async fetch a tick to fire (it should not).
     await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
