@@ -29,10 +29,11 @@ export function TaskKanbanCard({ task, overlay = false }: TaskKanbanCardProps) {
   });
 
   function handleClick(e: React.MouseEvent) {
-    // Only navigate on a real click — not at end of a drag.
-    // dnd-kit fires pointer events even when dragging starts; the
-    // activationConstraint distance guard on PointerSensor ensures short
-    // movements are still clicks, so we navigate freely here.
+    // Fix D (bug #406): if a drag just completed (isDragging is briefly true
+    // while dnd-kit transitions), bail to prevent the click handler from firing
+    // at the end of a drag gesture. Without this guard, a dragged card that lands
+    // on a column can accidentally navigate to its detail page.
+    if (isDragging) return;
     e.stopPropagation();
     navigate(ROUTES.NODE_DETAIL(task.id));
   }
