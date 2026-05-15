@@ -108,7 +108,7 @@ export function TaskListView({ projectId }: TaskListViewProps) {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4" data-testid="task-list">
       {/* Toolbar: status filter + new task button + view toggle */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <StatusPillRow

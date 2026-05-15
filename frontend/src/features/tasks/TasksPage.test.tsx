@@ -1,13 +1,10 @@
 /**
- * Load-bearing tests for the Tasks drill-down view (PR 5 step 1).
+ * Load-bearing tests for the Tasks view (PR 5 step 1 remnants).
  *
- * Six tests, each with positive + negative proof (DiVoid #275, PR #53 lesson).
- *
- * 1. OrgListView renders orgs and each name links to /tasks/orgs/:id.
- *    Negative: removing getRowHref from OrgListView fails (hrefs revert to /nodes/:id).
- *
- * 2. ProjectListView queries linkedto + type filter.
- *    Negative: swapping to useNodeList (no linkedto) fails (MSW handler doesn't match).
+ * Tests 1–2 (OrgListView / ProjectListView) have been removed along with
+ * those components (DiVoid task #391). Tests 3–6 remain and guard
+ * TaskListView, TaskBreadcrumb, and NodeResultTable behaviour that is
+ * still required.
  *
  * 3. TaskListView uses the path query.
  *    Negative: replacing useNodePath with useNodeListLinkedTo fails (path param absent).
@@ -33,22 +30,6 @@ import type { Page, NodeDetails } from '@/types/divoid';
 
 // ─── MSW server ───────────────────────────────────────────────────────────────
 
-const orgFixtures: Page<NodeDetails> = {
-  result: [
-    { id: 10, type: 'organization', name: 'Mamgo', status: null },
-    { id: 11, type: 'organization', name: 'Acme', status: null },
-  ],
-  total: 2,
-};
-
-const projectFixtures: Page<NodeDetails> = {
-  result: [
-    { id: 20, type: 'project', name: 'Backend', status: null },
-    { id: 21, type: 'project', name: 'Frontend', status: null },
-  ],
-  total: 2,
-};
-
 const taskFixtures: Page<NodeDetails> = {
   result: [
     { id: 30, type: 'task', name: 'Fix login', status: 'open' },
@@ -67,8 +48,9 @@ const server = setupServer(
     const path = url.searchParams.get('path');
 
     if (path) return HttpResponse.json(taskFixtures);
-    if (linkedto && type === 'project') return HttpResponse.json(projectFixtures);
-    if (type === 'organization') return HttpResponse.json(orgFixtures);
+    if (linkedto && type === 'project') return HttpResponse.json(emptyPage);
+    if (linkedto && type === 'organization') return HttpResponse.json(emptyPage);
+    if (type === 'organization') return HttpResponse.json(emptyPage);
     return HttpResponse.json(emptyPage);
   }),
   // For TaskBreadcrumb — useNode(id) calls GET /nodes/:id
@@ -126,15 +108,6 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: v
 
 // ─── Wrapper helpers ──────────────────────────────────────────────────────────
 
-function createWrapper(initialPath = '/tasks') {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return ({ children }: { children: React.ReactNode }) => (
-    <MemoryRouter initialEntries={[initialPath]}>
-      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
-    </MemoryRouter>
-  );
-}
-
 function renderWithProviders(ui: React.ReactElement, initialPath = '/tasks') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -146,113 +119,19 @@ function renderWithProviders(ui: React.ReactElement, initialPath = '/tasks') {
 
 // ─── Lazy imports (mocks must be registered before import) ────────────────────
 
-let OrgListView: typeof import('./OrgListView').OrgListView;
-let ProjectListView: typeof import('./ProjectListView').ProjectListView;
 let TaskListView: typeof import('./TaskListView').TaskListView;
 let TaskBreadcrumb: typeof import('./TaskBreadcrumb').TaskBreadcrumb;
 let NodeResultTable: typeof import('@/components/common/NodeResultTable').NodeResultTable;
 
 beforeAll(async () => {
-  const [orgMod, projMod, taskMod, bcMod, tableMod] = await Promise.all([
-    import('./OrgListView'),
-    import('./ProjectListView'),
+  const [taskMod, bcMod, tableMod] = await Promise.all([
     import('./TaskListView'),
     import('./TaskBreadcrumb'),
     import('@/components/common/NodeResultTable'),
   ]);
-  OrgListView = orgMod.OrgListView;
-  ProjectListView = projMod.ProjectListView;
   TaskListView = taskMod.TaskListView;
   TaskBreadcrumb = bcMod.TaskBreadcrumb;
   NodeResultTable = tableMod.NodeResultTable;
-});
-
-// ─── Test 1: OrgListView renders orgs with correct hrefs ─────────────────────
-
-describe('Test 1 — OrgListView renders orgs and links to /tasks/orgs/:id', () => {
-  it('positive: two org rows, each name links to /tasks/orgs/:id', async () => {
-    renderWithProviders(<OrgListView />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Mamgo')).toBeInTheDocument();
-      expect(screen.getByText('Acme')).toBeInTheDocument();
-    });
-
-    const mamgoLink = screen.getByRole('link', { name: 'Mamgo' });
-    const acmeLink = screen.getByRole('link', { name: 'Acme' });
-
-    expect(mamgoLink).toHaveAttribute('href', '/tasks/orgs/10');
-    expect(acmeLink).toHaveAttribute('href', '/tasks/orgs/11');
-  });
-
-  /**
-   * Negative proof: without getRowHref on OrgListView, the table
-   * falls back to ROUTES.NODE_DETAIL and the hrefs become /nodes/10 and /nodes/11.
-   * This test verifies the default href shape, which is what OrgListView MUST NOT use.
-   */
-  it('negative: NodeResultTable without getRowHref falls back to /nodes/:id', async () => {
-    renderWithProviders(
-      <NodeResultTable nodes={orgFixtures.result} />,
-    );
-
-    const mamgoLink = screen.getByRole('link', { name: 'Mamgo' });
-    // Without getRowHref, the default is /nodes/:id — not the tasks drill-down URL.
-    expect(mamgoLink).toHaveAttribute('href', '/nodes/10');
-    expect(mamgoLink).not.toHaveAttribute('href', '/tasks/orgs/10');
-  });
-});
-
-// ─── Test 2: ProjectListView queries linkedto + type filter ──────────────────
-
-describe('Test 2 — ProjectListView queries linkedto=<orgId>&type=project', () => {
-  it('positive: request URL contains linkedto=10 and type=project', async () => {
-    let capturedUrl: string | null = null;
-
-    server.use(
-      http.get(`${BASE_URL}/nodes`, ({ request }) => {
-        capturedUrl = request.url;
-        return HttpResponse.json(projectFixtures);
-      }),
-    );
-
-    renderWithProviders(<ProjectListView orgId={10} />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Backend')).toBeInTheDocument();
-    });
-
-    expect(capturedUrl).not.toBeNull();
-    const url = new URL(capturedUrl!);
-    expect(url.searchParams.get('linkedto')).toBe('10');
-    expect(url.searchParams.get('type')).toBe('project');
-  });
-
-  /**
-   * Negative proof: if we render a NodeResultTable directly with projectFixtures
-   * (skipping the hook call entirely), no HTTP request is fired and capturedUrl stays null.
-   * This mirrors the case where someone bypasses useNodeListLinkedTo — the MSW handler
-   * never sees the ?linkedto= parameter.
-   */
-  it('negative: direct render without hook fires no request with linkedto param', async () => {
-    let capturedLinkedTo: string | null = null;
-
-    server.use(
-      http.get(`${BASE_URL}/nodes`, ({ request }) => {
-        const url = new URL(request.url);
-        capturedLinkedTo = url.searchParams.get('linkedto');
-        return HttpResponse.json(emptyPage);
-      }),
-    );
-
-    // Render the table directly — no hook fires.
-    renderWithProviders(<NodeResultTable nodes={projectFixtures.result} />);
-
-    // The table renders synchronously; wait a tick in case anything fires async.
-    await new Promise((r) => setTimeout(r, 50));
-
-    // No linkedto param was sent.
-    expect(capturedLinkedTo).toBeNull();
-  });
 });
 
 // ─── Test 3: TaskListView uses path query ─────────────────────────────────────
