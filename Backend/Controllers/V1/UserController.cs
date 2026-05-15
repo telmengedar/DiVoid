@@ -76,6 +76,22 @@ public class UserController(ILogger<UserController> logger, IUserService userSer
 
 
     /// <summary>
+    /// allows the currently authenticated user to patch their own profile.
+    /// Only properties marked <c>[AllowPatch]</c> on <see cref="Backend.Models.Users.User"/>
+    /// are accepted (currently only <c>homeNodeId</c>).
+    /// </summary>
+    /// <param name="patches">patches to apply</param>
+    /// <returns>updated user details</returns>
+    [HttpPatch("me")]
+    [Authorize]
+    public Task<UserDetails> PatchMe([FromBody] PatchOperation[] patches) {
+        long userId = User.GetDivoidUserId();
+        logger.LogInformation("User {UserId} patching own profile", userId);
+        return userService.UpdateUser(userId, patches);
+    }
+
+
+    /// <summary>
     /// patches an existing user (e.g. disable by setting enabled=false)
     /// </summary>
     /// <param name="userId">id of user to patch</param>
