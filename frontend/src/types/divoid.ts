@@ -49,6 +49,8 @@ export interface UserDetails {
   enabled: boolean;
   createdAt: string;
   permissions: string[];
+  /** Optional home node — drives org/project pill filtering and auto-redirect. */
+  homeNodeId: number | null;
 }
 
 // ─── API error ────────────────────────────────────────────────────────────────
