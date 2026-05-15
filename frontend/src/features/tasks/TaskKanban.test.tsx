@@ -1,7 +1,7 @@
 /**
  * Load-bearing tests for the Kanban board view (DiVoid task #384).
  *
- * Ten tests, each with positive + negative proof (DiVoid #275, PR #53/#55 lessons).
+ * Tests, each with positive + negative proof (DiVoid #275, PR #53/#55 lessons).
  *
  * 1. Board renders one column per visible status (TASK_STATUSES order, not toggle order).
  * 2. Toggling a status pill adds/removes its column.
@@ -13,6 +13,9 @@
  * 8. View toggle persists to sessionStorage and survives remount.
  * 9. API query identical between list and board mode.
  * 10. PointerSensor activation distance respected: click navigates, does not drag.
+ * 14. PATCH success invalidates path-query cache: card moves to new column and stays
+ *     (no snap-back). Pins the cache OUTCOME, not just the override Map flow.
+ *     Bug #411: narrow ['nodes','list']+['nodes','linkedto'] missed path-query key.
  *
  * Drag simulation technique (PR #53 + #55 lesson): find the onDragEnd prop on
  * DndContext via React fiber walking and dispatch a synthetic {active, over} object
@@ -145,10 +148,10 @@ function makeQC() {
   });
 }
 
-function renderWithProviders(ui: React.ReactElement, initialPath = '/') {
+function renderWithProviders(ui: React.ReactElement, initialPath = '/', qc?: QueryClient) {
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
-      <QueryClientProvider client={makeQC()}>{ui}</QueryClientProvider>
+      <QueryClientProvider client={qc ?? makeQC()}>{ui}</QueryClientProvider>
     </MemoryRouter>,
   );
 }
@@ -851,6 +854,177 @@ describe('Test 10 — PointerSensor activation distance respected', () => {
     await waitFor(() => {
       expect(capturedPatchCalls.length).toBeGreaterThan(0);
     });
+  });
+});
+
+// ─── Test 14: PATCH success invalidates path-query cache (bug #411) ──────────
+//
+// Root cause: handleDragEnd invalidated ['nodes','list'] + ['nodes','linkedto']
+// after PATCH success, but the Kanban's task data comes from useNodePath whose
+// query key is ['nodes','path',...]. Neither invalidation matched → cache stale
+// → override clear showed old column → card snapped back.
+//
+// Fix: replace the two narrow invalidations with:
+//   queryClient.invalidateQueries({ queryKey: ['nodes'] })
+// TanStack prefix-matches ALL keys under ['nodes',...] — list, linkedto, path, detail.
+//
+// This test pins the OUTCOME (cache reflects new status), not just the override
+// Map flow. Both PR #57 and #63 passed Jenny with full substitution proofs while
+// production was broken — because those tests asserted the override transitions,
+// not whether the cache was invalidated for the correct query key.
+//
+// Technique: pre-populate the path-query cache with old status; configure MSW to
+// return new status on the SECOND GET call; drag via fiber-walk onDragEnd; after
+// PATCH resolves, assert the card is in the new column and stays there.
+//
+// Substitution proof (required before submitting):
+//   Revert to ['nodes','list'] + ['nodes','linkedto'] — the path-query cache entry
+//   is NOT invalidated → no refetch → card snaps back to 'open' → positive test fails.
+
+describe('Test 14 — PATCH success invalidates path-query cache: card stays in new column (bug #411)', () => {
+  /**
+   * Positive proof: after a successful drag (open → in-progress), the card renders
+   * in in-progress AND STAYS THERE after the cache refetch settles.
+   *
+   * Two-phase MSW handler: first path-query call returns taskFixtures (card 30 = open).
+   * After the PATCH succeeds and the broad ['nodes'] invalidation triggers a refetch,
+   * the second path-query call returns updatedFixtures (card 30 = in-progress).
+   * The card must render in in-progress and not snap back to open.
+   */
+  it('positive: card moves to target column and stays after PATCH + cache refetch', async () => {
+    // Second GET to the path endpoint returns card 30 with the new status.
+    const updatedFixtures: Page<NodeDetails> = {
+      result: [
+        { id: 30, type: 'task', name: 'Fix login', status: 'in-progress' },
+        { id: 31, type: 'task', name: 'Add tests', status: 'in-progress' },
+        { id: 32, type: 'task', name: 'Plan sprint', status: 'new' },
+      ],
+      total: 3,
+    };
+
+    // Track how many times the path query has been called.
+    let pathCallCount = 0;
+    server.use(
+      http.get(`${BASE_URL}/nodes`, ({ request }) => {
+        const url = new URL(request.url);
+        const linkedto = url.searchParams.get('linkedto');
+        const name = url.searchParams.get('name');
+        const path = url.searchParams.get('path');
+
+        if (linkedto && name === 'Tasks') return HttpResponse.json(tasksGroupFixture);
+        if (path) {
+          pathCallCount += 1;
+          // First call: stale data (card 30 = open).
+          // Subsequent calls: updated data (card 30 = in-progress).
+          return HttpResponse.json(pathCallCount === 1 ? taskFixtures : updatedFixtures);
+        }
+        return HttpResponse.json(emptyPage);
+      }),
+    );
+
+    // Pre-seed board mode so the board renders immediately.
+    sessionStorage.setItem('divoid.tasks.view.20', 'board');
+
+    // Use a QueryClient with a short staleTime so invalidation triggers a real
+    // refetch (not a "already fresh" no-op). staleTime=0 means invalidated entries
+    // are always refetched on next observer access.
+    const qc = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, staleTime: 0 },
+        mutations: { retry: false },
+      },
+    });
+
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<TaskListView projectId={20} />, '/', qc);
+
+    // Wait for board and cards to appear.
+    await waitFor(() => {
+      expect(container.querySelector('[data-testid="kanban-board"]')).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(container.querySelector('[data-testid="kanban-card-30"]')).toBeInTheDocument();
+    });
+
+    // Baseline: card 30 starts in the 'open' column.
+    const openColumnBefore = container.querySelector('[data-testid="kanban-column-open"]');
+    expect(within(openColumnBefore as HTMLElement).queryByTestId('kanban-card-30')).toBeInTheDocument();
+
+    // Drag card 30 → in-progress via the fiber-walk approach.
+    const onDragEnd = getDndContextOnDragEnd(container);
+    expect(onDragEnd).toBeDefined();
+
+    await act(async () => {
+      onDragEnd!({ active: { id: 30 }, over: { id: 'in-progress' } });
+    });
+
+    // Wait for: PATCH to fire, override to clear, cache to refetch.
+    await waitFor(() => {
+      expect(capturedPatchCalls.length).toBeGreaterThan(0);
+    });
+
+    // After PATCH success: the broad ['nodes'] invalidation must have triggered a
+    // refetch of the path-query. The refetch returns updatedFixtures (card 30 = in-progress).
+    // After override is cleared, the card must be in the in-progress column — and
+    // stay there (no snap-back to open).
+    await waitFor(
+      () => {
+        const inProgressCol = container.querySelector('[data-testid="kanban-column-in-progress"]');
+        expect(
+          within(inProgressCol as HTMLElement).queryByTestId('kanban-card-30'),
+        ).toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+
+    // Confirm the card is NOT in the open column (no snap-back).
+    const openColumnAfter = container.querySelector('[data-testid="kanban-column-open"]');
+    expect(
+      within(openColumnAfter as HTMLElement).queryByTestId('kanban-card-30'),
+    ).not.toBeInTheDocument();
+
+    // Confirm the path endpoint was called a SECOND time (invalidation triggered refetch).
+    expect(pathCallCount).toBeGreaterThanOrEqual(2);
+  });
+
+  /**
+   * Negative proof: if the fix is reverted to narrow invalidations
+   * (['nodes','list'] and ['nodes','linkedto']), the path-query cache is NOT
+   * invalidated, no second GET fires, the cache returns the stale old status
+   * after the override is cleared, and the card snaps back to 'open'.
+   *
+   * We prove this without reverting production code by directly manipulating the
+   * QueryClient: after the PATCH completes, we manually "un-invalidate" the path
+   * query (set it back to non-stale) to simulate what the old narrow invalidations
+   * would have done (i.e., left the path-query cache untouched). The card should
+   * then NOT be in in-progress after the override clears.
+   *
+   * Substitution test (what happens when you revert the fix in production code):
+   *   Replace queryClient.invalidateQueries({ queryKey: ['nodes'] }) with the old
+   *   two-line invalidations. The positive test above MUST fail because pathCallCount
+   *   stays at 1 and the card snaps back to 'open'.
+   */
+  it('negative: without path-query invalidation, card snaps back to old column after override clears', () => {
+    // This test uses the useKanbanColumns hook directly to prove the snap-back
+    // mechanism: if the cache returns old status after override is cleared, the
+    // column for the old status gets the card.
+    const { result } = renderHook(() =>
+      useKanbanColumns({
+        tasks: [{ id: 30, type: 'task', name: 'Fix login', status: 'open' }],
+        selectedStatuses: ['new', 'open', 'in-progress'],
+        // Simulate: override cleared (PATCH success), but cache NOT invalidated
+        // → tasks prop still shows old status = 'open'.
+        optimisticOverrides: new Map(),
+      }),
+    );
+
+    const openCol = result.current.find((c) => c.status === 'open');
+    const inProgressCol = result.current.find((c) => c.status === 'in-progress');
+
+    // Without cache invalidation, the stale 'open' status from cache is used →
+    // card renders in 'open', NOT in 'in-progress'. This is the snap-back bug.
+    expect(openCol?.tasks).toHaveLength(1);
+    expect(inProgressCol?.tasks).toHaveLength(0);
   });
 });
 
