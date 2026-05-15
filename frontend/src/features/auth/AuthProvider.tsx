@@ -7,11 +7,18 @@
  *  - Silent refresh via refresh-token grant (~30s before expiry)
  *  - OIDC state/nonce/verifier stored in sessionStorage (required for the redirect dance)
  *
+ * Fix (b) — DiVoid bug #403:
+ * Wires the missing addSilentRenewError, addAccessTokenExpired, and addUserSignedOut
+ * events. When silent renew fails or the user is signed out, a terminalAuthFailure
+ * flag is set in a React context so that concurrent in-flight API queries can detect
+ * "the session is conclusively dead" and short-circuit instead of each calling
+ * signinRedirect independently (N-query amplification).
+ *
  * Design: docs/architecture/frontend-bootstrap.md §9.1, §9.2
  */
 
-import { type ReactNode } from 'react';
-import { AuthProvider as OidcAuthProvider } from 'react-oidc-context';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { AuthProvider as OidcAuthProvider, useAuth } from 'react-oidc-context';
 import { WebStorageStateStore, InMemoryWebStorage } from 'oidc-client-ts';
 import {
   KEYCLOAK_AUTHORITY,
@@ -20,13 +27,90 @@ import {
   OIDC_POST_LOGOUT_REDIRECT_URI,
 } from '@/lib/constants';
 
+// ─── DiVoid auth context ──────────────────────────────────────────────────────
+
+/**
+ * Extended auth context that includes DiVoid-specific state beyond react-oidc-context.
+ *
+ * terminalAuthFailure: true when silent renew has failed or the user has been signed
+ * out by the IdP and there is no valid session. API callers read this to short-circuit
+ * the normal signinRedirect path — when true, all in-flight 401 retries throw immediately
+ * instead of each independently triggering a redirect.
+ *
+ * Reset to false on addUserLoaded so a successful re-authentication clears the flag.
+ */
+export interface DiVoidAuthContextValue {
+  terminalAuthFailure: boolean;
+}
+
+export const DiVoidAuthContext = createContext<DiVoidAuthContextValue>({
+  terminalAuthFailure: false,
+});
+
+export function useDiVoidAuthContext(): DiVoidAuthContextValue {
+  return useContext(DiVoidAuthContext);
+}
+
+// ─── Inner provider — needs to be a child of OidcAuthProvider ────────────────
+
+/**
+ * Inner component that wires the missing OIDC lifecycle events.
+ * Must be rendered inside OidcAuthProvider so useAuth() is available.
+ */
+function DiVoidAuthEventWatcher({ children }: { children: ReactNode }) {
+  const auth = useAuth();
+  const [terminalAuthFailure, setTerminalAuthFailure] = useState(false);
+
+  useEffect(() => {
+    // addSilentRenewError: refresh token grant failed — session is conclusively dead.
+    const offRenew = auth.events.addSilentRenewError(() => {
+      setTerminalAuthFailure(true);
+    });
+
+    // addAccessTokenExpired: access token expired without a successful silent renew.
+    // Log only; the silent renew error path handles the terminal state.
+    const offExpired = auth.events.addAccessTokenExpired(() => {
+      if (import.meta.env.DEV) {
+        console.debug('[DiVoid Auth] access token expired');
+      }
+    });
+
+    // addUserSignedOut: IdP indicates the user has signed out (back-channel/front-channel).
+    const offSignedOut = auth.events.addUserSignedOut(() => {
+      setTerminalAuthFailure(true);
+    });
+
+    // addUserLoaded: successful (re-)authentication — reset the failure flag so
+    // post-redirect recovery works correctly.
+    const offLoaded = auth.events.addUserLoaded(() => {
+      setTerminalAuthFailure(false);
+    });
+
+    return () => {
+      offRenew();
+      offExpired();
+      offSignedOut();
+      offLoaded();
+    };
+  }, [auth]);
+
+  return (
+    <DiVoidAuthContext.Provider value={{ terminalAuthFailure }}>
+      {children}
+    </DiVoidAuthContext.Provider>
+  );
+}
+
+// ─── Public provider ──────────────────────────────────────────────────────────
+
 interface AuthProviderProps {
   children: ReactNode;
 }
 
 /**
- * Provides the OIDC session to the component tree.
- * Must be placed above any component that calls useAuth() or useWhoami().
+ * Provides the OIDC session and DiVoid auth state to the component tree.
+ * Must be placed above any component that calls useAuth(), useWhoami(), or
+ * useDiVoidAuthContext().
  */
 export function AuthProvider({ children }: AuthProviderProps) {
   return (
@@ -61,7 +145,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
         window.history.replaceState({}, document.title, window.location.pathname);
       }}
     >
-      {children}
+      <DiVoidAuthEventWatcher>
+        {children}
+      </DiVoidAuthEventWatcher>
     </OidcAuthProvider>
   );
 }
