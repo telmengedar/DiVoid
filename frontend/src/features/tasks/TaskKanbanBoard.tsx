@@ -28,7 +28,7 @@ import {
   KeyboardSensor,
   useSensor,
   useSensors,
-  closestCenter,
+  pointerWithin,
   type DragEndEvent,
 } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
@@ -87,7 +87,17 @@ export function TaskKanbanBoard({ tasks, selectedStatuses }: TaskKanbanBoardProp
       const { active, over } = event;
       setActiveTask(null);
 
-      if (!over) return;
+      // Fix B (bug #406): surface a visible warning when the drop misses every
+      // column (over===null). This turns the "silent snap-back" into actionable
+      // feedback for the user. Also emit a dev-only console.warn for diagnostics.
+      // Same-column bails are intentional no-ops and do NOT get this warning.
+      if (!over) {
+        if (import.meta.env.DEV) {
+          console.warn('[Kanban] drag released outside any droppable column — over===null');
+        }
+        toast.warning('Drop missed a column — try again with more movement');
+        return;
+      }
 
       const nodeId = active.id as number;
       const targetStatus = over.id as TaskStatus;
@@ -140,9 +150,13 @@ export function TaskKanbanBoard({ tasks, selectedStatuses }: TaskKanbanBoardProp
   );
 
   return (
+    // Fix C (bug #406): pointerWithin returns the droppable whose rect contains
+    // the pointer, or null if none. Replaces closestCenter which would pick the
+    // nearest droppable even when the cursor was between columns — causing
+    // same-column false positives and masking genuine missed drops.
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={pointerWithin}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >

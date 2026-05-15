@@ -32,7 +32,12 @@ export function TaskKanbanColumn({ status, tasks }: TaskKanbanColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
 
   return (
+    // Fix A (bug #406): setNodeRef is on the OUTER wrapper so the entire column
+    // (header + padding + cards) is a valid drop target. Previously only the
+    // inner drop-zone div was registered, so releasing a card over the header
+    // bar gave over===null and silently bailed without PATCHing.
     <div
+      ref={setNodeRef}
       className="flex flex-col gap-2 min-w-[220px] flex-1"
       data-testid={`kanban-column-${status}`}
       data-kanban-column="true"
@@ -54,7 +59,6 @@ export function TaskKanbanColumn({ status, tasks }: TaskKanbanColumnProps) {
 
       {/* Drop zone */}
       <div
-        ref={setNodeRef}
         data-testid={`kanban-column-drop-${status}`}
         className={[
           'flex flex-col gap-2 rounded-lg border border-dashed p-2 min-h-[120px] transition-colors',
