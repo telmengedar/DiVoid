@@ -11,22 +11,28 @@
  *    renderer used on the read path — no duplicate library).
  *  - Save commits via useUploadContent with Content-Type: text/markdown; charset=utf-8.
  *    The mutation's onSuccess invalidates nodeContentQueryKey so the read path
- *    re-fetches automatically.
+ *    re-fetches automatically. Additional keys can be invalidated via
+ *    extraInvalidationKeys (e.g. broad ['nodes'] prefix for wiki — Section 8.2).
  *  - Save is triggered only by an explicit button click — never in a useEffect,
  *    never with draft text in any dependency array (render-loop guard).
+ *  - onSaved / onCancel callbacks let the caller control post-save / cancel
+ *    side-effects (mode transitions, navigation). Both default to no-ops.
  *
  * Out of scope: image-paste, slash commands, AI assist, collaborative editing.
  *
  * Design: docs/architecture/frontend-bootstrap.md §5.6
  * Task: DiVoid node #276
+ * Section 14.3 fix: DiVoid node #421 — callback props eliminate the need for
+ * a second WikiMarkdownEditor sub-component.
  */
 
 import { useState, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Save, Eye, Pencil } from 'lucide-react';
+import { Save, Eye, Pencil, X } from 'lucide-react';
 import { useUploadContent } from './mutations';
 import { cn } from '@/lib/cn';
 
@@ -34,6 +40,26 @@ interface MarkdownEditorSurfaceProps {
   nodeId: number;
   /** Pre-populated text. Pass the current content string when it exists. */
   initialContent?: string;
+  /**
+   * Called after the save mutation succeeds. The caller controls cache
+   * invalidation for its own scope here (e.g. broad ['nodes'] prefix for
+   * wiki — Section 8.2; narrow per-node for NodeDetailPage). If omitted,
+   * no caller-side side-effect runs beyond the surface's built-in narrow
+   * invalidation inside useUploadContent.
+   */
+  onSaved?: () => void;
+  /**
+   * When provided, renders a Cancel button that invokes this callback.
+   * If omitted, no Cancel button is shown.
+   */
+  onCancel?: () => void;
+  /**
+   * Additional TanStack Query key arrays to invalidate broadly after a
+   * successful save. The built-in narrow nodeContent/nodeDetail invalidation
+   * inside useUploadContent always fires regardless.
+   * Example: pass [['nodes']] for the broad Section 8.2 wiki invalidation.
+   */
+  extraInvalidationKeys?: readonly unknown[][];
 }
 
 type EditorTab = 'write' | 'preview';
@@ -51,20 +77,32 @@ export function isTextShaped(contentType: string | null | undefined): boolean {
 export function MarkdownEditorSurface({
   nodeId,
   initialContent = '',
+  onSaved,
+  onCancel,
+  extraInvalidationKeys,
 }: MarkdownEditorSurfaceProps) {
   const [tab, setTab] = useState<EditorTab>('write');
   const [draft, setDraft] = useState(initialContent);
   const mutation = useUploadContent(nodeId);
+  const queryClient = useQueryClient();
 
   const handleSave = useCallback(() => {
     const bytes = new TextEncoder().encode(draft);
     mutation.mutate(
       { body: bytes, contentType: 'text/markdown; charset=utf-8' },
       {
-        onSuccess: () => toast.success('Content saved.'),
+        onSuccess: () => {
+          if (extraInvalidationKeys) {
+            for (const key of extraInvalidationKeys) {
+              queryClient.invalidateQueries({ queryKey: key as unknown[] });
+            }
+          }
+          toast.success('Content saved.');
+          onSaved?.();
+        },
       },
     );
-  }, [draft, mutation]);
+  }, [draft, mutation, queryClient, extraInvalidationKeys, onSaved]);
 
   return (
     <div className="flex flex-col gap-0 rounded-lg border border-border overflow-hidden">
@@ -118,10 +156,13 @@ export function MarkdownEditorSurface({
           aria-multiline="true"
           spellCheck
           rows={12}
+          data-testid="wiki-editor-textarea"
           className={cn(
-            'w-full resize-y bg-background px-4 py-3 text-sm font-mono',
+            'w-full resize-y px-4 py-3 text-sm font-mono',
+            'bg-background dark:bg-background/80',
+            'text-foreground dark:text-foreground',
             'focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-            'placeholder:text-muted-foreground',
+            'placeholder:text-muted-foreground dark:placeholder:text-muted-foreground',
           )}
           placeholder="Write markdown here…"
           disabled={mutation.isPending}
@@ -148,11 +189,24 @@ export function MarkdownEditorSurface({
 
       {/* Action bar */}
       <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/20 px-3 py-2">
+        {onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={mutation.isPending}
+            aria-label="Cancel editing"
+            className="inline-flex items-center gap-1.5 h-7 px-3 rounded-md text-xs font-medium border border-border hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <X size={12} aria-hidden="true" />
+            Cancel
+          </button>
+        )}
         <button
           type="button"
           onClick={handleSave}
           disabled={mutation.isPending}
           aria-label="Save markdown content"
+          data-testid="wiki-editor-save"
           className={cn(
             'inline-flex items-center gap-1.5 h-7 px-3 rounded-md text-xs font-medium transition-colors',
             'bg-primary text-primary-foreground hover:bg-primary/90',
