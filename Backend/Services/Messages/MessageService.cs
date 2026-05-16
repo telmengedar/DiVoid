@@ -60,14 +60,15 @@ public class MessageService : IMessageService {
     /// <inheritdoc />
     public async Task<MessageDetails> GetById(long callerId, bool isAdmin, long id) {
         MessageMapper mapper = new();
-        MessageDetails message = await mapper.EntityFromOperation(
-            mapper.CreateOperation(database).Where(m => m.Id == id));
+        long scopedCallerId = callerId;
+        LoadOperation<Message> operation = isAdmin
+            ? mapper.CreateOperation(database).Where(m => m.Id == id)
+            : mapper.CreateOperation(database).Where(m => m.Id == id && (m.AuthorId == scopedCallerId || m.RecipientId == scopedCallerId));
+
+        MessageDetails message = await mapper.EntityFromOperation(operation);
 
         if (message == null)
             throw new NotFoundException<Message>(id);
-
-        if (!isAdmin && message.AuthorId != callerId && message.RecipientId != callerId)
-            throw new AuthorizationFailedException("Caller is neither the author nor the recipient of this message");
 
         return message;
     }

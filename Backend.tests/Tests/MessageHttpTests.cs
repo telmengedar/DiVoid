@@ -17,7 +17,7 @@ namespace Backend.tests.Tests;
 /// <summary>
 /// HTTP integration tests for the messaging system (task #425).
 ///
-/// Covers the 14 load-bearing cases from Sarah's architectural doc §15.1:
+/// Covers the 15 load-bearing cases from Sarah's architectural doc §15.1:
 ///   T1  — round-trip: POST creates and re-reads row correctly
 ///   T2  — authorId in body is ignored; server forces callerId as author (anti-impersonation)
 ///   T3  — POST to unknown recipient returns 404
@@ -27,7 +27,7 @@ namespace Backend.tests.Tests;
 ///   T6  — non-admin with ?recipientId= of another user returns empty (scope AND filter)
 ///   T7  — admin sees all messages regardless of involvement
 ///   T8  — default sort is createdat DESC (newest first)
-///   T9  — GET /{id} returns 403 to non-related caller (not 404 — existence must not leak via 200/403)
+///   T9  — GET /{id} returns 404 to non-related caller (not 403 — existence must not leak via status code)
 ///   T10 — sender cannot DELETE their own sent message (recipient-or-admin only)
 ///   T11 — DELETE by recipient succeeds; second DELETE returns 404 (idempotency)
 ///   T12 — admin can DELETE any message
@@ -470,7 +470,7 @@ public class MessageHttpTests
     // -----------------------------------------------------------------------
 
     [Test]
-    public async Task T9_Get_OtherUsersMessage_Returns403()
+    public async Task T9_Get_OtherUsersMessage_Returns404_NotLeakingExistence()
     {
         string suffix = Guid.NewGuid().ToString("N")[..8];
         long userA = await InsertUserAsync($"t9-A-{suffix}", Json.WriteString(new[] { "write" }));
@@ -486,11 +486,32 @@ public class MessageHttpTests
 
         string tokenC = fixture.MintToken(userId: userC);
         HttpClient clientC = ClientWithToken(tokenC);
-        HttpResponseMessage response = await clientC.GetAsync($"/api/messages/{msgId}");
 
-        Assert.That((int)response.StatusCode, Is.EqualTo(403),
-            "T9 (CRITICAL): GET /{id} must return 403 to a caller who is neither author nor recipient. " +
-            "A failure here means the row-level authorization check in GetById is missing.");
+        // C requests the real (but unrelated) message — must get 404, not 403.
+        HttpResponseMessage responseExisting = await clientC.GetAsync($"/api/messages/{msgId}");
+        Assert.That((int)responseExisting.StatusCode, Is.EqualTo(404),
+            "T9 (CRITICAL): GET /{id} must return 404 (not 403) to a caller who is neither author nor " +
+            "recipient. A failure here means existence leaks to unrelated callers via the status code.");
+
+        // Request a guaranteed-nonexistent id — must also get 404.
+        HttpResponseMessage responseNonExistent = await clientC.GetAsync($"/api/messages/{long.MaxValue}");
+        Assert.That((int)responseNonExistent.StatusCode, Is.EqualTo(404),
+            "T9: GET for a never-existed id must also return 404.");
+
+        // Load-bearing: the two 404 responses must be body-equivalent so existence cannot be inferred
+        // from response shape differences. The framework echoes the requested id in the 404 body, so
+        // normalise both bodies by replacing the numeric id token with a placeholder before comparing —
+        // the shape must be identical; only the id value differs, which is expected and not a leak.
+        string bodyExisting    = await responseExisting.Content.ReadAsStringAsync();
+        string bodyNonExistent = await responseNonExistent.Content.ReadAsStringAsync();
+        // Replace all digit-only sequences (the echoed id) with a fixed placeholder so the shape
+        // comparison is not invalidated by the numeric id values themselves.
+        System.Text.RegularExpressions.Regex digitRun = new System.Text.RegularExpressions.Regex(@"\d+");
+        string normExisting    = digitRun.Replace(bodyExisting, "<id>");
+        string normNonExistent = digitRun.Replace(bodyNonExistent, "<id>");
+        Assert.That(normExisting, Is.EqualTo(normNonExistent),
+            "T9 (CRITICAL): The 404 for an unrelated message must be body-equivalent (after id normalisation) " +
+            "to the 404 for a never-existed id. A structural difference leaks existence information to the caller.");
     }
 
     // -----------------------------------------------------------------------

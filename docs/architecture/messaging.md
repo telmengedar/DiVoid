@@ -159,11 +159,10 @@ The hot path. Sequence:
 ### 6.3 Get a single message — `GET /api/messages/{id}`
 
 1. `[Authorize(Policy = "read")]` gates entry.
-2. Service loads the row by id. If absent → `NotFoundException<Message>`.
-3. Service applies authorization: caller must be admin, the sender, or the recipient. If none → throw `AuthorizationFailedException` (mapped to 403 by `AuthorizationFailedExceptionHandler`).
-4. Return `MessageDetails`.
+2. Service loads the row with the scope baked into the SQL predicate: `WHERE Id = @id AND (isAdmin OR AuthorId = callerId OR RecipientId = callerId)`. If the row is absent **or** the caller is unrelated, the query returns null and the service throws `NotFoundException<Message>(id)` — producing HTTP 404 in both cases.
+3. Return `MessageDetails`.
 
-A small architectural choice here: the "load then authorize" sequence reveals existence to a caller who has neither permission nor relation to the message (they get 403 rather than 404). That is acceptable for this feature — message ids are not enumerable per the schema (auto-increment) and the surface is internal-only at the org level. If existence-hiding ever matters, the service can switch to "load with `WHERE Id = @id AND (AuthorId = callerId OR RecipientId = callerId)`" and translate empty result to `NotFoundException<Message>`. Called out so future-John doesn't have to rediscover the choice.
+Existence must not leak to non-recipients. The service uses a single SQL trip with the authorization predicate in the `WHERE` clause so that an unrelated caller's 404 is indistinguishable (same status code, same body shape) from a never-existed id's 404. Returning 403 was the original design sketch in §9.2 layer 3 and in the risks table at §11 — that approach was superseded before shipping. The `AuthorizationFailedExceptionHandler` is still registered for other endpoints (auth middleware, permission checks) but is not used by `GetById`.
 
 ### 6.4 Delete a message — `DELETE /api/messages/{id}`
 
@@ -225,7 +224,7 @@ A `Message` has exactly two states: **exists** and **deleted**. There is no soft
 | Operation | Inputs | Output | Semantics & failure modes |
 |---|---|---|---|
 | `Create` | `callerId`, `MessageDetails` (the inbound DTO; `AuthorId` is **ignored** and overwritten with `callerId`) | `MessageDetails` of the persisted row, including server-assigned `Id` and `CreatedAt` | `NotFoundException<User>` when `RecipientId` does not resolve to an enabled user. `ArgumentException` (→ 400 via `ArgumentExceptionHandler`) when `Subject` is empty/whitespace, exceeds 256 chars after trim, or `Body` is empty. |
-| `GetById` | `callerId`, `isAdmin`, `id` | `MessageDetails` | `NotFoundException<Message>` when row absent. `AuthorizationFailedException` (→ 403) when row exists but caller is neither sender, recipient, nor admin. |
+| `GetById` | `callerId`, `isAdmin`, `id` | `MessageDetails` | `NotFoundException<Message>` when row absent **or** caller is neither sender, recipient, nor admin (existence must not leak — both cases produce 404). |
 | `ListPaged` | `callerId`, `isAdmin`, `MessageFilter` | `AsyncPageResponseWriter<MessageDetails>` (page + count + continuation) | Pure filter call; never throws on permission grounds — non-admins simply get the scoped subset. |
 | `Delete` | `callerId`, `isAdmin`, `id` | void | Optimistic. `NotFoundException<Message>(id)` when 0 rows affected (collapses absent and not-allowed-to-delete). |
 
@@ -240,7 +239,7 @@ Implementation notes for John (not contract):
 |---|---|---|---|---|---|
 | `POST` | `/api/messages` | `write` | `MessageDetails` (server uses only `RecipientId`, `Subject`, `Body`) | `MessageDetails` of persisted row | 200, 400 (validation), 401, 403, 404 (unknown recipient) |
 | `GET` | `/api/messages` | `read` | — | streamed page envelope of `MessageDetails` | 200, 400 (bad filter), 401, 403 |
-| `GET` | `/api/messages/{id:long}` | `read` | — | `MessageDetails` | 200, 401, 403, 404 |
+| `GET` | `/api/messages/{id:long}` | `read` | — | `MessageDetails` | 200, 401, 404 (absent or unrelated caller — existence must not leak) |
 | `DELETE` | `/api/messages/{id:long}` | `write` | — | empty | 200, 401, 403, 404 |
 
 No `PATCH`. No `[AllowPatch]` on any `Message` property — the patch extension at `Backend/Extensions/DatabasePatchExtensions.cs` throws `NotSupportedException` on properties without `[AllowPatch]`, so even if someone sends a `PATCH` to a route that doesn't exist they get a 404 from routing, not a half-success from the patch pipeline. **Explicitly do not add a `[HttpPatch]` action on this controller** — that is the lever readers will reach for and it must stay un-pulled.
@@ -283,7 +282,7 @@ Three layers, in order:
 
 1. **Endpoint policy** (`[Authorize(Policy = "read"|"write")]`) — the framework rejects unauthenticated or insufficiently-permissioned callers before the action runs.
 2. **Principal scoping in the service** — applied to `ListPaged` and `Delete`. Non-admin callers see only messages where `AuthorId == callerId OR RecipientId == callerId`; admins see all.
-3. **Row-level check in `GetById`** — load, then authorize; throw `AuthorizationFailedException` if the loaded row does not match sender/recipient/admin.
+3. **Scope-in-SQL in `GetById`** — the authorization predicate is baked into the `WHERE` clause (`Id = @id AND (isAdmin OR AuthorId = callerId OR RecipientId = callerId)`). A null result throws `NotFoundException<Message>` regardless of whether the id never existed or the caller is unrelated — existence must not leak via a 403 vs 404 distinction.
 
 The admin-implication chain (`admin ⇒ write ⇒ read`) is handled by `PermissionAuthorizationHandler` — admins automatically pass `[Authorize(Policy = "write")]` and `[Authorize(Policy = "read")]`. The service-side `isAdmin` check is the same claim test (`HasClaim("permission", "admin")`); be explicit that this is the **same** signal the framework already used to admit the request, not a second authorization decision — the service uses it only to decide whether to relax the scoping predicate.
 
@@ -362,7 +361,7 @@ Trade-off: simpler semantics vs. user comfort. Picked simpler semantics. A "reca
 |---|---|
 | Caller-supplied `authorId` on `POST` enables impersonation | Service **ignores** any inbound `AuthorId` and overwrites with `callerId`. This is the most important single rule in the service. The HTTP test must assert that `POST` with `authorId` set to another user's id still records `callerId` as the author. |
 | Non-admin caller widens scope via `?recipientId=42` (querying another user's inbox) | Service ANDs the scoping clause `(AuthorId = callerId OR RecipientId = callerId)` **before** the caller-supplied filter. The caller's `recipientId=42` can only narrow within the scope. Load-bearing test: a non-admin caller sends `?recipientId=<other>` and the response is empty / does not contain the other user's messages. |
-| `GET /api/messages/{id}` reveals existence of someone else's message via 403-vs-404 | Acknowledged in section 6.3. Acceptable for v1. If existence-hiding becomes a requirement, switch the service to a single load-with-WHERE-clause and translate empty → 404. |
+| `GET /api/messages/{id}` reveals existence of someone else's message via 403-vs-404 | Shipped as 404 in both cases. The service bakes the scope into the SQL predicate so that an unrelated caller's response is indistinguishable from a never-existed id. See §6.3. |
 | Subject overflow / SQL truncation surprises the caller | `[Size(256)]` in PostgreSQL refuses overflow with a runtime error; service validates length before insert and throws `ArgumentException` (→ 400) so the caller gets a clear message instead of a 500. |
 | `Body` arbitrarily large messages consume DB and bandwidth | The existing ASP.NET Core request-body-size limit caps the payload at the pipeline; no per-property cap on `Body`. If a deployment needs a stricter limit it's a config-level decision (Kestrel `MaxRequestBodySize`) not a schema one. Document this in the XML doc on `Message.Body`. |
 | Recipient deletes a message they meant to keep | No recovery — accepted. The protocol is "delete when handled"; misclicks are user error. Admin can re-create from logs if it's that important, but logs do not contain body content (see 9.3) so this is only partial. |
@@ -424,7 +423,7 @@ The load-bearing assertion discipline (DiVoid #275) applies: each test must say 
 | T6 | `List_NonAdmin_WithRecipientIdOfAnother_ReturnsEmpty` | The scoping clause is ANDed but is being widened by a caller-supplied filter. Caller-supplied `?recipientId=<other>` is intersected with the scope, not replaced by it. |
 | T7 | `List_Admin_SeesAllMessages` | The admin-bypass path is broken (admins are being scoped). Specifically tests that the service's `isAdmin == true` branch omits the scoping clause. |
 | T8 | `List_SortByCreatedAtDescending_NewestFirst` | The default-sort handling described in section 8.4 is missing — without it, ordering is whatever the DB happens to return. |
-| T9 | `Get_OtherUsersMessage_Returns403` | The row-level check in `GetById` is missing — a non-related caller can read any message by id. |
+| T9 | `Get_OtherUsersMessage_Returns404_NotLeakingExistence` | The scope-in-SQL predicate in `GetById` is missing — a non-related caller can read any message by id, or gets 403 that reveals the message exists. Load-bearing assertion: the 404 body for an unrelated message is body-equivalent to the 404 body for a never-existed id. |
 | T10 | `Delete_BySender_Returns404` | The "sender cannot recall" rule is broken — sender is allowed to delete their own sent messages. |
 | T11 | `Delete_ByRecipient_Succeeds_And_SecondDeleteReturns404` | Optimistic delete + idempotency contract. Second call must be a clean 404, not 500. |
 | T12 | `Delete_ByAdmin_Succeeds_OnAnyMessage` | Admin-bypass for delete is missing. |
