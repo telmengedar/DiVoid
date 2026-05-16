@@ -97,7 +97,7 @@ public class MessageService : IMessageService {
 
         return new AsyncPageResponseWriter<MessageDetails>(
             windowed.Items,
-            async () => await windowed.WindowValue,
+            () => windowed.WindowValue,
             filter.Continue
         );
     }
