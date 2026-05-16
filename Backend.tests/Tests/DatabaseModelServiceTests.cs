@@ -1,4 +1,5 @@
 using Backend.Init;
+using Backend.Models.Messages;
 using Backend.Models.Users;
 using Backend.tests.Fixtures;
 using Pooshit.Ocelot.Schemas;
@@ -29,6 +30,8 @@ public class DatabaseModelServiceTests
                                         .ExecuteScalarAsync<long>();
         long userCount = await fixture.EntityManager.Load<User>(Pooshit.Ocelot.Tokens.DB.Count())
                                       .ExecuteScalarAsync<long>();
+        long messageCount = await fixture.EntityManager.Load<Message>(Pooshit.Ocelot.Tokens.DB.Count())
+                                         .ExecuteScalarAsync<long>();
 
         Assert.Multiple(() => {
             Assert.That(nodeCount, Is.EqualTo(0));
@@ -36,6 +39,8 @@ public class DatabaseModelServiceTests
             Assert.That(nodeLinkCount, Is.EqualTo(0));
             Assert.That(apiKeyCount, Is.EqualTo(0));
             Assert.That(userCount, Is.EqualTo(0));
+            Assert.That(messageCount, Is.EqualTo(0),
+                "Message table must exist after schema bootstrap — a zero count confirms the table was created");
         });
     }
 

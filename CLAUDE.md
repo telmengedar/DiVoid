@@ -2,6 +2,23 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Code contracts (READ BEFORE IMPLEMENTING)
+
+Two contract documents define the engineering standards for this repo. Both are enforced by `jenny-qa-reviewer` during PR review — a violation cites the section number, not personal preference.
+
+- **Backend code contracts** — DiVoid node **#114** (`CODE-CONTRACTS.md`). Read before any backend PR. Sections cover Ocelot idioms, `[AllowPatch]` discipline, predicate composition, controller/service boundaries, error handling, testing.
+- **Frontend code contracts** — DiVoid node **#420** (`FRONTEND-CODE-CONTRACTS.md`). Read before any frontend PR. Sections cover Rules of Hooks, stale-closure trap (#387), optimistic-update cache outcome (#412), render-body side-effect ban (PRs #58/#62), fiber-walk-is-theatre rule (PR #63), tautological-negative-`it()` rule (PR #59 + #65), and the load-bearing test discipline (#275).
+
+Fetch both via:
+```
+DIVOID_URL=$(awk -F= '/^Url=/{print $2}' "$HOME/.claude/secrets/.divoid-online")
+DIVOID_KEY=$(awk -F= '/^ApiKey=/{print $2}' "$HOME/.claude/secrets/.divoid-online")
+curl -H "Authorization: Bearer $DIVOID_KEY" "$DIVOID_URL/nodes/114/content"  # backend
+curl -H "Authorization: Bearer $DIVOID_KEY" "$DIVOID_URL/nodes/420/content"  # frontend
+```
+
+These are living documents — when a new incident teaches a lesson, the contract is updated. The latest version on DiVoid is canonical; the section numbers Jenny cites in reviews refer to that live version.
+
 ## Build & run
 
 This is a .NET 9 solution (`DiVoid.sln`) with two projects: `Backend` (ASP.NET Core Web API) and `Backend.tests` (NUnit).
