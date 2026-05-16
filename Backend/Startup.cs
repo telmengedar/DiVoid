@@ -8,6 +8,7 @@ using Backend.Formatters;
 using Backend.Init;
 using Backend.Services.Auth;
 using Backend.Services.Embeddings;
+using Backend.Services.Messages;
 using Backend.Services.Nodes;
 using Backend.Services.Users;
 using mamgo.services.Binding;
@@ -109,6 +110,8 @@ public class Startup
         services.AddTransient<IKeyGenerator, KeyGenerator>();
         services.AddTransient<IUserService, UserService>();
         services.AddTransient<IApiKeyService, ApiKeyService>();
+        services.AddTransient<IAuthService, AuthService>();
+        services.AddTransient<IMessageService, MessageService>();
         services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
         if (AuthEnabled) {

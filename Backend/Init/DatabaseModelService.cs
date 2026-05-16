@@ -1,4 +1,5 @@
 using Backend.Models.Auth;
+using Backend.Models.Messages;
 using Backend.Models.Nodes;
 using Backend.Models.Users;
 using Pooshit.Ocelot.Clients;
@@ -34,6 +35,7 @@ public class DatabaseModelService : IHostedService {
         await schemaService.CreateOrUpdateSchema<Node>(transaction);
         await schemaService.CreateOrUpdateSchema<NodeLink>(transaction);
         await schemaService.CreateOrUpdateSchema<NodeType>(transaction);
+        await schemaService.CreateOrUpdateSchema<Message>(transaction);
 
         transaction.Commit();
     }
