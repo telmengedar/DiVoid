@@ -39,7 +39,7 @@ public interface IMessageService {
     /// <param name="isAdmin">whether the caller holds the admin permission</param>
     /// <param name="filter">paging, sort, and id filters to apply</param>
     /// <returns>streamed page of message details</returns>
-    AsyncPageResponseWriter<MessageDetails> ListPaged(long callerId, bool isAdmin, MessageFilter filter = null);
+    Task<AsyncPageResponseWriter<MessageDetails>> ListPaged(long callerId, bool isAdmin, MessageFilter filter = null);
 
     /// <summary>
     /// deletes a message.

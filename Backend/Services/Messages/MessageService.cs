@@ -5,9 +5,11 @@ using Backend.Errors.Exceptions;
 using Backend.Models.Messages;
 using Backend.Models.Users;
 using Pooshit.AspNetCore.Services.Errors.Exceptions;
+using Pooshit.AspNetCore.Services.Data;
 using Pooshit.AspNetCore.Services.Formatters.DataStream;
 using Pooshit.Ocelot.Entities;
 using Pooshit.Ocelot.Entities.Operations;
+using Pooshit.Ocelot.Entities.Operations.Prepared;
 using Pooshit.Ocelot.Expressions;
 using Pooshit.Ocelot.Fields;
 using Pooshit.Ocelot.Tokens;
@@ -75,7 +77,7 @@ public class MessageService : IMessageService {
 
 
     /// <inheritdoc />
-    public AsyncPageResponseWriter<MessageDetails> ListPaged(long callerId, bool isAdmin, MessageFilter filter = null) {
+    public async Task<AsyncPageResponseWriter<MessageDetails>> ListPaged(long callerId, bool isAdmin, MessageFilter filter = null) {
         filter ??= new();
 
         MessageMapper mapper = new();
@@ -90,12 +92,12 @@ public class MessageService : IMessageService {
         operation.ApplyFilter(filter, mapper);
         operation.Where(predicate?.Content);
 
-        LoadOperation<Message> countOperation = mapper.CreateOperation(database, DB.Count());
-        countOperation.Where(predicate?.Content);
+        WindowResult<MessageDetails, long> windowed =
+            await mapper.WindowedFromOperation<long, Message>(operation, DB.CountOver(), CancellationToken.None, filter.Fields);
 
         return new AsyncPageResponseWriter<MessageDetails>(
-            mapper.EntitiesFromOperation(operation),
-            () => countOperation.ExecuteScalarAsync<long>(),
+            windowed.Items,
+            async () => await windowed.WindowValue,
             filter.Continue
         );
     }

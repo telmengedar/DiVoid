@@ -51,13 +51,14 @@ public class MessageController(ILogger<MessageController> logger, IMessageServic
     public Task<AsyncPageResponseWriter<MessageDetails>> List([FromQuery] MessageFilter filter) {
         long callerId = User.GetDivoidUserId();
         bool isAdmin = User.HasClaim("permission", "admin");
-        return Task.FromResult(messageService.ListPaged(callerId, isAdmin, filter));
+        return messageService.ListPaged(callerId, isAdmin, filter);
     }
 
 
     /// <summary>
     /// gets a single message by id.
-    /// returns 403 if the caller is neither the author, the recipient, nor an admin.
+    /// returns 404 if the message does not exist or the caller is neither the author, the recipient, nor an admin
+    /// — existence is not revealed to unauthorised callers.
     /// </summary>
     /// <param name="id">id of the message to retrieve</param>
     /// <returns>details of the requested message</returns>
@@ -65,7 +66,6 @@ public class MessageController(ILogger<MessageController> logger, IMessageServic
     [Authorize(Policy = "read")]
     [ProducesResponseType(200)]
     [ProducesResponseType(401)]
-    [ProducesResponseType(403)]
     [ProducesResponseType(404)]
     public Task<MessageDetails> GetById(long id) {
         long callerId = User.GetDivoidUserId();
