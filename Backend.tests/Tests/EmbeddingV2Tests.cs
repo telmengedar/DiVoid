@@ -28,17 +28,10 @@ public class EmbeddingV2Tests
     static NodeService MakeService(DatabaseFixture fixture)
         => new(fixture.EntityManager, DisabledCapability);
 
-    // -----------------------------------------------------------------------
-    // §6 Case #1 — POST /api/nodes (CreateNode): name-only embed on SQLite
-    // verifies: CreateNode does not crash when capability is disabled (the embedding
-    // UPDATE is skipped); node row is returned with the correct name.
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task CreateNode_WithName_SqliteFixture_NoEmbeddingAndNoThrow()
     {
-        // Sarah §6.1: POST /nodes with name and no content → resulting row has non-null
-        // Embedding on Postgres.  On SQLite: must not crash and Embedding stays null.
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
@@ -59,7 +52,6 @@ public class EmbeddingV2Tests
     [Test]
     public async Task CreateNode_EmptyName_SqliteFixture_NoEmbeddingAndNoThrow()
     {
-        // empty name → no embedding attempt even on Postgres.  on SQLite: no crash.
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
@@ -73,16 +65,10 @@ public class EmbeddingV2Tests
             "no embedding for empty-name node — EmbeddingInputComposer returns null for empty name + empty content");
     }
 
-    // -----------------------------------------------------------------------
-    // §6 Case #2 — POST /api/nodes/{id}/content (UploadContent): v2 now reads name
-    // verifies: UploadContent does not crash on SQLite when the name-read SELECT
-    // is added inside the transaction; content is still stored correctly.
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task UploadContent_TextType_V2_SqliteFixture_ContentStoredNoEmbedding()
     {
-        // verifies: the new name-read SELECT inside the transaction does not break content writes.
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
@@ -104,9 +90,6 @@ public class EmbeddingV2Tests
     [Test]
     public async Task UploadContent_NonTextType_V2_SqliteFixture_NoEmbeddingAndNoThrow()
     {
-        // Sarah §6 case: non-text content upload → embedding is NON-NULL on Postgres (name-only).
-        // On SQLite: capability disabled → no crash, Embedding stays null.
-        // regression-gate: v1 also skipped on SQLite, so null is the correct SQLite assertion.
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
@@ -123,19 +106,10 @@ public class EmbeddingV2Tests
             "on SQLite the embedding step is skipped entirely — Embedding stays null regardless of content type");
     }
 
-    // -----------------------------------------------------------------------
-    // §6 Case #3 — PATCH /name: name-touch detection + transaction wrapping
-    // verifies: Patch with /name op succeeds on SQLite (transaction added around patch UPDATE);
-    // embedding column stays null because capability is disabled.
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task Patch_ReplaceName_SqliteFixture_NameUpdatedNoEmbeddingAndNoThrow()
     {
-        // Sarah §6.3: PATCH `/name` on a node → embedding changes on Postgres.
-        // On SQLite: name must be updated, Embedding stays null, no crash.
-        // load-bearing: fails if the new transaction in Patch causes a deadlock or the
-        // name UPDATE is somehow lost.
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
@@ -160,7 +134,6 @@ public class EmbeddingV2Tests
     [Test]
     public async Task Patch_NonNameField_SqliteFixture_EmbeddingNotTouched()
     {
-        // patching /status (not /name) must not trigger the embedding path at all
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
@@ -176,7 +149,6 @@ public class EmbeddingV2Tests
     [Test]
     public async Task Patch_NonExistentNode_ThrowsNotFoundException()
     {
-        // verify the NotFoundException path still works through the new transaction shape
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
@@ -186,15 +158,10 @@ public class EmbeddingV2Tests
                 CancellationToken.None));
     }
 
-    // -----------------------------------------------------------------------
-    // §6 Case: TouchesName helper — unit coverage via Patch observable behaviour
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task Patch_PatchListContainsNameAndStatus_OnlyNameTriggersCounted_NoCrash()
     {
-        // verifies that a patch list with both /name and /status works correctly —
-        // the embedding regen fires once (not twice), and the patch succeeds.
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
@@ -213,17 +180,10 @@ public class EmbeddingV2Tests
         });
     }
 
-    // -----------------------------------------------------------------------
-    // §6 Case: EmbeddingInputComposer returns null — empty name + non-text content
-    // verifies that the explicit null-write path in UploadContent does not crash on SQLite.
-    // on Postgres this would write Embedding = null (correct per the decision table).
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task UploadContent_NonTextAfterNameCreation_V2_SqliteFixture_NoThrow()
     {
-        // on Postgres: create (name-only embed), then upload image (compose returns name-only embed).
-        // on SQLite: no embedding either step — verify no crash.
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 

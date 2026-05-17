@@ -15,11 +15,6 @@ namespace Backend.Services.Embeddings;
 /// <summary>
 /// one-shot service that walks all nodes with any embeddable surface (non-empty name OR
 /// text content) and (re)generates their embedding using the v2 composition policy.
-///
-/// v2 change: the <c>Embedding IS NULL</c> filter is dropped — every qualifying row is
-/// recomputed so that v1 content-only embeddings are replaced with the new name+content
-/// composition.  re-running is idempotent at the cost of re-embedding every row.
-///
 /// Postgres-only: if <see cref="IEmbeddingCapability.IsEnabled"/> is false the method
 /// exits immediately with a log message and no database writes.
 /// </summary>
@@ -35,9 +30,6 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
     /// builds the v2 candidate predicate: any row where the composition would yield a
     /// non-null embeddable string, i.e. name is non-empty OR (content is non-null AND
     /// content-type is text).
-    ///
-    /// v1 predicate required <c>Embedding IS NULL</c>; v2 drops that constraint so
-    /// stale v1 content-only embeddings are recomputed with the name+content composition.
     /// </summary>
     static PredicateExpression<Node> CandidatePredicate() {
         PredicateExpression<Node> hasName = new PredicateExpression<Node>(n => n.Name != null && n.Name != "");
@@ -59,12 +51,6 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
     /// runs the v2 backfill: re-embeds every node with any embeddable surface using
     /// the name+content composition policy.
     /// </summary>
-    /// <remarks>
-    /// v2 blanket re-embed: does not skip already-embedded rows.  every qualifying row
-    /// is recomputed so v1 content-only embeddings are replaced with the new composition.
-    /// re-running costs one Vertex AI call per qualifying row; at ~200 nodes this is
-    /// ≈2 min.  roll-back to v1: re-run with a v1-shaped composer against the same Postgres.
-    /// </remarks>
     /// <param name="ct">cancellation token</param>
     public async Task RunAsync(CancellationToken ct = default) {
         if (!embeddingCapability.IsEnabled) {

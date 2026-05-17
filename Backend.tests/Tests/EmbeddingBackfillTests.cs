@@ -72,20 +72,15 @@ public class EmbeddingBackfillTests
     [Test]
     public async Task RunAsync_CapabilityEnabled_SkipsNonTextNodesWithoutName()
     {
-        // v2 candidate predicate: "name non-empty OR (content non-null AND text type)".
-        // A node with non-text content AND an empty name has no embeddable surface → skipped.
-        // We verify no CustomFunction call is reached (SQLite would throw if it were).
         using DatabaseFixture fixture = new();
         NodeService nodeSvc = MakeNodeService(fixture);
 
-        // create with empty name so the v2 predicate also excludes by name
         NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "asset", Name = "" });
         byte[] content = [0x89, 0x50, 0x4E, 0x47]; // PNG magic bytes
         await nodeSvc.UploadContent(node.Id, "image/png", new MemoryStream(content));
 
         EmbeddingBackfillService backfill = MakeBackfill(fixture, EnabledCapability);
 
-        // No DB.CustomFunction call is reached: non-text AND empty name → skipped.
         Assert.DoesNotThrowAsync(() => backfill.RunAsync());
 
         Node raw = await fixture.EntityManager.Load<Node>()
@@ -99,12 +94,6 @@ public class EmbeddingBackfillTests
     [Test]
     public async Task RunAsync_CapabilityEnabled_IncludesNonTextNodesWithName()
     {
-        // v2 change: a node with non-text content but a non-empty name is now a candidate
-        // (name-only embedding).  On SQLite with IsEnabled=true the UPDATE would throw;
-        // verify the node IS in the candidate set by checking it passes the predicate count.
-        // (we cannot execute the UPDATE on SQLite — that would call embedding())
-        // Instead we assert that RunAsync with enabled capability reaches the node and throws,
-        // proving it is no longer skipped.
         using DatabaseFixture fixture = new();
         NodeService nodeSvc = MakeNodeService(fixture);
 
@@ -124,12 +113,9 @@ public class EmbeddingBackfillTests
     [Test]
     public async Task RunAsync_CapabilityEnabled_SkipsNodesWithNullContentAndEmptyName()
     {
-        // v2 predicate: skipped only when BOTH name is empty AND content is null/non-text.
-        // A node with empty name AND no content has no embeddable surface → skipped entirely.
         using DatabaseFixture fixture = new();
         NodeService nodeSvc = MakeNodeService(fixture);
 
-        // force-insert a node with an empty name (the API prevents it but the DB allows it)
         long nodeId = await fixture.EntityManager.Insert<Node>()
                                                  .Columns(n => n.Name, n => n.TypeId)
                                                  .Values("", 0)
@@ -138,7 +124,6 @@ public class EmbeddingBackfillTests
 
         EmbeddingBackfillService backfill = MakeBackfill(fixture, EnabledCapability);
 
-        // no embeddable surface → RunAsync must complete without attempting embedding() on SQLite
         Assert.DoesNotThrowAsync(() => backfill.RunAsync(),
             "node with empty name and null content has no embeddable surface and must be skipped");
 
@@ -160,12 +145,10 @@ public class EmbeddingBackfillTests
         using DatabaseFixture fixture = new();
         NodeService nodeSvc = MakeNodeService(fixture);
 
-        // Create a node without uploading content — Name is non-empty, Content is null.
         NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "doc", Name = "NameNoContent" });
 
         EmbeddingBackfillService backfill = MakeBackfill(fixture, EnabledCapability);
 
-        // v2 predicate includes this node → embedding() called on SQLite → fails
         Assert.CatchAsync(() => backfill.RunAsync(),
             "node with non-empty name and null content is a v2 candidate; RunAsync must attempt (and fail on SQLite) to embed it");
     }

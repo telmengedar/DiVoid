@@ -47,7 +47,6 @@ public static class EmbeddingInputComposer {
 
         if (hasName && hasTextContent) {
             string contentText = Encoding.UTF8.GetString(content);
-            // budget: MaxLength minus name and separator, minimum 0
             int contentBudget = Math.Max(0, MaxLength - name.Length - Separator.Length);
             if (contentText.Length > contentBudget)
                 contentText = contentText[..contentBudget];
@@ -55,12 +54,10 @@ public static class EmbeddingInputComposer {
         }
 
         if (hasName) {
-            // non-text or empty content — name alone
             string trimmedName = name.Length > MaxLength ? name[..MaxLength] : name;
             return trimmedName;
         }
 
-        // hasTextContent but no name
         string text = Encoding.UTF8.GetString(content);
         return text.Length > MaxLength ? text[..MaxLength] : text;
     }
