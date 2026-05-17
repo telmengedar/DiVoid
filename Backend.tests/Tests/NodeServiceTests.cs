@@ -32,7 +32,7 @@ public class NodeServiceTests
     static async Task<NodeDetails> CreateWithStatus(NodeService svc, string status, string type = "task", string name = "Test node")
     {
         NodeDetails node = await svc.CreateNode(new NodeDetails { Type = type, Name = name });
-        return await svc.Patch(node.Id, new PatchOperation { Op = "replace", Path = "/status", Value = status });
+        return await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = status }], CancellationToken.None);
     }
 
     // -----------------------------------------------------------------------
@@ -501,7 +501,7 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         Assert.ThrowsAsync<NotFoundException<Node>>(
-            () => svc.Patch(99999, new PatchOperation { Op = "replace", Path = "/status", Value = "open" }));
+            () => svc.Patch(99999, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], CancellationToken.None));
     }
 
     // -----------------------------------------------------------------------
@@ -515,7 +515,7 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         NodeDetails node = await Create(svc);
-        NodeDetails result = await svc.Patch(node.Id, new PatchOperation { Op = "replace", Path = "/status", Value = "open" });
+        NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], CancellationToken.None);
 
         Assert.That(result.Status, Is.EqualTo("open"));
     }
@@ -527,8 +527,8 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         NodeDetails node = await Create(svc);
-        await svc.Patch(node.Id, new PatchOperation { Op = "replace", Path = "/status", Value = "open" });
-        NodeDetails result = await svc.Patch(node.Id, new PatchOperation { Op = "replace", Path = "/status", Value = "closed" });
+        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], CancellationToken.None);
+        NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "closed" }], CancellationToken.None);
 
         Assert.That(result.Status, Is.EqualTo("closed"));
     }
@@ -544,7 +544,7 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         NodeDetails node = await Create(svc, name: "OriginalName");
-        NodeDetails result = await svc.Patch(node.Id, new PatchOperation { Op = "replace", Path = "/name", Value = "UpdatedName" });
+        NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/name", Value = "UpdatedName" }], CancellationToken.None);
 
         Assert.That(result.Name, Is.EqualTo("UpdatedName"));
     }
@@ -556,7 +556,7 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         NodeDetails node = await Create(svc, name: "BeforePatch");
-        await svc.Patch(node.Id, new PatchOperation { Op = "replace", Path = "/name", Value = "AfterPatch" });
+        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/name", Value = "AfterPatch" }], CancellationToken.None);
 
         // Reload via list to confirm DB was written
         var writer = await svc.ListPaged(new NodeFilter { Id = [node.Id], Count = 1 });
@@ -575,7 +575,7 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         Assert.ThrowsAsync<PropertyNotFoundException>(
-            () => svc.Patch(1, new PatchOperation { Op = "replace", Path = "/type", Value = "other" }));
+            () => svc.Patch(1, [new PatchOperation { Op = "replace", Path = "/type", Value = "other" }], CancellationToken.None));
     }
 
     [Test]
@@ -586,7 +586,7 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         NodeDetails node = await Create(svc);
-        NodeDetails result = await svc.Patch(node.Id, new PatchOperation { Op = "replace", Path = "/status", Value = "in-progress" });
+        NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "in-progress" }], CancellationToken.None);
 
         Assert.That(result.Status, Is.EqualTo("in-progress"));
     }
@@ -815,7 +815,7 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         NodeDetails node = await Create(svc, name: "CheckFields");
-        await svc.Patch(node.Id, new PatchOperation { Op = "replace", Path = "/status", Value = "open" });
+        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], CancellationToken.None);
 
         var writer = await svc.ListPaged(new NodeFilter { Id = [node.Id], Count = 100 });
         List<NodeDetails> results = await CollectPage(writer);
