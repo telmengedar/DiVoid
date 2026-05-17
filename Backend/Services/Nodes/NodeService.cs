@@ -107,8 +107,6 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             }
         }
 
-        // v2: generate a name-only embedding for the newly-created node so it is immediately
-        // discoverable by semantic search, even before any content is uploaded.
         if (embeddingCapability.IsEnabled && !string.IsNullOrWhiteSpace(node.Name))
         {
             string nameInput = node.Name.Length > EmbeddingInputComposer.MaxLength
@@ -545,11 +543,6 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         );
     }
 
-    /// <summary>
-    /// returns true when at least one operation in <paramref name="patches"/> writes the
-    /// <c>/name</c> path (case-insensitive).  <c>flag</c>, <c>unflag</c>, and the custom
-    /// <c>embed</c> op on <c>/name</c> are not considered name-writes.
-    /// </summary>
     static bool TouchesName(PatchOperation[] patches)
     {
         foreach (PatchOperation op in patches)
@@ -577,11 +570,6 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (nameTouched)
         {
             ct.ThrowIfCancellationRequested();
-            // read the row's current name (just written by the patch UPDATE above) and content
-            // inside the same transaction so we compose from the post-patch state.
-            // SQL-side composition preferred to avoid pulling large Content blobs across the wire;
-            // we use the read-compose-write fallback here because DB.If + convert_from + LEFT
-            // is complex to express cleanly through Pooshit.Ocelot's expression tree at this call site.
             Node row = await database.Load<Node>(n => n.Name, n => n.Content, n => n.ContentType)
                                      .Where(n => n.Id == nodeId)
                                      .ExecuteEntityAsync(transaction);
@@ -596,8 +584,6 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                               .Where(n => n.Id == nodeId)
                               .ExecuteAsync(transaction);
             } else {
-                // embedding(model, NULL) behaviour unverified against the production function;
-                // use explicit null write to avoid a potential function error on NULL input.
                 await database.Update<Node>()
                               .Set(n => n.Embedding == (float[]) null)
                               .Where(n => n.Id == nodeId)
@@ -632,8 +618,6 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         if (embeddingCapability.IsEnabled) {
             ct.ThrowIfCancellationRequested();
-            // read the current name inside the transaction (content write does not change Name)
-            // to compose name + content per the v2 policy
             Node row = await database.Load<Node>(n => n.Name)
                                      .Where(n => n.Id == nodeId)
                                      .ExecuteEntityAsync(transaction);
@@ -647,8 +631,6 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                               .Where(n => n.Id == nodeId)
                               .ExecuteAsync(transaction);
             } else {
-                // embedding(model, NULL) behaviour unverified against the production function;
-                // use explicit null write to avoid a potential function error on NULL input.
                 await database.Update<Node>()
                               .Set(n => n.Embedding == (float[]) null)
                               .Where(n => n.Id == nodeId)

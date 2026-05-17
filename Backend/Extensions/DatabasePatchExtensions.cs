@@ -72,11 +72,6 @@ public static class DatabasePatchExtensions {
                     setters.Add(e => DB.Property<T>(property.Name, true).Int64 == (DB.Property<T>(property.Name, true).Int64 & ~DB.Constant(targetvalue).Int64));
                 break;
                 case "embed":
-                    // deprecated in v2: the name-PATCH and content-POST paths are the canonical
-                    // embedding triggers and compose name+content automatically.  this op is
-                    // preserved as a low-level escape hatch for external callers; it writes
-                    // exactly the provided value string into the target [AllowPatch] float[] column
-                    // without any composition.  will be removed in a follow-up once no caller relies on it.
                     setters.Add(e => DB.Property<T>(property.Name, true) == DB.CustomFunction("embedding", DB.Constant("gemini-embedding-001"), DB.Constant(patch.Value)));
                 break;
                 default:
