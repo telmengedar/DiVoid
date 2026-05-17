@@ -107,6 +107,20 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             }
         }
 
+        if (embeddingCapability.IsEnabled && !string.IsNullOrWhiteSpace(node.Name))
+        {
+            string nameInput = node.Name.Length > EmbeddingInputComposer.MaxLength
+                ? node.Name[..EmbeddingInputComposer.MaxLength]
+                : node.Name;
+
+            await database.Update<Node>()
+                          .Set(n => n.Embedding == DB.CustomFunction("embedding",
+                                                                      DB.Constant(TextContentTypePredicate.EmbeddingModel),
+                                                                      DB.Constant(nameInput)).Type<float[]>())
+                          .Where(n => n.Id == nodeId)
+                          .ExecuteAsync(transaction);
+        }
+
         transaction.Commit();
         return await GetNodeById(nodeId);
     }
@@ -529,14 +543,55 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         );
     }
 
-    /// <inheritdoc />
-    public async Task<NodeDetails> Patch(long nodeId, params PatchOperation[] patches)
+    static bool TouchesName(PatchOperation[] patches)
     {
+        foreach (PatchOperation op in patches)
+        {
+            if (string.Compare(op.Path, "/name", StringComparison.OrdinalIgnoreCase) != 0)
+                continue;
+            if (op.Op == "replace" || op.Op == "add" || op.Op == "remove")
+                return true;
+        }
+        return false;
+    }
+
+    /// <inheritdoc />
+    public async Task<NodeDetails> Patch(long nodeId, PatchOperation[] patches, CancellationToken ct)
+    {
+        bool nameTouched = embeddingCapability.IsEnabled && TouchesName(patches);
+        using Transaction transaction = database.Transaction();
+
         if (await database.Update<Node>()
                          .Patch(patches)
                          .Where(n => n.Id == nodeId)
-                         .ExecuteAsync() == 0)
+                         .ExecuteAsync(transaction) == 0)
             throw new NotFoundException<Node>(nodeId);
+
+        if (nameTouched)
+        {
+            ct.ThrowIfCancellationRequested();
+            Node row = await database.Load<Node>(n => n.Name, n => n.Content, n => n.ContentType)
+                                     .Where(n => n.Id == nodeId)
+                                     .ExecuteEntityAsync(transaction);
+
+            string composed = EmbeddingInputComposer.Compose(row.Name, row.Content, row.ContentType);
+            if (composed != null)
+            {
+                await database.Update<Node>()
+                              .Set(n => n.Embedding == DB.CustomFunction("embedding",
+                                                                          DB.Constant(TextContentTypePredicate.EmbeddingModel),
+                                                                          DB.Constant(composed)).Type<float[]>())
+                              .Where(n => n.Id == nodeId)
+                              .ExecuteAsync(transaction);
+            } else {
+                await database.Update<Node>()
+                              .Set(n => n.Embedding == (float[]) null)
+                              .Where(n => n.Id == nodeId)
+                              .ExecuteAsync(transaction);
+            }
+        }
+
+        transaction.Commit();
         return await GetNodeById(nodeId);
     }
 
@@ -563,12 +618,16 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         if (embeddingCapability.IsEnabled) {
             ct.ThrowIfCancellationRequested();
-            if (TextContentTypePredicate.IsText(contentType)) {
-                string text = Encoding.UTF8.GetString(blob);
+            Node row = await database.Load<Node>(n => n.Name)
+                                     .Where(n => n.Id == nodeId)
+                                     .ExecuteEntityAsync(transaction);
+
+            string composed = EmbeddingInputComposer.Compose(row.Name, blob, contentType);
+            if (composed != null) {
                 await database.Update<Node>()
                               .Set(n => n.Embedding == DB.CustomFunction("embedding",
                                                                           DB.Constant(TextContentTypePredicate.EmbeddingModel),
-                                                                          DB.Constant(text)).Type<float[]>())
+                                                                          DB.Constant(composed)).Type<float[]>())
                               .Where(n => n.Id == nodeId)
                               .ExecuteAsync(transaction);
             } else {

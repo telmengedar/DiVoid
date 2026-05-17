@@ -13,14 +13,10 @@ using Pooshit.Ocelot.Tokens;
 namespace Backend.Services.Embeddings;
 
 /// <summary>
-/// one-shot service that walks all content-bearing nodes whose <see cref="Node.Embedding"/>
-/// is null and whose <see cref="Node.ContentType"/> qualifies as text, then issues the
-/// same server-side embedding UPDATE used by the live content-upload path.
-///
+/// one-shot service that walks all nodes with any embeddable surface (non-empty name OR
+/// text content) and (re)generates their embedding using the v2 composition policy.
 /// Postgres-only: if <see cref="IEmbeddingCapability.IsEnabled"/> is false the method
 /// exits immediately with a log message and no database writes.
-///
-/// Safe to re-run: nodes already embedded are filtered out by the query predicate.
 /// </summary>
 public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapability embeddingCapability, ILogger<EmbeddingBackfillService> logger) {
 
@@ -31,24 +27,29 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
     readonly ILogger<EmbeddingBackfillService> logger = logger;
 
     /// <summary>
-    /// builds the SQL predicate that selects candidate nodes: unembedded, non-null
-    /// content, and a content-type that qualifies as embeddable text.
-    /// text/* OR the application/* allowlist from <see cref="TextContentTypePredicate.ApplicationTextTypes"/>.
+    /// builds the v2 candidate predicate: any row where the composition would yield a
+    /// non-null embeddable string, i.e. name is non-empty OR (content is non-null AND
+    /// content-type is text).
     /// </summary>
     static PredicateExpression<Node> CandidatePredicate() {
-        PredicateExpression<Node> typePredicate = null;
-        typePredicate |= n => n.ContentType.Like("text/%");
-        typePredicate |= n => n.ContentType.In(TextContentTypePredicate.ApplicationTextTypes);
+        PredicateExpression<Node> hasName = new PredicateExpression<Node>(n => n.Name != null && n.Name != "");
+
+        PredicateExpression<Node> textTypePredicate = null;
+        textTypePredicate |= n => n.ContentType.Like("text/%");
+        textTypePredicate |= n => n.ContentType.In(TextContentTypePredicate.ApplicationTextTypes);
+
+        PredicateExpression<Node> hasTextContent = null;
+        hasTextContent &= n => n.Content != null;
+        hasTextContent &= textTypePredicate;
 
         PredicateExpression<Node> predicate = null;
-        predicate &= n => n.Embedding == null;
-        predicate &= n => n.Content != null;
-        predicate &= typePredicate;
+        predicate &= hasName | hasTextContent;
         return predicate;
     }
 
     /// <summary>
-    /// runs the backfill.
+    /// runs the v2 backfill: re-embeds every node with any embeddable surface using
+    /// the name+content composition policy.
     /// </summary>
     /// <param name="ct">cancellation token</param>
     public async Task RunAsync(CancellationToken ct = default) {
@@ -57,7 +58,7 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
             return;
         }
 
-        logger.LogInformation("event=backfill.start");
+        logger.LogInformation("event=backfill.start version=v2 composition=name_plus_content");
         DateTimeOffset started = DateTimeOffset.UtcNow;
 
         long total = await database.Load<Node>(DB.Count())
@@ -67,18 +68,24 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
         logger.LogInformation("event=backfill.candidates total={Total}", total);
 
         int embedded = 0;
+        int skipped = 0;
 
-        await foreach (Node node in database.Load<Node>(n => n.Id, n => n.ContentType, n => n.Content)
+        await foreach (Node node in database.Load<Node>(n => n.Id, n => n.Name, n => n.ContentType, n => n.Content)
                                             .Where(CandidatePredicate().Content)
                                             .ExecuteEntitiesAsync()) {
             ct.ThrowIfCancellationRequested();
 
-            string text = Encoding.UTF8.GetString(node.Content);
+            string composed = EmbeddingInputComposer.Compose(node.Name, node.Content, node.ContentType);
+            if (composed == null) {
+                // composition returned null despite passing the candidate predicate — safety skip
+                skipped++;
+                continue;
+            }
 
             await database.Update<Node>()
                           .Set(n => n.Embedding == DB.CustomFunction("embedding",
                                                                       DB.Constant(TextContentTypePredicate.EmbeddingModel),
-                                                                      DB.Constant(text)).Type<float[]>())
+                                                                      DB.Constant(composed)).Type<float[]>())
                           .Where(n => n.Id == node.Id)
                           .ExecuteAsync();
 
@@ -90,7 +97,7 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
 
         TimeSpan elapsed = DateTimeOffset.UtcNow - started;
         logger.LogInformation(
-            "event=backfill.complete embedded={Embedded} total={Total} elapsed={Elapsed}",
-            embedded, total, elapsed);
+            "event=backfill.complete embedded={Embedded} skipped={Skipped} total={Total} elapsed={Elapsed}",
+            embedded, skipped, total, elapsed);
     }
 }

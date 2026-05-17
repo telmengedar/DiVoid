@@ -1,5 +1,8 @@
 # Architectural Document: Automatic Content Embeddings on Node Create/Update
 
+> **Superseded in part by `docs/architecture/embeddings-v2.md` (task #437).**
+> v1 Decisions 2 (clear-on-non-text → now name-only fallback), 8 (content-only composition → now name+content), and 10 (trigger surface — create and name-PATCH now also trigger regen) are revised in v2.  Read v2 before modifying any embedding path.
+
 Resolves DiVoid task **#180** ("Generate vector embeddings on node content create/update — Postgres-only"). This document lands the open architectural questions; the implementing agent (John) builds from here.
 
 ---

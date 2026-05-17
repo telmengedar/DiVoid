@@ -27,7 +27,8 @@ namespace Backend.Controllers.V1
 
 
         /// <summary>
-        /// creates a new <see cref="Node"/>
+        /// creates a new <see cref="Node"/>.
+        /// on Postgres, creates a name-only embedding for the new node if its name is non-empty.
         /// </summary>
         /// <param name="node">node to create</param>
         /// <returns>created node</returns>
@@ -106,23 +107,26 @@ namespace Backend.Controllers.V1
         }
 
         /// <summary>
-        /// patches data of a node
+        /// patches data of a node.
+        /// on Postgres, a patch that touches <c>/name</c> also regenerates the node's embedding
+        /// inside the same transaction (new name + current content composition).
         /// </summary>
         /// <param name="nodeId">id of node to patch</param>
         /// <param name="patches">patches to apply</param>
-        /// <returns>patched nodes</returns>
+        /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
+        /// <returns>patched node</returns>
         [HttpPatch("{nodeId:long}")]
         [Authorize(Policy = "write")]
-        public Task<NodeDetails> Patch(long nodeId, [FromBody] PatchOperation[] patches)
+        public Task<NodeDetails> Patch(long nodeId, [FromBody] PatchOperation[] patches, CancellationToken ct)
         {
             logger.LogInformation("Patching node '{nodeId}'", nodeId);
-            return nodeService.Patch(nodeId, patches);
+            return nodeService.Patch(nodeId, patches, ct);
         }
 
         /// <summary>
         /// uploads data for a node.
-        /// on Postgres: also generates a vector embedding for text content types,
-        /// or clears the embedding for non-text content types.
+        /// on Postgres: also (re)generates a vector embedding from the node's name plus the
+        /// new content (or name alone if content is non-text/empty; null only if both are empty).
         /// on SQLite: content is written; embedding is not touched.
         /// </summary>
         /// <param name="nodeId">id of node for which to upload data</param>

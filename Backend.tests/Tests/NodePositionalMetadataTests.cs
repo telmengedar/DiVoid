@@ -493,8 +493,8 @@ public class LayoutNodesCliTests
         // Create a node and manually set its position to a known non-zero value
         NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "task", Name = "PrePositioned" });
         await svc.Patch(node.Id,
-            new PatchOperation { Op = "replace", Path = "/X", Value = 123.45 },
-            new PatchOperation { Op = "replace", Path = "/Y", Value = 678.90 });
+            [new PatchOperation { Op = "replace", Path = "/X", Value = 123.45 }, new PatchOperation { Op = "replace", Path = "/Y", Value = 678.90 }],
+            CancellationToken.None);
 
         // Run layout — this node must NOT be moved (it's not at 0,0)
         await layoutSvc.RunAsync();
