@@ -34,9 +34,6 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
     internal static PredicateExpression<Node> CandidatePredicate() {
         PredicateExpression<Node> hasName = new PredicateExpression<Node>(n => n.Name != null && n.Name != "");
 
-        // explicit operator calls on non-null operands throughout: the null-start |=/&=
-        // compound-assignment pattern interacts with Ocelot's Disjunct short-circuit to
-        // produce Block-wrapped sub-expressions that Postgres renders incorrectly
         PredicateExpression<Node> isTextType =
             new PredicateExpression<Node>(n => n.ContentType.Like("text/%")) |
             new PredicateExpression<Node>(n => n.ContentType.In(TextContentTypePredicate.ApplicationTextTypes));

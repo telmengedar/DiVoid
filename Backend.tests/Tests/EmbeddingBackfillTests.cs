@@ -168,21 +168,6 @@ public class EmbeddingBackfillTests
         Assert.DoesNotThrowAsync(() => backfill.RunAsync());
     }
 
-    // -----------------------------------------------------------------------
-    // 4. SQL-shape regression: CandidatePredicate must emit a WHERE clause whose
-    //    top-level structure is "name-arm OR content-arm", not "name-arm AND anything".
-    //
-    //    This test exists because the prior implementation used the null-start &=/|=
-    //    compound-assignment pattern which, via Ocelot's Conjunct/Disjunct and
-    //    Block-wrapping, produced SQL that silently excluded name-only rows on Postgres
-    //    while passing on SQLite.  The SQLite integration tests above could not catch
-    //    that divergence; this SQL-text test is the right granularity for "did the
-    //    predicate compile to the shape I expected?"
-    //
-    //    The test captures the WHERE clause via ILoadOperation.Prepare().CommandText
-    //    (SQLite dialect, which is close enough to verify the boolean structure).
-    // -----------------------------------------------------------------------
-
     [Test]
     public async Task CandidatePredicate_SqlShape_NameArmOrContentArm()
     {
@@ -194,16 +179,11 @@ public class EmbeddingBackfillTests
                                     .Prepare()
                                     .CommandText;
 
-        // The WHERE clause must contain an OR at the top level so that name-only rows
-        // (where Content IS NULL) are selected.  A top-level AND would exclude them.
-        // We normalise whitespace and assert the required structural tokens are present.
         string where = Regex.Match(commandText, @"(?i)\bWHERE\b(.+)$").Groups[1].Value.Trim();
 
         Assert.That(where, Does.Contain("OR").IgnoreCase,
             "WHERE clause must contain OR so that name-only nodes are not excluded by the content-type arm");
 
-        // The name arm must appear before the OR (i.e. it is the left operand of the
-        // top-level disjunction, not buried inside the right arm).
         int orIndex   = where.IndexOf("OR", StringComparison.OrdinalIgnoreCase);
         int nameIndex = where.IndexOf("name", StringComparison.OrdinalIgnoreCase);
 
@@ -211,7 +191,6 @@ public class EmbeddingBackfillTests
         Assert.That(nameIndex, Is.LessThan(orIndex),
             "name-arm must appear before the top-level OR (i.e. be the left operand of the disjunction)");
 
-        // The content-type arm must appear after the OR.
         int contentIndex = where.IndexOf("content", StringComparison.OrdinalIgnoreCase);
         Assert.That(contentIndex, Is.GreaterThan(orIndex),
             "content-type arm must appear after the top-level OR (i.e. be the right operand of the disjunction)");
