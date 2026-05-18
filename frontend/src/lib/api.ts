@@ -7,12 +7,13 @@
  *  - Typed DivoidApiError on non-2xx
  *  - 30s AbortController timeout
  *  - Dev-mode request logging
- *  - 401 reactive-refresh: signinSilent() → retry once → signinRedirect() fallback
+ *  - 401 reactive-refresh: single-flight signinSilent() → retry once → signinRedirect() fallback
  *
  * This module is PURE — no React hooks, no side effects beyond the fetch call.
  * Components and hooks use createApiClient() to get a bound client.
  *
  * Design: docs/architecture/frontend-bootstrap.md §6.3
+ * Fix: DiVoid bug #403 v2 — concurrent-401 single-flight coalescing, synchronous dead flag.
  */
 
 import { DivoidApiError } from '@/types/divoid';
@@ -78,11 +79,11 @@ async function mapErrorResponse(response: Response): Promise<DivoidApiError> {
  *                        token or undefined if unauthenticated).
  * @param signinSilent    Attempts a silent token refresh via the refresh-token grant.
  *                        Returns a Promise that resolves on success, rejects on failure.
- *                        When provided, a 401 triggers: silentRefresh → retry once.
- *                        If the retry also 401s, or if silentRefresh rejects,
- *                        signinRedirect is called. Max 1 refresh per request. §6.3.
- * @param signinRedirect  Full Keycloak redirect — called only after silent refresh
- *                        fails or the retry returns 401 again.
+ *                        When provided, a 401 triggers: single-flight silentRefresh → retry once.
+ *                        If the retry also 401s, or if silentRefresh rejects, signinRedirect is
+ *                        called exactly once. §6.3.
+ * @param signinRedirect  Full Keycloak redirect — called exactly once after silent refresh
+ *                        fails terminally. Subsequent callers short-circuit via the dead flag.
  * @param baseUrl         API base URL (defaults to VITE_API_BASE_URL env var). Accepts
  *                        an explicit value to allow tests to inject a test server URL
  *                        without mocking the environment.
@@ -98,6 +99,38 @@ export function createApiClient(
     baseUrl ??
     (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
     '';
+
+  // ─── Single-flight silent-refresh coalescing ───────────────────────────────
+  //
+  // Bug: with N concurrent 401s each called signinSilent() independently.
+  // Result: N parallel token POSTs → all returned 400 invalid_grant → loop (550 reqs/44s).
+  //
+  // Fix: a single in-flight Promise is shared across all concurrent 401 waiters.
+  // The first waiter starts signinSilent(); all others await the same Promise.
+  // On success all N retry together. On rejection all N fail together and exactly
+  // one redirect fires. See DiVoid bug #403 v2.
+  let silentRefreshInFlight: Promise<unknown> | null = null;
+
+  // Synchronous "session is dead" flag. Set to true the moment the single-flight
+  // signinSilent() rejects or the retried request also 401s. All subsequent _fetch
+  // calls read this BEFORE awaiting anything — no React render cycle, no race.
+  // This is the fix for the async-setState race in the original bug #403 partial fix.
+  let sessionDead = false;
+
+  // Redirect-in-flight guard: ensures signinRedirect() is called at most once
+  // per dead session, regardless of how many callers observe sessionDead=true.
+  let redirectFired = false;
+
+  /**
+   * Fires the login redirect exactly once.
+   * Idempotent: subsequent calls within the same dead session are no-ops.
+   */
+  function fireRedirectOnce(): void {
+    if (signinRedirect && !redirectFired) {
+      redirectFired = true;
+      signinRedirect();
+    }
+  }
 
   /**
    * Core fetch wrapper.
@@ -117,6 +150,18 @@ export function createApiClient(
     },
     isRetry = false,
   ): Promise<Response> {
+    // Short-circuit synchronously: once the session is dead, stop trying to refresh.
+    // This check happens before any await, so every concurrent caller observes the
+    // flag in the same microtask tick — no React state round-trip required.
+    if (sessionDead && !isRetry) {
+      fireRedirectOnce();
+      // Return a synthetic 401 so callers throw DivoidApiError(401) fast.
+      return new Response(JSON.stringify({ code: 'unauthorized', text: 'Session expired' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     const token = getToken();
 
     const headers: Record<string, string> = { ...(init.headers ?? {}) };
@@ -153,20 +198,31 @@ export function createApiClient(
     }
 
     if (response.status === 401 && !isRetry && signinSilent) {
-      // §6.3: attempt silent refresh, then retry the original request once.
+      // §6.3 single-flight: coalesce all concurrent 401 waiters onto one signinSilent() call.
+      // If no refresh is in flight, start one. Otherwise await the one already running.
+      if (!silentRefreshInFlight) {
+        silentRefreshInFlight = signinSilent().finally(() => {
+          silentRefreshInFlight = null;
+        });
+      }
+
       try {
-        await signinSilent();
+        await silentRefreshInFlight;
       } catch {
-        // Silent refresh failed (refresh token expired / revoked).
-        if (signinRedirect) signinRedirect();
-        return response; // caller will see the 401 and throw
+        // Single-flight signinSilent rejected — session is terminally dead.
+        // Mark synchronously so every concurrent waiter that reaches this point
+        // will also short-circuit on their next _fetch call.
+        sessionDead = true;
+        fireRedirectOnce();
+        return response; // caller will see the 401 and throw DivoidApiError
       }
 
       // Retry once with the freshly-obtained token.
       const retried = await _fetch(path, init, true);
       if (retried.status === 401) {
-        // Retry also failed — fall through to full redirect.
-        if (signinRedirect) signinRedirect();
+        // Retry also failed — session dead, redirect once.
+        sessionDead = true;
+        fireRedirectOnce();
       }
       return retried;
     }

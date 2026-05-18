@@ -42,11 +42,17 @@ const eventRegistry: {
   userLoaded: null,
 };
 
+// Spies for stopSilentRenew and removeUser — needed for the background-renew-stop test.
+const mockStopSilentRenew = vi.fn();
+const mockRemoveUser = vi.fn().mockResolvedValue(undefined);
+
 vi.mock('react-oidc-context', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useAuth: vi.fn(() => ({
     isAuthenticated: false,
     user: undefined,
+    stopSilentRenew: mockStopSilentRenew,
+    removeUser: mockRemoveUser,
     events: {
       addSilentRenewError: vi.fn((cb: EventCallback) => {
         eventRegistry.silentRenewError = cb;
@@ -101,6 +107,7 @@ afterEach(() => {
   eventRegistry.accessTokenExpired = null;
   eventRegistry.userSignedOut = null;
   eventRegistry.userLoaded = null;
+  vi.clearAllMocks();
 });
 
 // ─── Consumer component ───────────────────────────────────────────────────────
@@ -224,5 +231,51 @@ describe('AuthProvider_TerminalFailureFlag_TogglesOnEvents', () => {
     });
 
     expect(getTerminalFlag()).toBe(false);
+  });
+
+  /**
+   * POSITIVE PROOF (load-bearing, DiVoid bug #403 v2):
+   *
+   * addSilentRenewError fires → stopSilentRenew() AND removeUser() are called.
+   * This stops oidc-client-ts from scheduling further background silent-renew
+   * attempts on the dead refresh token (the root cause of the 80 req/s tick).
+   *
+   * Negative proof (apply before submitting):
+   *   In DiVoidAuthEventWatcher, remove the `auth.stopSilentRenew?.()` call from
+   *   the addSilentRenewError callback. This test must fail with:
+   *     "expected "spy" to have been called once, but got 0 times"
+   */
+  it('calls stopSilentRenew and removeUser when addSilentRenewError fires', async () => {
+    await renderConsumer();
+
+    await act(async () => {
+      eventRegistry.silentRenewError?.();
+    });
+
+    // stopSilentRenew must be called to halt background renew scheduling.
+    expect(mockStopSilentRenew).toHaveBeenCalledOnce();
+    // removeUser must be called so isAuthenticated → false → ProtectedRoute redirects.
+    expect(mockRemoveUser).toHaveBeenCalledOnce();
+  });
+
+  /**
+   * POSITIVE PROOF (load-bearing, DiVoid bug #403 v2):
+   *
+   * addUserSignedOut fires → stopSilentRenew() AND removeUser() are called.
+   *
+   * Negative proof (apply before submitting):
+   *   In DiVoidAuthEventWatcher, remove the `auth.stopSilentRenew?.()` call from
+   *   the addUserSignedOut callback. This test must fail with:
+   *     "expected "spy" to have been called once, but got 0 times"
+   */
+  it('calls stopSilentRenew and removeUser when addUserSignedOut fires', async () => {
+    await renderConsumer();
+
+    await act(async () => {
+      eventRegistry.userSignedOut?.();
+    });
+
+    expect(mockStopSilentRenew).toHaveBeenCalledOnce();
+    expect(mockRemoveUser).toHaveBeenCalledOnce();
   });
 });
