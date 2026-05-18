@@ -43,9 +43,6 @@ public class NodeUserLookupHttpTests
         fixture.Dispose();
     }
 
-    // -----------------------------------------------------------------------
-    // Helpers
-    // -----------------------------------------------------------------------
 
     async Task<long> InsertNodeAsync(string type, string name)
     {
@@ -89,9 +86,6 @@ public class NodeUserLookupHttpTests
         return client;
     }
 
-    // -----------------------------------------------------------------------
-    // T1 — happy path: bound node resolves to its user-id
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task T1_BoundNode_Resolves_ToUserId()
@@ -128,16 +122,12 @@ public class NodeUserLookupHttpTests
             "A failure here means UserIdResponse was widened — single-purpose contract is broken.");
     }
 
-    // -----------------------------------------------------------------------
-    // T2 — existing node with no user binding returns 404
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task T2_UnboundNode_Returns404()
     {
         string suffix = Guid.NewGuid().ToString("N")[..8];
         long nodeId = await InsertNodeAsync("documentation", $"t2-unbound-{suffix}");
-        // Insert a caller user with no HomeNodeId pointing at nodeId.
         long callerId = await InsertUserAsync($"t2-caller-{suffix}", Json.WriteString(new[] { "read" }));
 
         string token = fixture.MintToken(userId: callerId);
@@ -150,9 +140,6 @@ public class NodeUserLookupHttpTests
             "A failure here means the null-check / NotFoundException throw is missing.");
     }
 
-    // -----------------------------------------------------------------------
-    // T3 — non-existent node-id returns 404 with same body shape as T2
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task T3_NonExistentNodeId_Returns404_SameShapeAsT2()
@@ -165,12 +152,10 @@ public class NodeUserLookupHttpTests
         string token = fixture.MintToken(userId: callerId);
         HttpClient client = ClientWithToken(token);
 
-        // T2-equivalent: unbound real node.
         HttpResponseMessage t2Response = await client.GetAsync($"/api/nodes/{realNodeId}/user");
         Assert.That((int)t2Response.StatusCode, Is.EqualTo(404));
         string t2Body = await t2Response.Content.ReadAsStringAsync();
 
-        // T3: non-existent node.
         HttpResponseMessage t3Response = await client.GetAsync("/api/nodes/9999999999/user");
         Assert.That((int)t3Response.StatusCode, Is.EqualTo(404),
             "T3: a non-existent node-id must also return 404. " +
@@ -189,9 +174,6 @@ public class NodeUserLookupHttpTests
             "leaks node-existence information to the caller.");
     }
 
-    // -----------------------------------------------------------------------
-    // T4 — unauthenticated request returns 401
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task T4_Unauthenticated_Returns401()
@@ -199,7 +181,6 @@ public class NodeUserLookupHttpTests
         string suffix = Guid.NewGuid().ToString("N")[..8];
         long nodeId = await InsertNodeAsync("agent", $"t4-agent-{suffix}");
 
-        // No Authorization header.
         HttpClient client = fixture.CreateClient();
 
         HttpResponseMessage response = await client.GetAsync($"/api/nodes/{nodeId}/user");
@@ -209,16 +190,12 @@ public class NodeUserLookupHttpTests
             "A failure here means the [Authorize] attribute is missing from the action.");
     }
 
-    // -----------------------------------------------------------------------
-    // T5 — caller with read-only permission succeeds
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task T5_ReadOnlyPermission_Succeeds()
     {
         string suffix = Guid.NewGuid().ToString("N")[..8];
         long nodeId = await InsertNodeAsync("agent", $"t5-agent-{suffix}");
-        // User bound to the node carries only "read".
         long userId = await InsertUserAsync($"t5-user-{suffix}", Json.WriteString(new[] { "read" }), homeNodeId: nodeId);
 
         string token = fixture.MintToken(userId: userId);
@@ -232,9 +209,6 @@ public class NodeUserLookupHttpTests
             "which would block non-admin agents from using this endpoint.");
     }
 
-    // -----------------------------------------------------------------------
-    // T6 — load-bearing negative-proof
-    // -----------------------------------------------------------------------
 
     /// <summary>
     /// T6 is the load-bearing negative-proof case per DiVoid #275.

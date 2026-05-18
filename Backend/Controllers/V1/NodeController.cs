@@ -1,4 +1,5 @@
 using System.Threading;
+using Backend.Auth;
 using Backend.Models.Nodes;
 using Backend.Models.Users;
 using Backend.Services.Nodes;
@@ -123,7 +124,7 @@ namespace Backend.Controllers.V1
         [Authorize(Policy = "read")]
         public async Task<UserIdResponse> GetUser(long nodeId)
         {
-            logger.LogInformation("event=node.user.lookup nodeId={NodeId} callerId={CallerId}", nodeId, User.FindFirst("userId")?.Value);
+            logger.LogInformation("event=node.user.lookup nodeId={NodeId} callerId={CallerId}", nodeId, User.GetDivoidUserId());
             return new UserIdResponse { UserId = await nodeService.GetUserIdForNode(nodeId) };
         }
 
