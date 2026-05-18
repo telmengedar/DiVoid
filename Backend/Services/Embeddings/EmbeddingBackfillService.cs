@@ -31,20 +31,20 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
     /// non-null embeddable string, i.e. name is non-empty OR (content is non-null AND
     /// content-type is text).
     /// </summary>
-    static PredicateExpression<Node> CandidatePredicate() {
+    internal static PredicateExpression<Node> CandidatePredicate() {
         PredicateExpression<Node> hasName = new PredicateExpression<Node>(n => n.Name != null && n.Name != "");
 
-        PredicateExpression<Node> textTypePredicate = null;
-        textTypePredicate |= n => n.ContentType.Like("text/%");
-        textTypePredicate |= n => n.ContentType.In(TextContentTypePredicate.ApplicationTextTypes);
+        // explicit operator calls on non-null operands throughout: the null-start |=/&=
+        // compound-assignment pattern interacts with Ocelot's Disjunct short-circuit to
+        // produce Block-wrapped sub-expressions that Postgres renders incorrectly
+        PredicateExpression<Node> isTextType =
+            new PredicateExpression<Node>(n => n.ContentType.Like("text/%")) |
+            new PredicateExpression<Node>(n => n.ContentType.In(TextContentTypePredicate.ApplicationTextTypes));
 
-        PredicateExpression<Node> hasTextContent = null;
-        hasTextContent &= n => n.Content != null;
-        hasTextContent &= textTypePredicate;
+        PredicateExpression<Node> hasTextContent =
+            new PredicateExpression<Node>(n => n.Content != null) & isTextType;
 
-        PredicateExpression<Node> predicate = null;
-        predicate &= hasName | hasTextContent;
-        return predicate;
+        return hasName | hasTextContent;
     }
 
     /// <summary>
