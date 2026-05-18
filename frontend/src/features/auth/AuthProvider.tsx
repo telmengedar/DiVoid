@@ -63,8 +63,14 @@ function DiVoidAuthEventWatcher({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     // addSilentRenewError: refresh token grant failed — session is conclusively dead.
+    // Call stopSilentRenew() so oidc-client-ts stops scheduling background renews on
+    // the dead refresh token (root cause of the ~80 req/s steady tick in the HAR).
+    // Call removeUser() so isAuthenticated becomes false synchronously, enabling
+    // ProtectedRoute to fire the single login redirect. See DiVoid bug #403 v2.
     const offRenew = auth.events.addSilentRenewError(() => {
       setTerminalAuthFailure(true);
+      auth.stopSilentRenew?.();
+      void auth.removeUser();
     });
 
     // addAccessTokenExpired: access token expired without a successful silent renew.
@@ -76,8 +82,11 @@ function DiVoidAuthEventWatcher({ children }: { children: ReactNode }) {
     });
 
     // addUserSignedOut: IdP indicates the user has signed out (back-channel/front-channel).
+    // Also stop background renews so we don't spin on a dead session.
     const offSignedOut = auth.events.addUserSignedOut(() => {
       setTerminalAuthFailure(true);
+      auth.stopSilentRenew?.();
+      void auth.removeUser();
     });
 
     // addUserLoaded: successful (re-)authentication — reset the failure flag so

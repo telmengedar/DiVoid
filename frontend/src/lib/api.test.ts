@@ -213,6 +213,142 @@ describe('createApiClient — reactive 401 retry (§6.3)', () => {
   });
 });
 
+// ─── createApiClient — single-flight & dead-session (bug #403 v2) ─────────────
+//
+// These tests verify the three-part fix:
+//   1. Concurrent 401s share ONE signinSilent() call (single-flight coalescing).
+//   2. After signinSilent rejects, signinRedirect() fires exactly once, regardless
+//      of how many concurrent callers observed the 401.
+//   3. After terminal failure, subsequent _fetch calls short-circuit synchronously:
+//      no signinSilent, no HTTP request to the token endpoint, DivoidApiError(401) fast.
+//
+// Negative proof:
+//   Test 1: remove `if (!silentRefreshInFlight)` guard in api.ts — each concurrent
+//           401 starts its own Promise → signinSilent called N times. Test fails.
+//   Test 2: remove `redirectFired` guard and call signinRedirect() inside the
+//           single-flight catch instead — N concurrent waiters each fire their own
+//           redirect. Test fails with signinRedirect called > 1 time.
+//   Test 3: remove `if (sessionDead && !isRetry)` short-circuit at the top of _fetch
+//           → subsequent callers reach the network and trigger more signinSilent calls.
+//           Test fails with signinSilent called again.
+
+describe('createApiClient — single-flight & dead-session (§6.3 v2)', () => {
+  it('concurrent 401s share exactly one signinSilent() call (single-flight coalescing)', async () => {
+    // Server always 401s — simulates dead refresh token.
+    let fetchCallCount = 0;
+    server.use(
+      http.get(`${BASE_URL}/users/me`, () => {
+        fetchCallCount++;
+        return HttpResponse.json({ code: 'unauthorized', text: 'expired' }, { status: 401 });
+      }),
+    );
+
+    // signinSilent resolves (pretend it succeeded) so concurrent waiters can
+    // proceed to the retry path — we just want to measure call count.
+    const signinSilent = vi.fn(async () => { /* resolves */ });
+    const signinRedirect = vi.fn();
+    const client = createApiClient(() => undefined, signinSilent, signinRedirect, BASE_URL);
+
+    // Fire 6 concurrent requests — same N as the HAR evidence.
+    const results = await Promise.allSettled(
+      Array.from({ length: 6 }, () => client.get('/users/me')),
+    );
+
+    // All 6 should have rejected (retry also 401s).
+    expect(results.every((r) => r.status === 'rejected')).toBe(true);
+
+    // KEY: signinSilent called exactly once — all 6 awaited the same Promise.
+    expect(signinSilent).toHaveBeenCalledOnce();
+  });
+
+  it('failed silent refresh fires signinRedirect() exactly once across N concurrent 401s', async () => {
+    server.use(
+      http.get(`${BASE_URL}/users/me`, () =>
+        HttpResponse.json({ code: 'unauthorized', text: 'expired' }, { status: 401 }),
+      ),
+    );
+
+    // signinSilent rejects — simulates invalid_grant from Keycloak.
+    const signinSilent = vi.fn(async () => { throw new Error('invalid_grant'); });
+    const signinRedirect = vi.fn();
+    const client = createApiClient(() => undefined, signinSilent, signinRedirect, BASE_URL);
+
+    // Fire 6 concurrent requests — each will 401 and await the single-flight Promise.
+    await Promise.allSettled(
+      Array.from({ length: 6 }, () => client.get('/users/me')),
+    );
+
+    // KEY: signinRedirect called exactly once — the redirectFired guard suppressed the rest.
+    expect(signinRedirect).toHaveBeenCalledOnce();
+    // Single-flight: signinSilent called exactly once too.
+    expect(signinSilent).toHaveBeenCalledOnce();
+  });
+
+  it('after terminal failure subsequent _fetch calls reject without calling signinSilent again', async () => {
+    server.use(
+      http.get(`${BASE_URL}/users/me`, () =>
+        HttpResponse.json({ code: 'unauthorized', text: 'expired' }, { status: 401 }),
+      ),
+    );
+
+    const signinSilent = vi.fn(async () => { throw new Error('invalid_grant'); });
+    const signinRedirect = vi.fn();
+    const client = createApiClient(() => undefined, signinSilent, signinRedirect, BASE_URL);
+
+    // First wave: cause the terminal failure.
+    await client.get('/users/me').catch(() => {});
+
+    // signinSilent was called once for the first failure.
+    expect(signinSilent).toHaveBeenCalledOnce();
+    vi.clearAllMocks();
+
+    // Second wave: sessionDead is now true; these must short-circuit before
+    // reaching the network or calling signinSilent.
+    const results = await Promise.allSettled([
+      client.get('/users/me'),
+      client.get('/users/me'),
+      client.get('/users/me'),
+    ]);
+
+    // All rejected with DivoidApiError(401).
+    expect(results.every((r) => r.status === 'rejected')).toBe(true);
+    for (const r of results) {
+      if (r.status === 'rejected') {
+        expect((r.reason as { status?: number }).status).toBe(401);
+      }
+    }
+
+    // KEY: signinSilent NOT called again after terminal failure.
+    expect(signinSilent).not.toHaveBeenCalled();
+  });
+
+  it('after terminal failure redirectFired guard ensures signinRedirect not called again', async () => {
+    server.use(
+      http.get(`${BASE_URL}/users/me`, () =>
+        HttpResponse.json({ code: 'unauthorized', text: 'expired' }, { status: 401 }),
+      ),
+    );
+
+    const signinSilent = vi.fn(async () => { throw new Error('invalid_grant'); });
+    const signinRedirect = vi.fn();
+    const client = createApiClient(() => undefined, signinSilent, signinRedirect, BASE_URL);
+
+    // First call: triggers terminal failure + redirect.
+    await client.get('/users/me').catch(() => {});
+    expect(signinRedirect).toHaveBeenCalledOnce();
+
+    const callsAfterFirst = signinRedirect.mock.calls.length;
+
+    // Subsequent calls: short-circuit path still calls fireRedirectOnce() but
+    // it must be a no-op since redirectFired=true.
+    await client.get('/users/me').catch(() => {});
+    await client.get('/users/me').catch(() => {});
+
+    // signinRedirect call count must not increase beyond the first call.
+    expect(signinRedirect).toHaveBeenCalledTimes(callsAfterFirst);
+  });
+});
+
 // ─── createApiClient — fetchRaw ────────────────────────────────────────────────
 
 describe('createApiClient.fetchRaw', () => {
