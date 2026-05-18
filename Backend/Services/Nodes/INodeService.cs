@@ -49,17 +49,20 @@ public interface INodeService
     Task<(string, Stream)> GetNodeData(long nodeId);
 
     /// <summary>
-    /// patches data of a node
+    /// patches data of a node.
+    /// on Postgres, a patch that touches <c>/name</c> also regenerates the node's embedding
+    /// inside the same transaction (new name + current content composition).
     /// </summary>
     /// <param name="nodeId">id of node to patch</param>
     /// <param name="patches">patches to apply</param>
-    /// <returns>patched nodes</returns>
-    Task<NodeDetails> Patch(long nodeId, params PatchOperation[] patches);
+    /// <param name="ct">cancellation token</param>
+    /// <returns>patched node</returns>
+    Task<NodeDetails> Patch(long nodeId, PatchOperation[] patches, CancellationToken ct);
 
     /// <summary>
     /// uploads data for a node.
-    /// on Postgres: also generates and stores a vector embedding for text content,
-    /// or clears the embedding for non-text content.
+    /// on Postgres: also (re)generates a vector embedding from the node's name plus the
+    /// new content (or name alone if content is non-text/empty; null only if both are empty).
     /// on SQLite: content is written; embedding is not touched.
     /// </summary>
     /// <param name="nodeId">id of node for which to upload data</param>

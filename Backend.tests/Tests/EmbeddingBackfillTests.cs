@@ -70,21 +70,17 @@ public class EmbeddingBackfillTests
     // -----------------------------------------------------------------------
 
     [Test]
-    public async Task RunAsync_CapabilityEnabled_SkipsNonTextNodes()
+    public async Task RunAsync_CapabilityEnabled_SkipsNonTextNodesWithoutName()
     {
-        // A node with non-text ContentType must be counted as skipped (not attempted).
-        // We verify this by seeding only non-text nodes and asserting RunAsync completes
-        // without throwing (no CustomFunction call was reached).
         using DatabaseFixture fixture = new();
         NodeService nodeSvc = MakeNodeService(fixture);
 
-        NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "asset", Name = "PngNode" });
+        NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "asset", Name = "" });
         byte[] content = [0x89, 0x50, 0x4E, 0x47]; // PNG magic bytes
         await nodeSvc.UploadContent(node.Id, "image/png", new MemoryStream(content));
 
         EmbeddingBackfillService backfill = MakeBackfill(fixture, EnabledCapability);
 
-        // No DB.CustomFunction call is reached because IsText("image/png") == false.
         Assert.DoesNotThrowAsync(() => backfill.RunAsync());
 
         Node raw = await fixture.EntityManager.Load<Node>()
@@ -92,29 +88,69 @@ public class EmbeddingBackfillTests
                                               .ExecuteEntityAsync();
 
         Assert.That(raw.Embedding, Is.Null,
-            "non-text node must remain unembedded — it is skipped by TextContentTypePredicate");
+            "non-text content + empty name → no embeddable surface → skipped by v2 candidate predicate");
     }
 
     [Test]
-    public async Task RunAsync_CapabilityEnabled_SkipsNodesWithNullContent()
+    public async Task RunAsync_CapabilityEnabled_IncludesNonTextNodesWithName()
     {
-        // A node with no content at all (Content is null) must be skipped.
         using DatabaseFixture fixture = new();
         NodeService nodeSvc = MakeNodeService(fixture);
 
-        // Create a node but do not upload any content — Content remains null.
-        NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "doc", Name = "NoContent" });
+        NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "asset", Name = "PngWithName" });
+        byte[] content = [0x89, 0x50, 0x4E, 0x47]; // PNG magic bytes
+        await nodeSvc.UploadContent(node.Id, "image/png", new MemoryStream(content));
 
         EmbeddingBackfillService backfill = MakeBackfill(fixture, EnabledCapability);
 
-        Assert.DoesNotThrowAsync(() => backfill.RunAsync());
+        // v2 candidate predicate includes this node (has name) — RunAsync will attempt
+        // to call embedding() on SQLite and fail.  This is the load-bearing assertion:
+        // if the predicate had not changed (v1 style), RunAsync would succeed silently.
+        Assert.CatchAsync(() => backfill.RunAsync(),
+            "node with non-empty name is a v2 candidate; RunAsync must attempt (and fail on SQLite) to embed it");
+    }
+
+    [Test]
+    public async Task RunAsync_CapabilityEnabled_SkipsNodesWithNullContentAndEmptyName()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService nodeSvc = MakeNodeService(fixture);
+
+        long nodeId = await fixture.EntityManager.Insert<Node>()
+                                                 .Columns(n => n.Name, n => n.TypeId)
+                                                 .Values("", 0)
+                                                 .ReturnID()
+                                                 .ExecuteAsync();
+
+        EmbeddingBackfillService backfill = MakeBackfill(fixture, EnabledCapability);
+
+        Assert.DoesNotThrowAsync(() => backfill.RunAsync(),
+            "node with empty name and null content has no embeddable surface and must be skipped");
 
         Node raw = await fixture.EntityManager.Load<Node>()
-                                              .Where(n => n.Id == node.Id)
+                                              .Where(n => n.Id == nodeId)
                                               .ExecuteEntityAsync();
 
         Assert.That(raw.Embedding, Is.Null,
-            "content-less node must remain unembedded");
+            "node with empty name + null content must remain unembedded — no embeddable surface");
+    }
+
+    [Test]
+    public async Task RunAsync_CapabilityEnabled_IncludesNodesWithNameAndNullContent()
+    {
+        // v2 change: a node with non-empty name but null content IS a candidate (name-only embedding).
+        // On SQLite with IsEnabled=true the UPDATE will fail because embedding() doesn't exist.
+        // This is the load-bearing assertion: RunAsync must attempt to embed the node
+        // (proving the predicate was broadened vs v1 which required Content IS NOT NULL).
+        using DatabaseFixture fixture = new();
+        NodeService nodeSvc = MakeNodeService(fixture);
+
+        NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "doc", Name = "NameNoContent" });
+
+        EmbeddingBackfillService backfill = MakeBackfill(fixture, EnabledCapability);
+
+        Assert.CatchAsync(() => backfill.RunAsync(),
+            "node with non-empty name and null content is a v2 candidate; RunAsync must attempt (and fail on SQLite) to embed it");
     }
 
     // -----------------------------------------------------------------------

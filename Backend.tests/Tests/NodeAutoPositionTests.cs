@@ -67,8 +67,8 @@ public class NodeAutoPositionTests
         // create anchor node and give it an explicit position via PATCH
         NodeDetails anchor = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "Anchor" });
         await svc.Patch(anchor.Id,
-            new Pooshit.AspNetCore.Services.Patches.PatchOperation { Op = "replace", Path = "/X", Value = 100.0 },
-            new Pooshit.AspNetCore.Services.Patches.PatchOperation { Op = "replace", Path = "/Y", Value = 200.0 });
+            [new Pooshit.AspNetCore.Services.Patches.PatchOperation { Op = "replace", Path = "/X", Value = 100.0 }, new Pooshit.AspNetCore.Services.Patches.PatchOperation { Op = "replace", Path = "/Y", Value = 200.0 }],
+            CancellationToken.None);
 
         // create new node linked to the anchor, without setting X/Y
         NodeDetails created = await svc.CreateNode(new NodeDetails {
@@ -109,8 +109,8 @@ public class NodeAutoPositionTests
 
         NodeDetails anchor = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "Anchor" });
         await svc.Patch(anchor.Id,
-            new Pooshit.AspNetCore.Services.Patches.PatchOperation { Op = "replace", Path = "/X", Value = 500.0 },
-            new Pooshit.AspNetCore.Services.Patches.PatchOperation { Op = "replace", Path = "/Y", Value = 600.0 });
+            [new Pooshit.AspNetCore.Services.Patches.PatchOperation { Op = "replace", Path = "/X", Value = 500.0 }, new Pooshit.AspNetCore.Services.Patches.PatchOperation { Op = "replace", Path = "/Y", Value = 600.0 }],
+            CancellationToken.None);
 
         NodeDetails created = await svc.CreateNode(new NodeDetails {
             Type = "task",

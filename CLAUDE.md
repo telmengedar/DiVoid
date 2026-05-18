@@ -60,7 +60,7 @@ There is a deliberate two-class pattern: `Node` is the DB entity, `NodeDetails` 
 
 - List endpoints take a `*Filter : ListFilter` (paging/sorting) plus per-domain fields. `FilterExtensions.ApplyFilter` clamps `Count` to ≤500. The mapper-based overload resolves `Sort` by strict dictionary lookup against the mapper's registered keys — for `NodeMapper` those are `id`, `type`, `name`, `status`; any other value throws `KeyNotFoundException`. Always go through `ApplyFilter` instead of setting `Limit`/`Offset` manually.
 - Wildcard handling is in `NodeService.GenerateFilter`: if any name contains `%` or `_` (see `FilterExtensions.ContainsWildcards`), the predicate switches from `IN (...)` to OR-chained `LIKE`. Mirror that pattern when adding new string-array filters.
-- `PATCH` endpoints accept JSON Patch-style `PatchOperation[]` and route through `DatabasePatchExtensions.Patch`. Properties **must** be marked `[AllowPatch]` to be patchable; the extension throws `NotSupportedException` otherwise. Supported ops: `replace`, `add`, `remove`, `flag`, `unflag`, plus a custom `embed` op that calls a DB-side `embedding('gemini-embedding-001', value)` function (PostgreSQL-only — relies on a server-side embedding extension).
+- `PATCH` endpoints accept JSON Patch-style `PatchOperation[]` and route through `DatabasePatchExtensions.Patch`. Properties **must** be marked `[AllowPatch]` to be patchable; the extension throws `NotSupportedException` otherwise. Supported ops: `replace`, `add`, `remove`, `flag`, `unflag`, plus a custom `embed` op (deprecated in v2 — name PATCH and content POST cover the same ground; `embed` remains functional as a low-level escape hatch but will be removed once no caller relies on it).
 
 ### MVC pipeline specifics
 
