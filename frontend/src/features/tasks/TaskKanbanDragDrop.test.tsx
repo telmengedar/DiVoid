@@ -28,8 +28,7 @@
  */
 
 import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
-import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { render, waitFor, act, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
@@ -526,7 +525,6 @@ describe('Test 13 — Fix C: pointerWithin returns null in column gap', () => {
     // Test the pointerWithin algorithm directly with representative inputs.
     // This is a unit test of the collision detection contract — not fiber-walk.
     const { pointerWithin: pointerWithinFn } = await import('@dnd-kit/core');
-    const { closestCenter: closestCenterFn } = await import('@dnd-kit/core');
 
     // Define two column rects: open (x=0..280) and in-progress (x=300..580).
     // Gap: x=280..300. Pointer at x=290 (gap).

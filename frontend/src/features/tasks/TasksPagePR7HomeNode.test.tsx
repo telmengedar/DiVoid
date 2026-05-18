@@ -216,6 +216,10 @@ function makeWhoamiReturn(homeNodeId: number | null) {
     failureCount: 0, failureReason: null, isLoadingError: false,
     isPaused: false, isPlaceholderData: false, isRefetchError: false,
     isStale: false,
+    // Fields added to satisfy UseQueryResult<UserDetails, Error> shape (TS2352):
+    errorUpdateCount: 0, isFetched: true, isFetchedAfterMount: true,
+    isInitialLoading: false, isEnabled: true,
+    promise: Promise.resolve() as Promise<unknown>,
   };
 }
 

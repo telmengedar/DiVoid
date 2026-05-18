@@ -935,7 +935,6 @@ describe('Test 14 — PATCH success invalidates path-query cache: card stays in 
       },
     });
 
-    const user = userEvent.setup();
     const { container } = renderWithProviders(<TaskListView projectId={20} />, '/', qc);
 
     // Wait for board and cards to appear.

@@ -232,7 +232,7 @@ describe('Test 1 — WikiPage redirects to home-node when homeNodeId is set', ()
     vi.mocked(useWhoami).mockReturnValue({
       data: { id: 1, name: 'Toni', email: null, enabled: true, createdAt: '', permissions: [], homeNodeId: 10 },
       isLoading: false,
-    } as ReturnType<typeof useWhoami>);
+    } as unknown as ReturnType<typeof useWhoami>);
 
     const snapshot = { value: '/wiki' };
 
@@ -272,7 +272,7 @@ describe('Test 2 — WikiPage falls back to first node when homeNodeId is null',
     vi.mocked(useWhoami).mockReturnValue({
       data: { id: 1, name: 'Toni', email: null, enabled: true, createdAt: '', permissions: [], homeNodeId: null },
       isLoading: false,
-    } as ReturnType<typeof useWhoami>);
+    } as unknown as ReturnType<typeof useWhoami>);
 
     server.use(
       http.get(`${BASE_URL}/nodes`, ({ request }) => {
@@ -316,7 +316,7 @@ describe('Test 3 — WikiPage shows empty state when no nodes exist', () => {
     vi.mocked(useWhoami).mockReturnValue({
       data: { id: 1, name: 'Toni', email: null, enabled: true, createdAt: '', permissions: [], homeNodeId: null },
       isLoading: false,
-    } as ReturnType<typeof useWhoami>);
+    } as unknown as ReturnType<typeof useWhoami>);
 
     server.use(
       http.get(`${BASE_URL}/nodes`, () => HttpResponse.json(emptyPage)),

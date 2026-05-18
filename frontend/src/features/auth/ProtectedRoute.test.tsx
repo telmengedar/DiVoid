@@ -134,7 +134,7 @@ describe('ProtectedRoute_RefreshFailure_DoesNotLoop', () => {
               error: new Error('SilentRenewError'),
               signinRedirect: onRedirect,
               signinSilent: vi.fn().mockRejectedValue(new Error('SilentRenewError')),
-            } as ReturnType<typeof useAuth>);
+            } as unknown as ReturnType<typeof useAuth>);
 
             return (
               <RenderCountWrapper>
@@ -175,7 +175,7 @@ describe('ProtectedRoute_RefreshFailure_DoesNotLoop', () => {
       error: undefined,
       signinRedirect: vi.fn(),
       signinSilent: vi.fn(),
-    } as ReturnType<typeof useAuth>);
+    } as unknown as ReturnType<typeof useAuth>);
 
     const mockRedirect = vi.fn();
 
@@ -210,7 +210,7 @@ describe('ProtectedRoute_RefreshFailure_DoesNotLoop', () => {
       error: undefined,
       signinRedirect: mockRedirect,
       signinSilent: vi.fn(),
-    } as ReturnType<typeof useAuth>);
+    } as unknown as ReturnType<typeof useAuth>);
 
     render(
       <MemoryRouter>
