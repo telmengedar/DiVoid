@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
@@ -165,5 +166,33 @@ public class EmbeddingBackfillTests
         EmbeddingBackfillService backfill = MakeBackfill(fixture, DisabledCapability);
 
         Assert.DoesNotThrowAsync(() => backfill.RunAsync());
+    }
+
+    [Test]
+    public async Task CandidatePredicate_SqlShape_NameArmOrContentArm()
+    {
+        using DatabaseFixture fixture = new();
+
+        string commandText = fixture.EntityManager
+                                    .Load<Node>(n => n.Id)
+                                    .Where(EmbeddingBackfillService.CandidatePredicate().Content)
+                                    .Prepare()
+                                    .CommandText;
+
+        string where = Regex.Match(commandText, @"(?i)\bWHERE\b(.+)$").Groups[1].Value.Trim();
+
+        Assert.That(where, Does.Contain("OR").IgnoreCase,
+            "WHERE clause must contain OR so that name-only nodes are not excluded by the content-type arm");
+
+        int orIndex   = where.IndexOf("OR", StringComparison.OrdinalIgnoreCase);
+        int nameIndex = where.IndexOf("name", StringComparison.OrdinalIgnoreCase);
+
+        Assert.That(nameIndex, Is.GreaterThanOrEqualTo(0), "WHERE clause must reference the 'name' column");
+        Assert.That(nameIndex, Is.LessThan(orIndex),
+            "name-arm must appear before the top-level OR (i.e. be the left operand of the disjunction)");
+
+        int contentIndex = where.IndexOf("content", StringComparison.OrdinalIgnoreCase);
+        Assert.That(contentIndex, Is.GreaterThan(orIndex),
+            "content-type arm must appear after the top-level OR (i.e. be the right operand of the disjunction)");
     }
 }
