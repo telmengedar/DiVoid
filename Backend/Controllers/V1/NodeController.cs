@@ -1,5 +1,6 @@
 using System.Threading;
 using Backend.Models.Nodes;
+using Backend.Models.Users;
 using Backend.Services.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -104,6 +105,26 @@ namespace Backend.Controllers.V1
         {
             (string contentType, Stream data) = await nodeService.GetNodeData(nodeId);
             return File(data, contentType);
+        }
+
+        /// <summary>
+        /// resolves a node-id to the auth user-id of the user bound to it via
+        /// <c>HomeNodeId</c>. only requires <c>read</c> permission so non-admin
+        /// agents can look up their own or other agents' user-ids without
+        /// elevated access.
+        ///
+        /// returns 404 both when no user has <c>HomeNodeId == nodeId</c> and when
+        /// the node itself does not exist — the endpoint does not distinguish
+        /// between these cases to avoid probing node existence.
+        /// </summary>
+        /// <param name="nodeId">id of the node to resolve to a user-id</param>
+        /// <returns>user-id of the user bound to this node</returns>
+        [HttpGet("{nodeId:long}/user")]
+        [Authorize(Policy = "read")]
+        public async Task<UserIdResponse> GetUser(long nodeId)
+        {
+            logger.LogInformation("event=node.user.lookup nodeId={NodeId} callerId={CallerId}", nodeId, User.FindFirst("userId")?.Value);
+            return new UserIdResponse { UserId = await nodeService.GetUserIdForNode(nodeId) };
         }
 
         /// <summary>

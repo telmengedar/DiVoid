@@ -55,7 +55,12 @@ public class User {
     /// frontend to filter selectors (e.g. orgs / projects pill rows) to the
     /// user's working set. Pure frontend hint; backend does NOT enforce
     /// visibility based on this value.
+    ///
+    /// Also used by <c>GET /api/nodes/{nodeId}/user</c> to bridge an agent
+    /// node-id to an auth user-id. Indexed so the resolver lookup is a point
+    /// read rather than a table scan as <c>divoid_user</c> grows.
     /// </summary>
     [AllowPatch]
+    [Index("homenodeid")]
     public long? HomeNodeId { get; set; }
 }

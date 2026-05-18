@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using System.Text;
 using Backend.Extensions;
 using Backend.Models.Nodes;
+using Backend.Models.Users;
 using Backend.Query;
 using Backend.Services.Embeddings;
 using Pooshit.AspNetCore.Services.Data;
@@ -670,5 +671,16 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         LoadOperation<Node> operation = mapper.CreateOperation(database);
         operation.Where(n => n.Id == nodeId);
         return mapper.EntityFromOperation(operation);
+    }
+
+    /// <inheritdoc />
+    public async Task<long> GetUserIdForNode(long nodeId)
+    {
+        long? userId = await database.Load<User>(u => u.Id)
+                                     .Where(u => u.HomeNodeId == nodeId)
+                                     .ExecuteScalarAsync<long?>();
+        if (userId == null)
+            throw new NotFoundException<User>(nodeId);
+        return userId.Value;
     }
 }

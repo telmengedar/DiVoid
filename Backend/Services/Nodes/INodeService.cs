@@ -100,4 +100,19 @@ public interface INodeService
     /// <param name="sourceNodeId">id of first node</param>
     /// <param name="targetNodeId">id of second node</param>
     Task UnlinkNodes(long sourceNodeId, long targetNodeId);
+
+    /// <summary>
+    /// resolves a node-id to the auth user-id of the user whose
+    /// <see cref="Backend.Models.Users.User.HomeNodeId"/> equals <paramref name="nodeId"/>.
+    ///
+    /// the relation is treated as 1:1; if two user records share the same
+    /// <c>HomeNodeId</c> one is returned arbitrarily.
+    /// </summary>
+    /// <param name="nodeId">id of the node to resolve</param>
+    /// <returns>auth user-id of the user bound to this node</returns>
+    /// <exception cref="Pooshit.AspNetCore.Services.Errors.Exceptions.NotFoundException{User}">
+    /// thrown when no <c>divoid_user</c> row has <c>HomeNodeId == nodeId</c>.
+    /// maps to HTTP 404 via the existing error-handler middleware.
+    /// </exception>
+    Task<long> GetUserIdForNode(long nodeId);
 }
