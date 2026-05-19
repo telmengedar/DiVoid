@@ -19,7 +19,7 @@ namespace Backend.tests.Tests;
 ///
 /// Algorithm: pick first linked target T (in links order) with (T.X != 0 OR T.Y != 0);
 ///   angle = (newNodeId * 2.4) mod (2π)
-///   radius = 80
+///   radius = 200
 ///   newX = T.X + radius * cos(angle)
 ///   newY = T.Y + radius * sin(angle)
 ///
@@ -40,7 +40,7 @@ public class NodeAutoPositionTests
     /// </summary>
     static (double X, double Y) Expected(long nodeId, double anchorX, double anchorY)
     {
-        const double radius = 80.0;
+        const double radius = 200.0;
         double angle = (nodeId * 2.4) % (2.0 * Math.PI);
         return (anchorX + radius * Math.Cos(angle), anchorY + radius * Math.Sin(angle));
     }

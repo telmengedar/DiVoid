@@ -27,14 +27,59 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
     /// <summary>
     /// computes the golden-angle auto-position offset for a new node given its id and an anchor position.
-    /// angle = (id * 2.4) mod (2π), radius = 80.
+    /// angle = (id * 2.4) mod (2π), radius = 200.
     /// deterministic per id — same id always produces the same offset from the anchor.
     /// </summary>
     static (double X, double Y) ComputeAutoPosition(long nodeId, double anchorX, double anchorY)
     {
-        const double radius = 80.0;
+        const double radius = 200.0;
         double angle = (nodeId * 2.4) % (2.0 * Math.PI);
         return (anchorX + radius * Math.Cos(angle), anchorY + radius * Math.Sin(angle));
+    }
+
+    /// <summary>
+    /// if the candidate node is at (0, 0) and any of the anchor candidates has a non-zero position,
+    /// moves the candidate to the golden-angle offset from the first positioned anchor.
+    /// no-op when the candidate is already positioned, or when no positioned anchor is found.
+    /// all DB operations are bound to the supplied transaction.
+    /// </summary>
+    async Task TryAnchorOrphanToPositioned(Transaction transaction, long candidateId, long[] anchorCandidates)
+    {
+        long[] ids = new long[anchorCandidates.Length + 1];
+        ids[0] = candidateId;
+        anchorCandidates.CopyTo(ids, 1);
+
+        Dictionary<long, Node> nodesById = [];
+        await foreach (Node n in database.Load<Node>(n => n.Id, n => n.X, n => n.Y)
+                                          .Where(n => n.Id.In(ids))
+                                          .ExecuteEntitiesAsync(transaction))
+        {
+            nodesById[n.Id] = n;
+        }
+
+        if (!nodesById.TryGetValue(candidateId, out Node candidate))
+            return;
+        if (candidate.X != 0.0 || candidate.Y != 0.0)
+            return;
+
+        Node anchor = null;
+        foreach (long anchorId in anchorCandidates)
+        {
+            if (nodesById.TryGetValue(anchorId, out Node a) && (a.X != 0.0 || a.Y != 0.0))
+            {
+                anchor = a;
+                break;
+            }
+        }
+
+        if (anchor == null)
+            return;
+
+        (double newX, double newY) = ComputeAutoPosition(candidateId, anchor.X, anchor.Y);
+        await database.Update<Node>()
+                      .Set(n => n.X == newX, n => n.Y == newY)
+                      .Where(n => n.Id == candidateId)
+                      .ExecuteAsync(transaction);
     }
 
     /// <inheritdoc />
@@ -77,35 +122,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
             // auto-position: only when caller did not explicitly set a position (both X and Y are 0 or absent)
             if (insertX == 0.0 && insertY == 0.0)
-            {
-                // load positions of all linked targets in one query; preserve links-order tie-breaker
-                Dictionary<long, Node> targetById = [];
-                await foreach (Node t in database.Load<Node>(n => n.Id, n => n.X, n => n.Y)
-                                                  .Where(n => n.Id.In(links))
-                                                  .ExecuteEntitiesAsync())
-                {
-                    targetById[t.Id] = t;
-                }
-
-                Node anchor = null;
-                foreach (long linkId in links)
-                {
-                    if (targetById.TryGetValue(linkId, out Node t) && (t.X != 0.0 || t.Y != 0.0))
-                    {
-                        anchor = t;
-                        break;
-                    }
-                }
-
-                if (anchor != null)
-                {
-                    (double newX, double newY) = ComputeAutoPosition(nodeId, anchor.X, anchor.Y);
-                    await database.Update<Node>()
-                                  .Set(n => n.X == newX, n => n.Y == newY)
-                                  .Where(n => n.Id == nodeId)
-                                  .ExecuteAsync(transaction);
-                }
-            }
+                await TryAnchorOrphanToPositioned(transaction, nodeId, links);
         }
 
         if (embeddingCapability.IsEnabled && !string.IsNullOrWhiteSpace(node.Name))
@@ -188,6 +205,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                       .Columns(n => n.SourceId, n => n.TargetId)
                       .Values(sourceNodeId, targetNodeId)
                       .ExecuteAsync(transaction);
+        await TryAnchorOrphanToPositioned(transaction, sourceNodeId, [targetNodeId]);
+        await TryAnchorOrphanToPositioned(transaction, targetNodeId, [sourceNodeId]);
         transaction.Commit();
     }
 
