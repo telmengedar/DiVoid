@@ -28,13 +28,24 @@
  *      list; `product` is absent from that list, so the `product` checkbox
  *      does NOT appear — the test fails, proving #4 is load-bearing.
  *
- * 5. Type-absent rows map to untyped (DiVoid task #486):
- *    - MSW serves a /types entry with no `type` field (structural group node).
- *    - The "untyped" checkbox appears in the type filter (not a separate mystery entry).
+ * 5. Type-absent rows map to untyped (DiVoid task #486, rewritten per Jenny #512):
+ *    - MSW serves a /types fixture with ONLY a structural-group entry (no task, no doc).
+ *    - After data loads: "untyped" IS in the popover; "task" is NOT (not in the live response).
+ *    - NEGATIVE PROOF: revert the `?? UNTYPED_VALUE` mapping — "untyped" label disappears,
+ *      test fails. Proves the mapping is load-bearing, not just a tautology via FALLBACK_OPTIONS.
  *
  * 6. Loading state — optimistic-default (option c):
  *    - While /types is pending, the type filter still shows checkboxes from the
  *      hardcoded fallback list (not an empty dropdown).
+ *
+ * 7. Known-types set preserves user-deselected types across /types refresh (Jenny #512):
+ *    - Seed sessionStorage with selectedTypes missing `task` (user deselected it).
+ *    - Seed knownTypes containing `task`, `documentation`, `bug` (user has seen them).
+ *    - Mount the hook with liveTypeValues = [task, documentation, bug, product, meeting].
+ *    - Assert: selectedTypes contains `product` and `meeting` (newly-discovered).
+ *    - Assert: selectedTypes does NOT contain `task` or `bug` (known-but-deselected, stay off).
+ *    - NEGATIVE PROOF: revert merge logic to prevSet-based (old code) — `task` and `bug`
+ *      re-appear in selectedTypes, test fails. Proves the knownTypes set is load-bearing.
  *
  * ## Filter wiring
  *
@@ -397,15 +408,29 @@ describe('WorkspaceFilters — live type catalog from /api/types (DiVoid #486)',
   });
 
   /**
-   * Type-absent rows map to "untyped" checkbox (DiVoid task #486).
+   * Type-absent rows map to "untyped" checkbox — load-bearing rewrite (DiVoid #486, Jenny #512).
    *
-   * typeCatalogPage includes one entry with no `type` field (a structural group node).
-   * useNodeTypes maps it to UNTYPED_VALUE = '__untyped__'. The popover renders it
-   * with the label "untyped" (from TYPE_LABELS).
+   * This test overrides /types with a fixture that contains ONLY a structural-group
+   * entry (no `type` field, no `task`, no `documentation`). After the live data
+   * resolves, the popover must show "untyped" AND must NOT show "task" — because
+   * `task` is not in the live response, only in the loading-state FALLBACK_OPTIONS.
    *
-   * POSITIVE PROOF: the "untyped" checkbox appears after /types resolves.
+   * NEGATIVE PROOF: revert the `entry.type ?? UNTYPED_VALUE` mapping to just
+   * `entry.type`. The structural entry maps to undefined, which is not UNTYPED_VALUE,
+   * so typeSet contains undefined rather than '__untyped__'. The rendered label is not
+   * "untyped" (TYPE_LABELS[undefined] is undefined, label falls back to undefined which
+   * does not produce a "untyped" accessible name). The `getByRole('checkbox', {name:
+   * /^untyped$/i})` assertion throws — test fails, proving the ?? mapping is load-bearing.
    */
-  it('type-absent /types entries map to the untyped checkbox', async () => {
+  it('type-absent /types entries map to the untyped checkbox (not task)', async () => {
+    // Override /types with a fixture containing ONLY the structural-group entry.
+    // No `task`, no `documentation` — only the type-absent entry.
+    server.use(
+      http.get(`${BASE_URL}/types`, () =>
+        HttpResponse.json({ result: [{ id: 29, count: 1 }], total: 1 }),
+      ),
+    );
+
     renderPage();
 
     await waitFor(() => {
@@ -419,10 +444,14 @@ describe('WorkspaceFilters — live type catalog from /api/types (DiVoid #486)',
       expect(screen.getByRole('dialog', { name: /type filter options/i })).toBeInTheDocument();
     }, { timeout: 3000 });
 
-    // The structural-group entry (no `type` field) must land on "untyped", not disappear.
+    // After live data arrives: "untyped" must appear (type-absent → UNTYPED_VALUE mapping).
     await waitFor(() => {
       expect(screen.getByRole('checkbox', { name: /^untyped$/i })).toBeInTheDocument();
     }, { timeout: 5000 });
+
+    // "task" must NOT appear — it is not in the live response.
+    // If this assertion fails, FALLBACK_OPTIONS is leaking through after live data loaded.
+    expect(screen.queryByRole('checkbox', { name: /^task$/i })).not.toBeInTheDocument();
   });
 
   /**
@@ -457,5 +486,73 @@ describe('WorkspaceFilters — live type catalog from /api/types (DiVoid #486)',
     // Fallback list must be present before live data arrives.
     // `task` is in ALL_NODE_TYPES (the fallback), so it must appear.
     expect(screen.getByRole('checkbox', { name: /^task$/i })).toBeInTheDocument();
+  });
+});
+
+// ─── Jenny review #512 — known-types set preserves deselected types ───────────
+
+describe('WorkspaceFilters — known-types set preserves user-deselected types (Jenny #512)', () => {
+  /**
+   * POSITIVE PROOF — load-bearing test for Jenny QA review at DiVoid #512, Finding 1.
+   *
+   * The bug: the old merge effect compared liveTypeValues against selectedTypes
+   * (prevSet). A type the user deselected was absent from selectedTypes, so it
+   * was classified as "new" and re-added — silently overriding the user's intent.
+   *
+   * The fix: persist divoid.workspace.typeFilter.known in sessionStorage. The merge
+   * computes newlyDiscovered = liveTypeValues \ knownTypes (set-minus against KNOWN,
+   * not selection). A type that is known-but-deselected stays deselected.
+   *
+   * Seed state (simulates a user who deselected `task` and `bug` in a prior session):
+   *   selectedTypes = ['documentation']      (task and bug were deselected)
+   *   knownTypes    = ['task', 'documentation', 'bug']   (user has seen all three)
+   *
+   * Live catalog: [task, documentation, bug, product, meeting]
+   *   — `product` and `meeting` are genuinely new (not in knownTypes)
+   *   — `task` and `bug` are known-and-deselected (must stay OFF)
+   *
+   * NEGATIVE PROOF: revert the merge to the old prevSet-based logic
+   * (`liveTypeValues.filter((t) => !prevSet.has(t))`). With prev = ['documentation'],
+   * prevSet = {documentation}. newTypes = [task, bug, product, meeting] — task and bug
+   * are included because they are absent from selectedTypes, not knownTypes.
+   * selectedTypes becomes ['documentation', 'task', 'bug', 'product', 'meeting'].
+   * The assertion `expect(selectedTypes).not.toContain('task')` fails.
+   */
+  it('previously-deselected types stay deselected after live catalog refresh', async () => {
+    // Seed sessionStorage: user deselected task and bug (only documentation selected).
+    sessionStorage.setItem(
+      'divoid.workspace.typeFilter',
+      JSON.stringify(['documentation']),
+    );
+    // User has already been offered task, documentation, and bug in prior sessions.
+    sessionStorage.setItem(
+      'divoid.workspace.typeFilter.known',
+      JSON.stringify(['task', 'documentation', 'bug']),
+    );
+
+    const { useWorkspaceFilters: hook } = await import('./useWorkspaceFilters');
+    const { renderHook, act: hookAct } = await import('@testing-library/react');
+
+    // Mount the hook with a live catalog that includes the known types plus two new ones.
+    const liveTypeValues = ['task', 'documentation', 'bug', 'product', 'meeting'];
+    const { result } = renderHook(() => hook({ liveTypeValues }));
+
+    // Allow the merge effect to run.
+    await hookAct(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const { selectedTypes } = result.current;
+
+    // Newly-discovered types must be auto-selected.
+    expect(selectedTypes).toContain('product');
+    expect(selectedTypes).toContain('meeting');
+
+    // Previously-known-and-deselected types must NOT be re-added.
+    expect(selectedTypes).not.toContain('task');
+    expect(selectedTypes).not.toContain('bug');
+
+    // The user's surviving selection must be present.
+    expect(selectedTypes).toContain('documentation');
   });
 });
