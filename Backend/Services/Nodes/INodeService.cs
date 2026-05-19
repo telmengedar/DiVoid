@@ -82,6 +82,14 @@ public interface INodeService
     Task<AsyncPageResponseWriter<NodeLink>> ListLinks(long[] ids, ListFilter filter, CancellationToken ct);
 
     /// <summary>
+    /// lists all node types that are currently in use (i.e. have at least one referencing node),
+    /// ordered by count descending then type name ascending.
+    /// returns an empty result for a graph with no nodes.
+    /// </summary>
+    /// <returns>page envelope of type-catalog rows; <c>continue</c> is always null</returns>
+    Task<AsyncPageResponseWriter<TypeListItem>> ListTypes();
+
+    /// <summary>
     /// deletes an existing node
     /// </summary>
     /// <param name="nodeId">id of node to delete</param>

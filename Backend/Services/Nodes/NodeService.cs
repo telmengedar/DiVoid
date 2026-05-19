@@ -127,6 +127,27 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     }
 
     /// <inheritdoc />
+    public async Task<AsyncPageResponseWriter<TypeListItem>> ListTypes()
+    {
+        TypeListMapper mapper = new();
+        LoadOperation<NodeType> operation = mapper.CreateOperation(database, mapper.DefaultListFields);
+        operation.GroupBy(DB.Property<NodeType>(t => t.Id, "type"), DB.Property<NodeType>(t => t.Type, "type"));
+        operation.OrderBy(
+            new OrderByCriteria(DB.Count(DB.Property<Node>(n => n.Id, "node")), ascending: false),
+            new OrderByCriteria(DB.Property<NodeType>(t => t.Type, "type"), ascending: true));
+
+        WindowResult<TypeListItem, long> windowed =
+            await mapper.WindowedFromOperation<long, NodeType>(operation, DB.CountOver(), CancellationToken.None, mapper.DefaultListFields);
+
+        return new AsyncPageResponseWriter<TypeListItem>(
+            windowed.Items,
+            async () => await windowed.WindowValue,
+            null
+        );
+    }
+
+
+    /// <inheritdoc />
     public async Task Delete(long nodeId)
     {
         using Transaction transaction = database.Transaction();
