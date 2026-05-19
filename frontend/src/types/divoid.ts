@@ -102,6 +102,23 @@ export interface NodeLink {
   targetId: number;
 }
 
+// ─── Type catalog ─────────────────────────────────────────────────────────────
+
+/**
+ * One entry from GET /api/types.
+ *
+ * NOTE: the `type` field is absent (not null, truly absent) for structural
+ * group nodes whose underlying NodeType row has an empty/null name. These
+ * 13 entries (Tasks, Docs, Types groups etc.) are the graph's untyped nodes.
+ * See DiVoid task #486 for the empirical count and handling decision.
+ */
+export interface NodeTypeEntry {
+  id: number;
+  /** Absent for structural/untyped rows — use `?? undefined` to detect. */
+  type?: string;
+  count: number;
+}
+
 /** Extended NodeDetails with required x/y position (workspace view). */
 export interface PositionedNodeDetails extends NodeDetails {
   x: number;

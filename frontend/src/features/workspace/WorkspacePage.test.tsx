@@ -51,6 +51,13 @@ const server = setupServer(
   }),
   // Adjacency
   http.get(`${BASE_URL}/nodes/links`, () => HttpResponse.json(adjacencyPage)),
+  // Type catalog (DiVoid task #486)
+  http.get(`${BASE_URL}/types`, () =>
+    HttpResponse.json({ result: [
+      { id: 6, type: 'task', count: 5 },
+      { id: 8, type: 'documentation', count: 3 },
+    ], total: 2 }),
+  ),
   // PATCH for move
   http.patch(`${BASE_URL}/nodes/:id`, () => new HttpResponse(null, { status: 204 })),
   // POST create
@@ -87,6 +94,7 @@ vi.mock('@/lib/constants', () => ({
       ADJACENCY: '/nodes/links',
     },
     HEALTH: '/health',
+    TYPES: '/types',
   },
   ROUTES: {
     HOME: '/',

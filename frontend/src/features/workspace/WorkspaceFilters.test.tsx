@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * Load-bearing tests for workspace type + status filters (DiVoid #318, #275).
+ * Load-bearing tests for workspace type + status filters (DiVoid #318, #486, #275).
  *
  * ## What is tested
  *
@@ -21,6 +21,21 @@
  *    - This test uses a different MSW handler that ignores type/status params.
  *    - It must FAIL if the closed node appears when it shouldn't.
  *
+ * 4. Live type-filter positive proof (DiVoid task #486):
+ *    - MSW serves a /types response containing both `task` and `product`.
+ *    - After data loads, the type filter popover shows checkboxes for BOTH.
+ *    - NEGATIVE PROOF: replace the live fetch with the hardcoded ALL_NODE_TYPES
+ *      list; `product` is absent from that list, so the `product` checkbox
+ *      does NOT appear — the test fails, proving #4 is load-bearing.
+ *
+ * 5. Type-absent rows map to untyped (DiVoid task #486):
+ *    - MSW serves a /types entry with no `type` field (structural group node).
+ *    - The "untyped" checkbox appears in the type filter (not a separate mystery entry).
+ *
+ * 6. Loading state — optimistic-default (option c):
+ *    - While /types is pending, the type filter still shows checkboxes from the
+ *      hardcoded fallback list (not an empty dropdown).
+ *
  * ## Filter wiring
  *
  * WorkspaceCanvas passes selectedTypes/selectedStatuses into useNodesInViewport
@@ -28,7 +43,7 @@
  * by checking ?status and ?type params. The negative proof overrides the
  * handler to return all nodes unconditionally.
  *
- * DiVoid task #318, design doc #283.
+ * DiVoid task #318 / #486, design doc #283.
  */
 
 import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
@@ -41,6 +56,7 @@ import {
   BASE_URL,
   adjacencyPage,
   viewportPageWithFilterFixtures,
+  typeCatalogPage,
 } from '@/test/msw/handlers';
 import type { Page, PositionedNodeDetails } from '@/types/divoid';
 
@@ -93,6 +109,8 @@ const server = setupServer(
     return HttpResponse.json({ result: [], total: 0 });
   }),
   http.get(`${BASE_URL}/nodes/links`, () => HttpResponse.json(adjacencyPage)),
+  // Type catalog — fixture includes `task` and `product` (DiVoid #486 load-bearing tests).
+  http.get(`${BASE_URL}/types`, () => HttpResponse.json(typeCatalogPage)),
   http.patch(`${BASE_URL}/nodes/:id`, () => new HttpResponse(null, { status: 204 })),
   http.post(`${BASE_URL}/nodes`, () =>
     HttpResponse.json({ id: 99, type: 'task', name: 'New node', status: 'open' }),
@@ -131,6 +149,7 @@ vi.mock('@/lib/constants', () => ({
       ADJACENCY: '/nodes/links',
     },
     HEALTH: '/health',
+    TYPES: '/types',
   },
   ROUTES: {
     HOME: '/',
@@ -335,5 +354,108 @@ describe('WorkspaceFilters — sessionStorage persistence', () => {
     expect(capturedTypes).toContain('documentation');
     // typeFilterActive: selection differs from default (all selected)
     expect(result.current.typeFilterActive).toBe(true);
+  });
+});
+
+// ─── DiVoid task #486 — live type-filter load-bearing tests ───────────────────
+
+describe('WorkspaceFilters — live type catalog from /api/types (DiVoid #486)', () => {
+  /**
+   * POSITIVE PROOF — load-bearing test for DiVoid task #486.
+   *
+   * The MSW handler serves typeCatalogPage which contains both `task` (a type
+   * already in ALL_NODE_TYPES) and `product` (a type NOT in ALL_NODE_TYPES).
+   *
+   * After the /types query resolves, BOTH must appear as checkboxes in the
+   * type filter popover. If this test fails, the live-fetch is not wired.
+   *
+   * NEGATIVE PROOF: revert useNodeTypes to return FALLBACK_OPTIONS (the
+   * hardcoded ALL_NODE_TYPES). `product` does NOT appear in ALL_NODE_TYPES,
+   * so `screen.getByRole('checkbox', { name: /^product$/i })` throws → test fails.
+   * Documented in PR body per §13.1 of the frontend code contracts (#420).
+   */
+  it('shows task AND product checkboxes after /types resolves (positive proof)', async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('rf__wrapper')).toBeInTheDocument();
+    }, { timeout: 5000 });
+
+    // Open the Type filter popover.
+    const typeBtn = screen.getByRole('button', { name: /type filter/i });
+    fireEvent.click(typeBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: /type filter options/i })).toBeInTheDocument();
+    }, { timeout: 3000 });
+
+    // Both `task` (hardcoded) and `product` (live-only) must appear.
+    await waitFor(() => {
+      expect(screen.getByRole('checkbox', { name: /^task$/i })).toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: /^product$/i })).toBeInTheDocument();
+    }, { timeout: 5000 });
+  });
+
+  /**
+   * Type-absent rows map to "untyped" checkbox (DiVoid task #486).
+   *
+   * typeCatalogPage includes one entry with no `type` field (a structural group node).
+   * useNodeTypes maps it to UNTYPED_VALUE = '__untyped__'. The popover renders it
+   * with the label "untyped" (from TYPE_LABELS).
+   *
+   * POSITIVE PROOF: the "untyped" checkbox appears after /types resolves.
+   */
+  it('type-absent /types entries map to the untyped checkbox', async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('rf__wrapper')).toBeInTheDocument();
+    }, { timeout: 5000 });
+
+    const typeBtn = screen.getByRole('button', { name: /type filter/i });
+    fireEvent.click(typeBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: /type filter options/i })).toBeInTheDocument();
+    }, { timeout: 3000 });
+
+    // The structural-group entry (no `type` field) must land on "untyped", not disappear.
+    await waitFor(() => {
+      expect(screen.getByRole('checkbox', { name: /^untyped$/i })).toBeInTheDocument();
+    }, { timeout: 5000 });
+  });
+
+  /**
+   * Loading state uses optimistic-default (option c, DiVoid task #486).
+   *
+   * While /types is pending, the type filter shows the hardcoded fallback list
+   * (ALL_NODE_TYPES) so the dropdown is never empty. The `task` checkbox must
+   * appear even before /types resolves.
+   *
+   * This is tested by overriding the /types handler with a never-resolving one,
+   * then opening the popover and asserting `task` is present.
+   */
+  it('shows fallback type options while /types is loading', async () => {
+    // Override /types with a handler that never resolves (simulates slow network).
+    server.use(
+      http.get(`${BASE_URL}/types`, () => new Promise(() => { /* never resolves */ })),
+    );
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('rf__wrapper')).toBeInTheDocument();
+    }, { timeout: 5000 });
+
+    const typeBtn = screen.getByRole('button', { name: /type filter/i });
+    fireEvent.click(typeBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: /type filter options/i })).toBeInTheDocument();
+    }, { timeout: 3000 });
+
+    // Fallback list must be present before live data arrives.
+    // `task` is in ALL_NODE_TYPES (the fallback), so it must appear.
+    expect(screen.getByRole('checkbox', { name: /^task$/i })).toBeInTheDocument();
   });
 });

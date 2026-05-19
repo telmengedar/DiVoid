@@ -5,8 +5,9 @@
  * ## Filter contract
  *
  * Type filter:
- *  - Options: a known set of observed types + synthetic "untyped" for type-null nodes.
- *  - Default: all selected.
+ *  - Options: fetched live from GET /api/types (see useNodeTypes). The hardcoded
+ *    ALL_NODE_TYPES list is the fallback during load and the default selection base.
+ *  - Default: all selected — including newly-discovered types not in sessionStorage.
  *  - sessionStorage key: divoid.workspace.typeFilter
  *
  * Status filter:
@@ -21,10 +22,17 @@
  * Both are NOT sent to the API directly; the caller must check for them and
  * translate to the correct API parameters (nostatus=true / separate notype fetch).
  *
- * Task: DiVoid node #318
+ * ## New-type auto-select (DiVoid task #486)
+ *
+ * The `liveTypeValues` param allows the caller to pass the live type catalog.
+ * Any type in liveTypeValues that is not already in the current selection is
+ * auto-selected — preserving the all-on-by-default rule from #318 for types
+ * that did not exist when the user last saved their sessionStorage selection.
+ *
+ * Task: DiVoid node #318 / #486
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -129,7 +137,19 @@ export interface WorkspaceFilters {
   statusFilterActive: boolean;
 }
 
-export function useWorkspaceFilters(): WorkspaceFilters {
+export interface WorkspaceFiltersOptions {
+  /**
+   * Live type values from GET /api/types (real types only, no UNTYPED_VALUE).
+   * Any value in this list not already in the current selection is auto-selected,
+   * preserving the all-on-by-default rule from #318 for newly-discovered types.
+   * Pass an empty array while the live catalog is still loading.
+   */
+  liveTypeValues?: string[];
+}
+
+export function useWorkspaceFilters(options: WorkspaceFiltersOptions = {}): WorkspaceFilters {
+  const { liveTypeValues = [] } = options;
+
   const [selectedTypes, setSelectedTypes] = useState<string[]>(() =>
     loadSet(TYPE_FILTER_KEY, DEFAULT_TYPE_SELECTION),
   );
@@ -137,6 +157,26 @@ export function useWorkspaceFilters(): WorkspaceFilters {
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>(() =>
     loadSet(STATUS_FILTER_KEY, DEFAULT_STATUS_SELECTION),
   );
+
+  // ── Auto-select newly-discovered types (DiVoid task #486) ─────────────────
+  // When the live type catalog arrives (liveTypeValues becomes non-empty), merge
+  // any types absent from the current selection. This preserves the all-on-by-
+  // default rule from #318 for types (e.g. `product`) that weren't in the graph
+  // when the user last saved their sessionStorage selection.
+  useEffect(() => {
+    if (liveTypeValues.length === 0) return;
+    setSelectedTypes((prev) => {
+      const prevSet  = new Set(prev);
+      const newTypes = liveTypeValues.filter((t) => !prevSet.has(t));
+      if (newTypes.length === 0) return prev; // nothing to add — stable ref
+      const next = [...prev, ...newTypes];
+      saveSet(TYPE_FILTER_KEY, next);
+      return next;
+    });
+  // liveTypeValues reference changes on every render from useNodeTypes — compare
+  // by join-string so we only re-run when the actual set of types changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveTypeValues.join(',')]);
 
   const toggleType = useCallback((value: string) => {
     setSelectedTypes((prev) => {

@@ -82,6 +82,27 @@ export const viewportPageWithFilterFixtures: Page<PositionedNodeDetails> = {
   total: 5,
 };
 
+/**
+ * Fixture: type catalog for workspace type-filter live-fetch tests (DiVoid task #486).
+ *
+ * Includes `task` (a standard type) and `product` (a newly-discovered type that was
+ * absent from the hardcoded ALL_NODE_TYPES list). One entry has no `type` field —
+ * a structural group node (UNTYPED_VALUE). Tests assert both `task` and `product`
+ * appear in the type filter after live data loads.
+ */
+export const typeCatalogPage = {
+  result: [
+    { id: 6,  type: 'task',          count: 208 },
+    { id: 8,  type: 'documentation', count: 172 },
+    { id: 15, type: 'session-log',   count: 36  },
+    { id: 11, type: 'bug',           count: 24  },
+    { id: 19, type: 'product',       count: 1   },
+    // Structural group — no `type` field → maps to UNTYPED_VALUE:
+    { id: 25, count: 1 },
+  ],
+  total: 6,
+};
+
 /** Fixture: link adjacency rows for workspace edge queries. */
 export const adjacencyPage: Page<NodeLink> = {
   result: [

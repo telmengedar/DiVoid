@@ -66,4 +66,6 @@ export const API = {
     ADJACENCY: '/nodes/links',
   },
   HEALTH: '/health',
+  /** GET /api/types — live node-type catalog (task #485 / #486). */
+  TYPES: '/types',
 } as const;

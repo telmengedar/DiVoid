@@ -61,10 +61,10 @@ import { useMoveNode } from './useMoveNode';
 import {
   useWorkspaceFilters,
   UNTYPED_VALUE,
-  ALL_NODE_TYPES,
   ALL_STATUS_VALUES,
   NO_STATUS_VALUE,
 } from './useWorkspaceFilters';
+import { useNodeTypes } from './useNodeTypes';
 import {
   WorkspaceFilterPopover,
   type FilterOption,
@@ -115,20 +115,10 @@ const VIEWPORT_SESSION_KEY = 'divoid.workspace.viewport';
 
 // ─── Filter option labels ─────────────────────────────────────────────────────
 
-/** Human-readable labels for synthetic / abbreviated type values. */
-const TYPE_LABELS: Record<string, string> = {
-  [UNTYPED_VALUE]: 'untyped',
-};
-
 /** Human-readable labels for synthetic / abbreviated status values. */
 const STATUS_LABELS: Record<string, string> = {
   [NO_STATUS_VALUE]: 'no status',
 };
-
-const typeFilterOptions: FilterOption[] = ALL_NODE_TYPES.map((t) => ({
-  value: t,
-  label: TYPE_LABELS[t] ?? t,
-}));
 
 const statusFilterOptions: FilterOption[] = ALL_STATUS_VALUES.map((s) => ({
   value: s,
@@ -224,6 +214,12 @@ export function WorkspaceCanvas() {
   const linkNodes         = useLinkNodes();
   const unlinkNodes       = useUnlinkNodes();
 
+  // ── Live type catalog (DiVoid task #486) ─────────────────────────────────
+  // options: FilterOption[] for the type-filter popover (live from /api/types).
+  // liveTypeValues: fed into useWorkspaceFilters to auto-select new types.
+  // Falls back to the hardcoded ALL_NODE_TYPES list while loading (option c).
+  const { options: typeFilterOptions, liveTypeValues } = useNodeTypes();
+
   // ── Filters ───────────────────────────────────────────────────────────────
   const {
     selectedTypes,
@@ -232,7 +228,7 @@ export function WorkspaceCanvas() {
     toggleStatus,
     typeFilterActive,
     statusFilterActive,
-  } = useWorkspaceFilters();
+  } = useWorkspaceFilters({ liveTypeValues });
 
   // Build the filter param object for useNodesInViewport.
   // Memoised so it doesn't cause query key churn on every render.
