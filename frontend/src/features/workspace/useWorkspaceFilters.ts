@@ -5,9 +5,12 @@
  * ## Filter contract
  *
  * Type filter:
- *  - Options: a known set of observed types + synthetic "untyped" for type-null nodes.
- *  - Default: all selected.
+ *  - Options: fetched live from GET /api/types (see useNodeTypes). The hardcoded
+ *    ALL_NODE_TYPES list is the fallback during load and the default selection base.
+ *  - Default: all selected — including newly-discovered types not in sessionStorage.
  *  - sessionStorage key: divoid.workspace.typeFilter
+ *  - sessionStorage key: divoid.workspace.typeFilter.known  (set of all types the
+ *    user has already been offered — see "Known-types set" below)
  *
  * Status filter:
  *  - Options: new, open, in-progress, closed, fixed + synthetic "nostatus" for null.
@@ -21,10 +24,24 @@
  * Both are NOT sent to the API directly; the caller must check for them and
  * translate to the correct API parameters (nostatus=true / separate notype fetch).
  *
- * Task: DiVoid node #318
+ * ## Known-types set and new-type auto-select (DiVoid task #486, Jenny review #512)
+ *
+ * The `liveTypeValues` param allows the caller to pass the live type catalog.
+ * When the catalog arrives, the merge effect computes:
+ *
+ *   newlyDiscovered = liveTypeValues \ knownTypes   (set-minus against KNOWN, not selection)
+ *   selectedTypes   = selectedTypes ∪ newlyDiscovered
+ *   knownTypes      = knownTypes ∪ liveTypeValues
+ *
+ * Using "known" (not "selected") as the exclusion set is critical: a type the user
+ * previously deselected is absent from selectedTypes but IS in knownTypes, so it is
+ * NOT in newlyDiscovered and stays deselected. Only types appearing for the first
+ * time ever get the all-on-default treatment.
+ *
+ * Task: DiVoid node #318 / #486
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -68,8 +85,9 @@ export const DEFAULT_EXCLUDED_STATUSES = new Set(['closed', 'fixed']);
 
 // ─── sessionStorage helpers ───────────────────────────────────────────────────
 
-const TYPE_FILTER_KEY   = 'divoid.workspace.typeFilter';
-const STATUS_FILTER_KEY = 'divoid.workspace.statusFilter';
+const TYPE_FILTER_KEY        = 'divoid.workspace.typeFilter';
+const TYPE_FILTER_KNOWN_KEY  = 'divoid.workspace.typeFilter.known';
+const STATUS_FILTER_KEY      = 'divoid.workspace.statusFilter';
 
 function loadSet(key: string, fallback: string[]): string[] {
   try {
@@ -129,7 +147,19 @@ export interface WorkspaceFilters {
   statusFilterActive: boolean;
 }
 
-export function useWorkspaceFilters(): WorkspaceFilters {
+export interface WorkspaceFiltersOptions {
+  /**
+   * Live type values from GET /api/types (real types only, no UNTYPED_VALUE).
+   * Any value in this list not already in the current selection is auto-selected,
+   * preserving the all-on-by-default rule from #318 for newly-discovered types.
+   * Pass an empty array while the live catalog is still loading.
+   */
+  liveTypeValues?: string[];
+}
+
+export function useWorkspaceFilters(options: WorkspaceFiltersOptions = {}): WorkspaceFilters {
+  const { liveTypeValues = [] } = options;
+
   const [selectedTypes, setSelectedTypes] = useState<string[]>(() =>
     loadSet(TYPE_FILTER_KEY, DEFAULT_TYPE_SELECTION),
   );
@@ -137,6 +167,35 @@ export function useWorkspaceFilters(): WorkspaceFilters {
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>(() =>
     loadSet(STATUS_FILTER_KEY, DEFAULT_STATUS_SELECTION),
   );
+
+  // ── Auto-select newly-discovered types (DiVoid task #486, Jenny review #512) ──
+  // When the live type catalog arrives, only auto-select types the user has NEVER
+  // been offered before (newlyDiscovered = liveTypeValues \ knownTypes). Types the
+  // user previously saw and deselected are in knownTypes but not in selectedTypes —
+  // they must NOT be re-added here. See header doc for the full invariant.
+  //
+  // The dep is a primitive so the effect only fires when the actual set of live
+  // types changes, not on every render where the array ref is new. The live values
+  // are recovered inside the effect by splitting the same primitive, which keeps
+  // the dep array exhaustive without a lint-disable comment.
+  const liveTypeKey = liveTypeValues.join(',');
+  useEffect(() => {
+    if (!liveTypeKey) return;
+    const currentLiveTypes = liveTypeKey.split(',');
+    const knownTypes = new Set(loadSet(TYPE_FILTER_KNOWN_KEY, []));
+    const newlyDiscovered = currentLiveTypes.filter((t) => !knownTypes.has(t));
+
+    // Always update the known set, even if nothing new was discovered.
+    const nextKnown = Array.from(new Set([...knownTypes, ...currentLiveTypes]));
+    saveSet(TYPE_FILTER_KNOWN_KEY, nextKnown);
+
+    if (newlyDiscovered.length === 0) return;
+    setSelectedTypes((prev) => {
+      const next = [...new Set([...prev, ...newlyDiscovered])];
+      saveSet(TYPE_FILTER_KEY, next);
+      return next;
+    });
+  }, [liveTypeKey]);
 
   const toggleType = useCallback((value: string) => {
     setSelectedTypes((prev) => {

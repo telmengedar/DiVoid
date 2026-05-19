@@ -68,6 +68,7 @@ const server = setupServer(
     return HttpResponse.json({ result: [], total: 0 });
   }),
   http.get(`${BASE_URL}/nodes/links`, () => HttpResponse.json(adjacencyPage)),
+  http.get(`${BASE_URL}/types`, () => HttpResponse.json({ result: [{ id: 6, type: 'task', count: 1 }], total: 1 })),
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
@@ -98,6 +99,7 @@ vi.mock('@/lib/constants', () => ({
       ADJACENCY: '/nodes/links',
     },
     HEALTH: '/health',
+    TYPES: '/types',
   },
   ROUTES: {
     HOME: '/',
