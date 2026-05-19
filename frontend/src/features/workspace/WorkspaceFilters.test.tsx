@@ -556,3 +556,62 @@ describe('WorkspaceFilters — known-types set preserves user-deselected types (
     expect(selectedTypes).toContain('documentation');
   });
 });
+
+// ─── Jenny re-review #514 — no-duplicate invariant on first visit ─────────────
+
+describe('WorkspaceFilters — no-duplicate invariant on first visit (Jenny #514)', () => {
+  /**
+   * POSITIVE PROOF — load-bearing test for Jenny re-review at DiVoid #514.
+   *
+   * Bug: on a fresh visit (knownTypes = [], sessionStorage empty), the merge effect
+   * prepends all live types to the DEFAULT_TYPE_SELECTION array, which already
+   * contains the overlapping types. Result: duplicate entries in selectedTypes —
+   * visible as duplicate ?type= params in the URL query string.
+   *
+   * Fix: wrap the merge with Set-based dedup:
+   *   const next = [...new Set([...prev, ...newlyDiscovered])];
+   *
+   * Seed state: sessionStorage empty (first visit, no knownTypes, no selectedTypes).
+   * Live catalog: [{type: 'task', count: 5}, {type: 'product', count: 1}].
+   *   — `task` is already in ALL_NODE_TYPES (the default)
+   *   — `product` is genuinely new
+   *
+   * Assert: after merge, `selectedTypes` has no duplicate entries.
+   *   selectedTypes.length === new Set(selectedTypes).size
+   *   selectedTypes.filter(t => t === 'task').length === 1
+   *
+   * NEGATIVE PROOF: revert the Set-wrap (`const next = [...prev, ...newlyDiscovered]`).
+   * With prev = ALL_NODE_TYPES (contains 'task') and newlyDiscovered = ['task'] (task is
+   * absent from empty knownTypes, so it is "newly discovered"), `task` appears twice.
+   * The assertion `filter(t => t === 'task').length === 1` fails — proving the Set-wrap
+   * is load-bearing, not cosmetic.
+   */
+  it('no duplicate entries in selectedTypes when live catalog overlaps ALL_NODE_TYPES (first visit)', async () => {
+    // Seed: first visit — sessionStorage is clear (done by afterEach, but be explicit).
+    sessionStorage.removeItem('divoid.workspace.typeFilter');
+    sessionStorage.removeItem('divoid.workspace.typeFilter.known');
+
+    const { useWorkspaceFilters: hook } = await import('./useWorkspaceFilters');
+    const { renderHook, act: hookAct } = await import('@testing-library/react');
+
+    // Live catalog overlaps with ALL_NODE_TYPES on `task`; `product` is new.
+    const liveTypeValues = ['task', 'product'];
+    const { result } = renderHook(() => hook({ liveTypeValues }));
+
+    // Allow the merge effect to run.
+    await hookAct(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const { selectedTypes } = result.current;
+
+    // Primary invariant: no duplicates in the persisted selection.
+    expect(selectedTypes.length).toBe(new Set(selectedTypes).size);
+
+    // Spot-check: 'task' appears exactly once (it was in prev AND in newlyDiscovered).
+    expect(selectedTypes.filter((t) => t === 'task').length).toBe(1);
+
+    // 'product' is genuinely new and must be present.
+    expect(selectedTypes).toContain('product');
+  });
+});

@@ -191,7 +191,7 @@ export function useWorkspaceFilters(options: WorkspaceFiltersOptions = {}): Work
 
     if (newlyDiscovered.length === 0) return;
     setSelectedTypes((prev) => {
-      const next = [...prev, ...newlyDiscovered];
+      const next = [...new Set([...prev, ...newlyDiscovered])];
       saveSet(TYPE_FILTER_KEY, next);
       return next;
     });
