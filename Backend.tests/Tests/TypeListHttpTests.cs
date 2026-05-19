@@ -105,11 +105,6 @@ public class TypeListHttpTests
     }
 
 
-    // -----------------------------------------------------------------------
-    // T1 — positive: seeded types appear with correct counts, sorted count-desc
-    //                then type-asc for same-count types
-    // -----------------------------------------------------------------------
-
     [Test]
     public async Task T1_ListTypes_ReturnsSortedTypesWithCorrectCounts()
     {
@@ -155,10 +150,6 @@ public class TypeListHttpTests
     }
 
 
-    // -----------------------------------------------------------------------
-    // T2 — orphan-filter: NodeType with no referencing nodes does not appear
-    // -----------------------------------------------------------------------
-
     [Test]
     public async Task T2_ListTypes_OrphanNodeType_DoesNotAppear()
     {
@@ -180,11 +171,6 @@ public class TypeListHttpTests
             "T2: orphan NodeType (no referencing nodes) must not appear in the response");
     }
 
-
-    // -----------------------------------------------------------------------
-    // T3 — empty graph: response envelope has empty result array and total=0
-    //      uses a fresh JwtAuthFixture so the DB has no nodes from prior tests
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task T3_ListTypes_EmptyGraph_ReturnsEmptyEnvelope()
@@ -219,10 +205,6 @@ public class TypeListHttpTests
     }
 
 
-    // -----------------------------------------------------------------------
-    // T4 — auth-401: missing bearer returns 401
-    // -----------------------------------------------------------------------
-
     [Test]
     public async Task T4_ListTypes_NoBearerToken_Returns401()
     {
@@ -234,10 +216,6 @@ public class TypeListHttpTests
             "T4: GET /api/types without a bearer token must return 401");
     }
 
-
-    // -----------------------------------------------------------------------
-    // T5 — auth-read: caller with read permission returns 200
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task T5_ListTypes_WithReadPermission_Returns200()
