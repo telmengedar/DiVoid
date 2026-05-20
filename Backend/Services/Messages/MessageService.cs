@@ -43,7 +43,7 @@ public class MessageService : IMessageService {
             throw new ArgumentException("Body must not be empty", nameof(details));
 
         User recipient = await database.Load<User>()
-                                       .Where(u => u.Id == details.RecipientId)
+                                       .Where(u => u.Id == details.RecipientId && u.Enabled)
                                        .ExecuteEntityAsync();
         if (recipient == null)
             throw new NotFoundException<User>(details.RecipientId);
