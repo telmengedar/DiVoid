@@ -645,29 +645,89 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (nameTouched)
         {
             ct.ThrowIfCancellationRequested();
-            Node row = await database.Load<Node>(n => n.Name, n => n.Content, n => n.ContentType)
-                                     .Where(n => n.Id == nodeId)
-                                     .ExecuteEntityAsync(transaction);
-
-            string composed = EmbeddingInputComposer.Compose(row.Name, row.Content, row.ContentType);
-            if (composed != null)
-            {
-                await database.Update<Node>()
-                              .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                                          DB.Constant(TextContentTypePredicate.EmbeddingModel),
-                                                                          DB.Constant(composed)).Type<float[]>())
-                              .Where(n => n.Id == nodeId)
-                              .ExecuteAsync(transaction);
-            } else {
-                await database.Update<Node>()
-                              .Set(n => n.Embedding == (float[]) null)
-                              .Where(n => n.Id == nodeId)
-                              .ExecuteAsync(transaction);
-            }
+            await RegenerateEmbeddingViaBranches(database, transaction, nodeId, ct);
         }
 
         transaction.Commit();
         return await GetNodeById(nodeId);
+    }
+
+    /// <summary>
+    /// issues four mutually-exclusive UPDATE statements that regenerate the embedding column
+    /// entirely on the Postgres side — no Content blob is fetched into .NET.
+    /// </summary>
+    /// <remarks>
+    /// implements the four branches of #440 Decision 3 (composition matrix); each branch
+    /// corresponds to one row of the truth table.  the WHEREs are mutually exclusive so exactly
+    /// one UPDATE writes a row; the others return 0 affected rows and are no-ops.
+    ///
+    /// text-content detection mirrors <see cref="TextContentTypePredicate.IsText"/>:
+    ///   ILIKE 'text/%' covers the text/* family;
+    ///   IN (ApplicationTextTypes) covers application/json, application/xml, etc.
+    ///
+    /// accepted divergence from <see cref="EmbeddingInputComposer.Compose"/>: the C# composer
+    /// uses <c>string.IsNullOrWhiteSpace(name)</c>; the SQL form uses
+    /// <c>name IS NULL OR name = ''</c>.  a name patched to pure whitespace is treated as
+    /// "name present" here but "name absent" by the composer.  the controller layer should
+    /// reject pure-whitespace names before they reach this path.
+    /// </remarks>
+    /// <param name="database">entity manager (shared with the surrounding transaction)</param>
+    /// <param name="transaction">the open transaction that wraps the patch UPDATE</param>
+    /// <param name="nodeId">id of the row whose embedding is being regenerated</param>
+    /// <param name="ct">cancellation token threaded from the controller</param>
+    private static async Task RegenerateEmbeddingViaBranches(IEntityManager database, Transaction transaction, long nodeId, CancellationToken ct)
+    {
+        string model = TextContentTypePredicate.EmbeddingModel;
+        string[] allowlist = TextContentTypePredicate.ApplicationTextTypes;
+
+        // F1: name + text content → embed(name ++ '\n\n' ++ LEFT(convert_from(content,'UTF8'),8000))
+        await database.Update<Node>()
+                      .Set(n => n.Embedding == DB.CustomFunction("embedding",
+                                                                  DB.Constant(model),
+                                                                  DB.CustomFunction("concat",
+                                                                      DB.Property<Node>(x => x.Name),
+                                                                      DB.Constant("\n\n"),
+                                                                      DB.ConvertFrom(DB.Left(DB.Property<Node>(x => x.Content), 8000), "UTF8"))).Type<float[]>())
+                      .Where(n => n.Id == nodeId
+                               && n.Name != null && n.Name != ""
+                               && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
+                               && n.Content != null)
+                      .ExecuteAsync(transaction);
+
+        ct.ThrowIfCancellationRequested();
+
+        // F2: name only — non-text or no content → embed(name)
+        await database.Update<Node>()
+                      .Set(n => n.Embedding == DB.CustomFunction("embedding",
+                                                                  DB.Constant(model),
+                                                                  DB.Property<Node>(x => x.Name)).Type<float[]>())
+                      .Where(n => n.Id == nodeId
+                               && n.Name != null && n.Name != ""
+                               && (!(n.ContentType.Like("text/%") || n.ContentType.In(allowlist)) || n.Content == null))
+                      .ExecuteAsync(transaction);
+
+        ct.ThrowIfCancellationRequested();
+
+        // F3: content only — empty/null name, text content → embed(LEFT(convert_from(content,'UTF8'),8000))
+        await database.Update<Node>()
+                      .Set(n => n.Embedding == DB.CustomFunction("embedding",
+                                                                  DB.Constant(model),
+                                                                  DB.ConvertFrom(DB.Left(DB.Property<Node>(x => x.Content), 8000), "UTF8")).Type<float[]>())
+                      .Where(n => n.Id == nodeId
+                               && (n.Name == null || n.Name == "")
+                               && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
+                               && n.Content != null)
+                      .ExecuteAsync(transaction);
+
+        ct.ThrowIfCancellationRequested();
+
+        // F4: both empty/non-text → null
+        await database.Update<Node>()
+                      .Set(n => n.Embedding == (float[]) null)
+                      .Where(n => n.Id == nodeId
+                               && (n.Name == null || n.Name == "")
+                               && (!(n.ContentType.Like("text/%") || n.ContentType.In(allowlist)) || n.Content == null))
+                      .ExecuteAsync(transaction);
     }
 
     /// <inheritdoc />

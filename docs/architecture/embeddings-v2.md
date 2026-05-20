@@ -573,3 +573,13 @@ Result of phase 0 informs the §5.2 expression's exact shape. Document the findi
 v2 preserves v1's three load-bearing decisions: synchronous embedding inside the same transaction, no try/catch on the embedding write, no DI seam beyond the capability flag. v2 changes one decision (clear-on-non-text → name-only on non-text) and broadens the trigger surface to include create and name-PATCH. The mamgo-backend embedding pattern (single `Update<>().Set(Embedding == DB.CustomFunction("embedding", …))`) is what every v2 call site emits, in identical shape.
 
 The `embed` PATCH op is the one piece of legacy surface this doc actively winds down. Its deprecation removes the only remaining call site where the `gemini-embedding-001` literal is hardcoded in-line rather than referenced via `TextContentTypePredicate.EmbeddingModel` — a small post-condition benefit.
+
+---
+
+## Follow-up: SQL-side composition for name-PATCH regen (PR #82 / task #444)
+
+The `NodeService.Patch` read-compose-write pattern shipped in PR #68 was replaced in PR #82 (task #444) with four mutually-exclusive SQL-side UPDATE statements (branch-by-WHERE / Option F). The C# `EmbeddingInputComposer` is no longer called on the `Patch` path; it remains canonical for `UploadContent`, `CreateNode`, and `EmbeddingBackfillService`.
+
+Full design rationale and the four-branch composition matrix are in `docs/architecture/embeddings-v2-sql-composition.md` (DiVoid node #626).
+
+controller-layer note (per PR #82 PR body): `PATCH /name` with a pure-whitespace name is treated as "name present" by the SQL form but "name absent" by the C# composer. The controller layer should reject pure-whitespace names before they reach `NodeService.Patch`.
