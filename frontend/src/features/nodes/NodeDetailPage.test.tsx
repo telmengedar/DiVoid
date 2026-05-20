@@ -8,10 +8,11 @@
  *  - Linked neighbours are shown as clickable links.
  *  - Write buttons shown/hidden based on whoami permissions.
  *  - Edit and Delete dialogs are triggered correctly.
+ *  - Empty-state card for nodes with no contentType (task #294).
  *
  * The dialog components themselves (EditNodeDialog, DeleteNodeDialog,
- * LinkNodeDialog, ContentUploadZone) are mocked here to avoid OOM from
- * rendering heavy Radix + react-markdown trees in jsdom.
+ * LinkNodeDialog, ContentUploadZone, MarkdownEditorSurface) are mocked here
+ * to avoid OOM from rendering heavy Radix + react-markdown trees in jsdom.
  * Each dialog component has its own dedicated test file.
  */
 
@@ -22,6 +23,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
+import type { NodeDetails } from '@/types/divoid';
 import { BASE_URL, sampleNode, samplePage } from '@/test/msw/handlers';
 
 // ─── MSW server ───────────────────────────────────────────────────────────────
@@ -33,11 +35,24 @@ const writeUser = {
 
 const readOnlyUser = { ...writeUser, permissions: ['read'] };
 
+/**
+ * Fixture: a node with no content type — the "empty content" case (task #294).
+ * Node id 55 is used to avoid collision with the sampleNode fixture (id 42).
+ */
+const emptyNode: NodeDetails = {
+  id: 55,
+  type: 'documentation',
+  name: 'Empty Node',
+  status: null,
+  // contentType intentionally absent — mirrors a node created with no content blob.
+};
+
 const server = setupServer(
   http.get(`${BASE_URL}/users/me`, () => HttpResponse.json(writeUser)),
   http.get(`${BASE_URL}/nodes/:id`, ({ params }) => {
     const id = parseInt(params.id as string, 10);
     if (id === 42) return HttpResponse.json(sampleNode);
+    if (id === 55) return HttpResponse.json(emptyNode);
     return HttpResponse.json({ code: 'notfound', text: `Node ${id} not found` }, { status: 404 });
   }),
   http.get(`${BASE_URL}/nodes/:id/content`, ({ params }) => {
@@ -47,6 +62,8 @@ const server = setupServer(
         headers: { 'Content-Type': 'text/markdown' },
       });
     }
+    // Node 55 has no content — the page should NOT fetch this endpoint for it.
+    // If this handler fires for id=55, it means the empty-state guard is broken.
     return HttpResponse.json({ code: 'notfound', text: 'not found' }, { status: 404 });
   }),
   http.get(`${BASE_URL}/nodes`, ({ request }) => {
@@ -55,6 +72,7 @@ const server = setupServer(
     return HttpResponse.json({ result: [], total: 0 });
   }),
   http.delete(`${BASE_URL}/nodes/:id`, () => new HttpResponse(null, { status: 204 })),
+  http.post(`${BASE_URL}/nodes/:id/content`, () => new HttpResponse(null, { status: 204 })),
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
@@ -121,6 +139,38 @@ vi.mock('./LinkNodeDialog', () => ({
 
 vi.mock('./ContentUploadZone', () => ({
   ContentUploadZone: () => <div data-testid="upload-zone">Upload zone</div>,
+}));
+
+// Mock MarkdownEditorSurface to avoid react-markdown OOM in jsdom.
+// Exposes a controlled textarea + save button so empty-state save tests can
+// verify the "compose → save" flow without spinning up the full editor.
+// See MarkdownEditorSurface.test.tsx for the editor's own load-bearing tests.
+vi.mock('./MarkdownEditorSurface', () => ({
+  MarkdownEditorSurface: ({
+    onCancel,
+    onSaved,
+  }: {
+    nodeId: number;
+    initialContent?: string;
+    onCancel?: () => void;
+    onSaved?: () => void;
+  }) => (
+    <div data-testid="markdown-editor">
+      <button type="button" aria-label="Save markdown content" onClick={() => onSaved?.()}>
+        Save
+      </button>
+      {onCancel && (
+        <button type="button" aria-label="Cancel editing" onClick={onCancel}>
+          Cancel
+        </button>
+      )}
+    </div>
+  ),
+  isTextShaped: (ct: string | null | undefined): boolean => {
+    if (!ct) return false;
+    const s = ct.toLowerCase();
+    return s.startsWith('text/') || s.startsWith('application/json');
+  },
 }));
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -284,6 +334,121 @@ describe('NodeDetailPage — write affordances', () => {
     await user.click(screen.getByRole('button', { name: /^delete$/i }));
 
     await waitFor(() => expect(screen.getByText('Search page')).toBeInTheDocument());
+  });
+});
+
+// ─── Task #294: empty-state for nodes with no contentType ────────────────────
+//
+// Root cause: nodes with contentType=null had no content fetch (enabled:false),
+// but ContentRegion had no empty-state branch — it fell through to "No content."
+// with no affordances to create content. The fix adds a distinct EmptyContentCard
+// that renders when !hasContent, with "Add markdown" and "Upload file" buttons.
+//
+// Load-bearing discipline (DiVoid #275):
+//
+// T1 — positive proof: mount with contentType=null → empty-state card visible,
+//   no error toast, "Add markdown" button present, no content fetch issued.
+//   NEGATIVE PROOF: revert the `if (!hasContent) return <EmptyContentCard ...>`
+//   guard in ContentRegion. T1 fails: "empty-content-card" is absent and the
+//   "Add markdown" button is not found. The "No content." fallback renders
+//   instead (no error — the hook returns idle — but no affordance either).
+//
+// T2 — populated state is not regressed: mount node 42 (contentType present) →
+//   markdown content renders as before.
+//
+// T3 — compose mode opens on "Add markdown" click; editor is visible.
+//   (Full save → re-fetch → populated flow is covered in mutations.test.tsx and
+//   MarkdownEditorSurface.test.tsx which own the individual save path tests.)
+//
+// T4 — upload mode opens on "Upload file" click; upload zone is visible.
+
+describe('NodeDetailPage — empty-state (task #294)', () => {
+  it('T1: renders empty-state card for node with contentType=null, no error toast', async () => {
+    const { toast } = await import('sonner');
+    renderAtId(55);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('empty-content-card')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/this node has no content yet/i)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    // toast.error must not have been called
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it('T1: "Add markdown" button is present in the empty-state card', async () => {
+    renderAtId(55);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('empty-content-card')).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('button', { name: /add markdown/i })).toBeInTheDocument();
+  });
+
+  it('T1: "Upload file" button is present in the empty-state card', async () => {
+    renderAtId(55);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('empty-content-card')).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('button', { name: /upload file/i })).toBeInTheDocument();
+  });
+
+  it('T1: empty-state card hidden for read-only users (no write affordances)', async () => {
+    server.use(http.get(`${BASE_URL}/users/me`, () => HttpResponse.json(readOnlyUser)));
+    renderAtId(55);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('empty-content-card')).toBeInTheDocument();
+    });
+
+    // The card still shows the message, but no write affordances.
+    expect(screen.queryByRole('button', { name: /add markdown/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /upload file/i })).not.toBeInTheDocument();
+  });
+
+  it('T2: populated node (contentType present) still renders normally — no regression', async () => {
+    renderAtId(42);
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Document')).toBeInTheDocument();
+    });
+
+    // The empty-state card must NOT appear for a node that has content.
+    expect(screen.queryByTestId('empty-content-card')).not.toBeInTheDocument();
+  });
+
+  it('T3: clicking "Add markdown" opens the markdown editor', async () => {
+    const user = userEvent.setup();
+    renderAtId(55);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /add markdown/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /add markdown/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('markdown-editor')).toBeInTheDocument();
+    });
+  });
+
+  it('T4: clicking "Upload file" opens the upload zone', async () => {
+    const user = userEvent.setup();
+    renderAtId(55);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /upload file/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /upload file/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('upload-zone')).toBeInTheDocument();
+    });
   });
 });
 
