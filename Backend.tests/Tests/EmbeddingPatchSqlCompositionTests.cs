@@ -48,10 +48,6 @@ public class EmbeddingPatchSqlCompositionTests
         => new(fixture.EntityManager, DisabledCapability);
 
 
-    // -------------------------------------------------------------------------
-    // helpers
-    // -------------------------------------------------------------------------
-
     static async Task<NodeDetails> SeedNode(NodeService svc, string name, byte[]? content = null, string? contentType = null)
     {
         NodeDetails created = await svc.CreateNode(new NodeDetails { Type = "documentation", Name = name });
@@ -65,11 +61,6 @@ public class EmbeddingPatchSqlCompositionTests
             [new PatchOperation { Op = "replace", Path = "/name", Value = newName }],
             CancellationToken.None);
 
-
-    // -------------------------------------------------------------------------
-    // SQLite regression suite (capability disabled — all R1–R7 must not crash
-    // and embedding must stay null)
-    // -------------------------------------------------------------------------
 
     /// <summary>R1: name + text/markdown content → F1 branch; no crash, embedding null on SQLite.</summary>
     [Test]
@@ -245,28 +236,6 @@ public class EmbeddingPatchSqlCompositionTests
         });
     }
 
-
-    // -------------------------------------------------------------------------
-    // Postgres parity suite (gated on POSTGRES_CONNECTION)
-    // -------------------------------------------------------------------------
-    // These tests verify that the SQL-side embedding input string equals the
-    // C# EmbeddingInputComposer.Compose output byte-for-byte.
-    //
-    // Implementation: each test inserts the fixture row, issues PATCH /name, then
-    // SELECTs the EmbeddingInput column (a persisted-computed column NOT added here —
-    // see note below) and compares to EmbeddingInputComposer.Compose.
-    //
-    // NOTE: the embedding() Postgres function calls Vertex AI and returns a float[].
-    // The parity assertion below compares the COMPOSED INPUT string, not the final
-    // float[] vector, because the test environment may not have Vertex AI access.
-    // The test extracts the composed string by calling EmbeddingInputComposer.Compose
-    // with the same inputs and asserting the result matches what the SQL form would
-    // have passed to embedding().  This is the "C# composer is canonical" contract
-    // from #626 §8.1.
-    //
-    // To verify the full byte-identity of the two forms on a real Postgres + Vertex AI
-    // environment, run the Postgres smoke described in #626 §10.2 manually pre-merge.
-    // -------------------------------------------------------------------------
 
     static IEntityManager CreatePostgresManager(string connString)
     {
