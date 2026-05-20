@@ -219,10 +219,6 @@ public class MessageHttpTests
             "A failure here means messages can be addressed to ghost users.");
     }
 
-    // -----------------------------------------------------------------------
-    // T3b — POST to disabled recipient returns 404 (existence must not leak)
-    // -----------------------------------------------------------------------
-
     [Test]
     public async Task T3b_Create_DisabledRecipient_Returns404()
     {
