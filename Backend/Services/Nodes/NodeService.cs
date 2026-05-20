@@ -158,7 +158,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         return new AsyncPageResponseWriter<TypeListItem>(
             windowed.Items,
-            async () => await windowed.WindowValue,
+            () => windowed.WindowValue,
             null
         );
     }
@@ -533,7 +533,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         return new AsyncPageResponseWriter<NodeDetails>(
             windowed.Items,
-            async () => await windowed.WindowValue,
+            () => windowed.WindowValue,
             filter.Continue
         );
     }
@@ -579,7 +579,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         return new AsyncPageResponseWriter<NodeDetails>(
             windowed.Items,
-            async () => await windowed.WindowValue,
+            () => windowed.WindowValue,
             filter.Continue
         );
     }
@@ -698,7 +698,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         return Task.FromResult(new AsyncPageResponseWriter<NodeLink>(
             operation.ExecuteEntitiesAsync(),
-            async () => await countOp.ExecuteScalarAsync<long>(),
+            () => countOp.ExecuteScalarAsync<long>(),
             filter.Continue
         ));
     }
