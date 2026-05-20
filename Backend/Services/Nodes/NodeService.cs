@@ -295,18 +295,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             predicate &= n => n.TypeId.In(typeOp);
         }
 
-        if (filter.LinkedTo?.Length > 0)
-        {
-            // TODO: Lateral Join in Ocelot
-            LoadOperation<NodeLink> linkOp = database.Load<NodeLink>(l => l.SourceId)
-                                                   .Where(l => l.SourceId.In(filter.LinkedTo) || l.TargetId.In(filter.LinkedTo))
-                                                   .Union(database.Load<NodeLink>(n => n.TargetId).Where(l => l.SourceId.In(filter.LinkedTo) || l.TargetId.In(filter.LinkedTo)));
-            predicate &= n => n.Id.In(linkOp) && !n.Id.In(filter.LinkedTo);
-        }
-
         if (filter.Status?.Length > 0)
         {
-            // Build the status-values predicate (IN or LIKE chain).
             PredicateExpression<Node> statusValuePredicate;
             if (filter.Status.Any(s => s.ContainsWildcards()))
             {
@@ -343,6 +333,42 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         }
 
         return predicate?.Content;
+    }
+
+    /// <summary>
+    /// builds the linkedto predicate for <paramref name="operation"/> and returns the
+    /// predicate fragment to AND into the caller's combined <c>Where</c> expression.
+    ///
+    /// on databases that support LATERAL JOIN (Postgres, MySQL, MSSQL) a correlated
+    /// subquery is attached to <paramref name="operation"/> as a side effect and
+    /// only the neighbour-exclude predicate (<c>!n.Id.In(linkedTo)</c>) is returned.
+    /// on SQLite the existing UNION-of-two-directions shape is used as a fallback
+    /// (per Ocelot architecture #537 §8.5.2).
+    ///
+    /// the caller must AND the returned expression into the final predicate before
+    /// calling <c>Where</c> on the operation — do not call <c>Where</c> a second time
+    /// after this method, as Ocelot replaces the existing clause on each call.
+    /// </summary>
+    PredicateExpression<Node> BuildLinkedToFilter(LoadOperation<Node> operation, long[] linkedTo)
+    {
+        if (database.DBClient.DBInfo.SupportsLateralJoin)
+        {
+            LoadOperation<NodeLink> lateral = database.Load<NodeLink>(l => l.SourceId, l => l.TargetId)
+                .Where(l => (l.SourceId == DB.Property<Node>(n => n.Id, "node").Int64
+                          || l.TargetId == DB.Property<Node>(n => n.Id, "node").Int64)
+                         && (l.SourceId.In(linkedTo) || l.TargetId.In(linkedTo)))
+                .Limit(1);
+            operation.LateralJoin(lateral, joinAlias: "link");
+            return new PredicateExpression<Node>(n => !n.Id.In(linkedTo));
+        }
+        else
+        {
+            LoadOperation<NodeLink> linkOp = database.Load<NodeLink>(l => l.SourceId)
+                                                     .Where(l => l.SourceId.In(linkedTo) || l.TargetId.In(linkedTo))
+                                                     .Union(database.Load<NodeLink>(n => n.TargetId)
+                                                                    .Where(l => l.SourceId.In(linkedTo) || l.TargetId.In(linkedTo)));
+            return new PredicateExpression<Node>(n => n.Id.In(linkOp) && !n.Id.In(linkedTo));
+        }
     }
 
     /// <summary>
@@ -434,6 +460,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         LoadOperation<Node> terminal = mapper.CreateOperation(database, filter.Fields);
         terminal.ApplyFilter(filter, mapper);
+        if (filter.LinkedTo?.Length > 0)
+            combined &= BuildLinkedToFilter(terminal, filter.LinkedTo);
         terminal.Where(combined?.Content);
 
         if (isSemantic)
@@ -521,7 +549,13 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         LoadOperation<Node> operation = mapper.CreateOperation(database, filter.Fields);
         operation.ApplyFilter(filter, mapper);
-        operation.Where(GenerateFilter(filter));
+        PredicateExpression<Node> listPredicate = null;
+        Expression<Func<Node, bool>> generatedFilter = GenerateFilter(filter);
+        if (generatedFilter != null)
+            listPredicate &= new PredicateExpression<Node>(generatedFilter);
+        if (filter.LinkedTo?.Length > 0)
+            listPredicate &= BuildLinkedToFilter(operation, filter.LinkedTo);
+        operation.Where(listPredicate?.Content);
 
         if (isSemantic)
             ApplySemanticSearch(operation, filter, mapper);
