@@ -220,6 +220,38 @@ public class MessageHttpTests
     }
 
     // -----------------------------------------------------------------------
+    // T3b — POST to disabled recipient returns 404 (existence must not leak)
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task T3b_Create_DisabledRecipient_Returns404()
+    {
+        string suffix = Guid.NewGuid().ToString("N")[..8];
+        long authorId = await InsertUserAsync($"t3b-author-{suffix}", Json.WriteString(new[] { "write" }));
+
+        // Seed a disabled recipient directly — InsertUserAsync always sets Enabled=true.
+        long disabledRecipientId = await db.Insert<User>()
+                                           .Columns(u => u.Name, u => u.Email, u => u.Enabled, u => u.CreatedAt)
+                                           .Values($"t3b-disabled-{suffix}", $"t3b-disabled-{suffix}@test.com", false, DateTime.UtcNow)
+                                           .ReturnID()
+                                           .ExecuteAsync();
+
+        string token = fixture.MintToken(userId: authorId);
+        HttpClient client = ClientWithToken(token);
+
+        HttpResponseMessage response = await client.PostAsync("/api/messages", JsonBody(new {
+            recipientId = disabledRecipientId,
+            subject     = "T3b disabled recipient",
+            body        = "body"
+        }));
+
+        Assert.That((int)response.StatusCode, Is.EqualTo(404),
+            "T3b (CRITICAL): POST to a disabled recipient must return 404. " +
+            "A failure (201) means the Enabled check is absent from the recipient predicate, " +
+            "allowing messages to be addressed to disabled accounts.");
+    }
+
+    // -----------------------------------------------------------------------
     // T4a — empty subject returns 400
     // -----------------------------------------------------------------------
 
