@@ -4,6 +4,8 @@
  * Shows four canonical regions:
  *  1. Metadata — id, type, name, status, contentType.
  *  2. Content blob — markdown rendered with rehype-sanitize; raw text fallback.
+ *     When contentType is null/empty, shows an empty-state card with "Add
+ *     markdown" and "Upload file" affordances instead of fetching or erroring.
  *  3. Linked neighbours — via useNodeListLinkedTo (clicking through navigates).
  *  4. Error state — DivoidApiError.text via sonner toast; 404 shows inline.
  *
@@ -19,6 +21,7 @@
  *
  * Design: docs/architecture/frontend-bootstrap.md §5.5, §5.6, §6.6, §9.3
  * Task: DiVoid node #229
+ * Empty-state fix: DiVoid node #294
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -27,7 +30,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
 import { toast } from 'sonner';
-import { ChevronLeft, Pencil, Trash2, Link2, Unlink, UploadCloud, X } from 'lucide-react';
+import { ChevronLeft, Pencil, Trash2, Link2, Unlink, UploadCloud, X, FileText } from 'lucide-react';
 import { useNode } from './useNode';
 import { useNodeContent } from './useNodeContent';
 import { useNodeListLinkedTo } from './useNodeListLinkedTo';
@@ -65,7 +68,90 @@ interface ContentRegionProps {
 
 type ContentMode = 'read' | 'edit';
 
+/**
+ * Empty-state card shown when a node has no content (contentType is null/empty).
+ *
+ * Surfaces both write affordances so the user can add the first content blob:
+ *  - "Add markdown" → opens the MarkdownEditorSurface in compose mode.
+ *  - "Upload file" → exposes the ContentUploadZone drag-target.
+ *
+ * Read-only users (canWrite=false) see a neutral "No content" message without
+ * the write affordances — the backend remains the security boundary.
+ *
+ * Task: DiVoid node #294
+ */
+interface EmptyContentCardProps {
+  nodeId: number;
+  canWrite: boolean;
+}
+
+function EmptyContentCard({ nodeId, canWrite }: EmptyContentCardProps) {
+  const [mode, setMode] = useState<'idle' | 'compose' | 'upload'>('idle');
+
+  return (
+    <div
+      className="flex flex-col gap-4 rounded-lg border border-dashed border-border bg-muted/20 px-6 py-8 items-center text-center"
+      data-testid="empty-content-card"
+    >
+      <FileText size={32} className="text-muted-foreground/50" aria-hidden="true" />
+      <p className="text-sm text-muted-foreground">This node has no content yet.</p>
+
+      {canWrite && mode === 'idle' && (
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <button
+            type="button"
+            aria-label="Add markdown content"
+            onClick={() => setMode('compose')}
+            className="inline-flex items-center gap-1.5 h-8 px-4 rounded-md border border-border text-sm font-medium hover:bg-muted transition-colors"
+          >
+            <Pencil size={14} aria-hidden="true" />
+            Add markdown
+          </button>
+          <button
+            type="button"
+            aria-label="Upload file"
+            onClick={() => setMode('upload')}
+            className="inline-flex items-center gap-1.5 h-8 px-4 rounded-md border border-border text-sm font-medium hover:bg-muted transition-colors"
+          >
+            <UploadCloud size={14} aria-hidden="true" />
+            Upload file
+          </button>
+        </div>
+      )}
+
+      {canWrite && mode === 'compose' && (
+        <div className="w-full text-left">
+          <MarkdownEditorSurface
+            nodeId={nodeId}
+            initialContent=""
+            onCancel={() => setMode('idle')}
+          />
+        </div>
+      )}
+
+      {canWrite && mode === 'upload' && (
+        <div className="w-full">
+          <ContentUploadZone nodeId={nodeId} />
+          <button
+            type="button"
+            onClick={() => setMode('idle')}
+            className="mt-3 inline-flex items-center gap-1.5 self-start text-sm text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Cancel upload"
+          >
+            <X size={14} aria-hidden="true" />
+            Cancel
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ContentRegion({ nodeId, contentType, canWrite }: ContentRegionProps) {
+  // Gate the content fetch on contentType being present and text-shaped.
+  // When contentType is null/empty the node has no content blob — do not fetch.
+  // See §8.3 (enabled gates conditional fetches) and task #294.
+  const hasContent = Boolean(contentType);
   const { data: content, isFetching, error } = useNodeContent(nodeId, { enabled: isTextShaped(contentType) });
   const [mode, setMode] = useState<ContentMode>('read');
   const [showUpload, setShowUpload] = useState(false);
@@ -75,6 +161,13 @@ function ContentRegion({ nodeId, contentType, canWrite }: ContentRegionProps) {
       toast.error(`Content: ${error.code}: ${error.text}`);
     }
   }, [error]);
+
+  // Empty state: node has no content type — show the empty-state card with
+  // affordances to add content. No fetch is issued; no error can be shown.
+  // Task #294.
+  if (!hasContent) {
+    return <EmptyContentCard nodeId={nodeId} canWrite={canWrite} />;
+  }
 
   if (isFetching && !content) {
     return (
