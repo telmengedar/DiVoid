@@ -198,8 +198,9 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         using Transaction transaction = database.Transaction();
         if (await database.Load<Node>(DB.Count()).Where(n => n.Id == sourceNodeId || n.Id == targetNodeId).ExecuteScalarAsync<long>(transaction) != 2)
             throw new NotFoundException<Node>($"Either '{sourceNodeId}' or '{targetNodeId}' does not exist");
+        // idempotent: if the link already exists in either direction, treat as success (no-op)
         if (await database.Load<NodeLink>(DB.Count()).Where(n => n.SourceId == sourceNodeId && n.TargetId == targetNodeId || n.SourceId == targetNodeId && n.TargetId == sourceNodeId).ExecuteScalarAsync<long>(transaction) > 0)
-            throw new InvalidOperationException("Nodes already linked");
+            return;
         await database.Insert<NodeLink>()
                       .Columns(n => n.SourceId, n => n.TargetId)
                       .Values(sourceNodeId, targetNodeId)
@@ -732,10 +733,10 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <inheritdoc />
     public async Task UnlinkNodes(long sourceNodeId, long targetNodeId)
     {
-        if (await database.Delete<NodeLink>()
-                          .Where(n => n.SourceId == sourceNodeId && n.TargetId == targetNodeId || n.SourceId == targetNodeId && n.TargetId == sourceNodeId)
-                          .ExecuteAsync() == 0)
-            throw new NotFoundException<NodeLink>($"No link found between nodes '{sourceNodeId}' and '{targetNodeId}'");
+        // idempotent: if the link does not exist, treat as success (no-op)
+        await database.Delete<NodeLink>()
+                      .Where(n => n.SourceId == sourceNodeId && n.TargetId == targetNodeId || n.SourceId == targetNodeId && n.TargetId == sourceNodeId)
+                      .ExecuteAsync();
     }
 
     /// <inheritdoc />
