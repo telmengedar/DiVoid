@@ -10,7 +10,11 @@ Architecture document: `docs/architecture/phase-1.md` and DiVoid node **#695** (
 
 ## Phase
 
-Currently: **Phase 1** (read-side tools + link_nodes). Do not implement Phase 2 tools (`divoid_create_task`, `divoid_create_documentation`, `divoid_list`, `divoid_patch_node`, `divoid_send_message`, etc.) without explicit sign-off from Toni.
+Currently: **Phase 1 complete** (read-side tools + link helper + composite write tools). All six Phase 1 tools have shipped:
+- PR1 (#82): `divoid_search`, `divoid_get_node`, `divoid_get_content`, `divoid_link_nodes`
+- PR2 (#83): `divoid_create_task`, `divoid_create_documentation`
+
+Do not implement Phase 2 tools (`divoid_list`, `divoid_patch_node`, `divoid_set_status`, `divoid_set_content`, `divoid_send_message`, etc.) without explicit sign-off from Toni.
 
 ## Key invariants
 
@@ -41,6 +45,8 @@ src/divoid_mcp/        # installable package
     get_node.py
     get_content.py
     link_nodes.py
+    create_task.py
+    create_documentation.py
 tests/smoke/           # live integration scripts (not pytest); run with pip install -e .
 docs/architecture/     # architecture docs committed here
 examples/              # .mcp.json registration examples

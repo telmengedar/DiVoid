@@ -35,12 +35,7 @@ Return shape: each result has id, name, similarity, and optionally type, \
 status, and contentType. type is null for structural group nodes (Tasks, Docs \
 containers); status is null for nodes whose type does not carry a lifecycle \
 (most types other than task / bug). Use n.get() rather than direct key access \
-when consuming results.
-
-Filter semantics: when query is set, the type and status filters narrow but do \
-not strictly exclude — semantic ranking can surface adjacent types (DiVoid \
-bug #703). For strict type filtering, omit query and use list-mode (Phase 2 \
-divoid_list), or post-filter results client-side.\
+when consuming results.\
 """
 
 

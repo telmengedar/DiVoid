@@ -297,20 +297,6 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                 }
 
             if not link_result.ok:
-                # Handle the DiVoid 500 "already linked" quirk.
-                if link_result.status == 500:
-                    try:
-                        body_json = link_result.json()
-                        if "already linked" in body_json.get("text", "").lower():
-                            links_created.append(link_target)
-                            logger.info(
-                                "divoid_create_documentation node_id=%d link target=%d already_existed",
-                                node_id, link_target,
-                            )
-                            continue
-                    except Exception:
-                        pass
-
                 code, msg = map_http_error(
                     link_result.status, link_result.body, config.api_key,
                     f"link node #{node_id} to #{link_target}",

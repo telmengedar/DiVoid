@@ -146,28 +146,22 @@ async def smoke_get_node(config: Any) -> None:
 
 async def smoke_get_node_not_found(config: Any) -> None:
     """
-    divoid_get_node: non-existent node returns 200 with empty body.
+    divoid_get_node: non-existent node returns 404 (DiVoid #701 fix).
 
-    DiVoid's GET /api/nodes/{id} returns HTTP 200 with an empty response body
-    when the node does not exist (rather than 404). The tool detects this and
-    returns a structured node_not_found error. The content endpoint does return
-    404 for missing nodes.
+    After the backend fix, GET /api/nodes/{id} returns HTTP 404 (not 200+empty)
+    for missing nodes. The 404 is handled directly by errors.map_http_error.
+    The content endpoint also returns 404 for missing nodes.
     """
     print("\n--- divoid_get_node (not found) ---")
-    # GET /api/nodes/{id} returns 200 with empty body for missing nodes.
+    # GET /api/nodes/{id} now returns 404 for missing nodes (DiVoid #701 fixed).
     result = await http_client.get("nodes/999999999")
     _assert(
-        "GET /nodes/999999999 returns 200 (empty body = not found)",
-        result.status == 200,
+        "GET /nodes/999999999 returns 404",
+        result.status == 404,
         f"status={result.status}",
     )
-    _assert(
-        "response body is empty for non-existent node",
-        not result.body or not result.body.strip(),
-        f"body_len={len(result.body)}",
-    )
 
-    # The content endpoint DOES return 404 for missing nodes.
+    # The content endpoint also returns 404 for missing nodes.
     content_result = await http_client.get("nodes/999999999/content")
     _assert(
         "GET /nodes/999999999/content returns 404",
@@ -286,40 +280,29 @@ async def smoke_link_nodes(config: Any) -> None:
     """
     divoid_link_nodes: create a link and verify it appears in the adjacency query.
 
-    NOTE: DiVoid returns HTTP 500 {"code":"unhandled","text":"Nodes already linked"}
-    when trying to create a duplicate link. The tool handles this gracefully and
-    returns linked=True with already_existed=True. This test verifies both the
-    new-link path (using the adjacency check) and the tool's idempotency handling.
+    After the DiVoid #702 backend fix, duplicate POST returns 200 OK (idempotent).
+    This test posts the link (may be new or duplicate) and asserts 2xx in both cases.
     """
     print("\n--- divoid_link_nodes ---")
 
     # Verify both nodes exist first.
     r8 = await http_client.get("nodes/8")
     r9 = await http_client.get("nodes/9")
-    if not (r8.ok and r8.body.strip()):
+    if not r8.ok:
         _record("link precondition: node #8 exists", False, "cannot proceed")
         return
-    if not (r9.ok and r9.body.strip()):
+    if not r9.ok:
         _record("link precondition: node #9 exists", False, "cannot proceed")
         return
 
     _record("link precondition: nodes #8 and #9 exist", True)
 
-    # Post the link -- may succeed (new link) or return 500 "already linked".
-    # Both outcomes are valid; the tool wraps the 500 as idempotent success.
+    # Post the link — DiVoid #702 fix: duplicate POST returns 200 OK (idempotent).
     result = await http_client.post_json("nodes/8/links", 9)
-    already_linked = False
-    if not result.ok and result.status == 500:
-        try:
-            body_json = result.json()
-            already_linked = "already linked" in body_json.get("text", "").lower()
-        except Exception:
-            pass
-
     _assert(
-        "POST /nodes/8/links: 2xx (new) or 500-already-linked (idempotent)",
-        result.ok or already_linked,
-        f"status={result.status} already_linked={already_linked}",
+        "POST /nodes/8/links: 2xx (new or duplicate, both idempotent)",
+        result.ok,
+        f"status={result.status}",
     )
 
     # Verify the link appears in the adjacency query.
@@ -613,13 +596,9 @@ async def smoke_create_task_happy_path(config: Any) -> None:
 
     # Step 3: Link to Tasks group.
     link_result = await http_client.post_json(f"nodes/{node_id}/links", _DIVOID_TASKS_GROUP_ID)
-    link_ok = link_result.ok or (
-        link_result.status == 500
-        and "already linked" in (link_result.body or b"").decode("utf-8", errors="replace").lower()
-    )
     _assert(
-        f"POST /nodes/{node_id}/links to Tasks group returns 2xx (or idempotent 500)",
-        link_ok,
+        f"POST /nodes/{node_id}/links to Tasks group returns 2xx",
+        link_result.ok,
         f"status={link_result.status}",
     )
 
@@ -711,13 +690,9 @@ async def smoke_create_documentation_happy_path(config: Any) -> None:
 
     # Step 3: Link to Docs group.
     link_result = await http_client.post_json(f"nodes/{node_id}/links", _DIVOID_DOCS_GROUP_ID)
-    link_ok = link_result.ok or (
-        link_result.status == 500
-        and "already linked" in (link_result.body or b"").decode("utf-8", errors="replace").lower()
-    )
     _assert(
-        f"POST /nodes/{node_id}/links to Docs group returns 2xx (or idempotent 500)",
-        link_ok,
+        f"POST /nodes/{node_id}/links to Docs group returns 2xx",
+        link_result.ok,
         f"status={link_result.status}",
     )
 
