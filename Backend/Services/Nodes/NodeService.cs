@@ -745,6 +745,68 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                       .ExecuteAsync(transaction);
     }
 
+    /// <summary>
+    /// test seam — builds the same four UPDATE operations as
+    /// <see cref="RegenerateEmbeddingViaBranches"/> and returns their rendered
+    /// SQL (via <c>Prepare().CommandText</c>) without executing against a real DB.
+    ///
+    /// Exposed as <c>internal</c> so that <c>Backend.tests</c> can assert the
+    /// SQL shape of each branch without holding a transaction or a live connection.
+    /// The <paramref name="database"/> parameter must be backed by a
+    /// <see cref="Pooshit.Ocelot.Info.PostgreInfo"/> client so that Ocelot emits
+    /// Postgres-dialect SQL (the truncation operators differ between dialects).
+    /// </summary>
+    internal static (string F1, string F2, string F3, string F4) PrepareEmbeddingBranchSql(IEntityManager database, long nodeId)
+    {
+        string model = TextContentTypePredicate.EmbeddingModel;
+        string[] allowlist = TextContentTypePredicate.ApplicationTextTypes;
+
+        string f1 = database.Update<Node>()
+                            .Set(n => n.Embedding == DB.CustomFunction("embedding",
+                                                                        DB.Constant(model),
+                                                                        DB.CustomFunction("concat",
+                                                                            DB.Property<Node>(x => x.Name),
+                                                                            DB.Constant("\n\n"),
+                                                                            DB.Left(DB.ConvertFrom(DB.Property<Node>(x => x.Content), "UTF8"), 8000))).Type<float[]>())
+                            .Where(n => n.Id == nodeId
+                                     && n.Name != null && n.Name != ""
+                                     && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
+                                     && n.Content != null)
+                            .Prepare()
+                            .CommandText;
+
+        string f2 = database.Update<Node>()
+                            .Set(n => n.Embedding == DB.CustomFunction("embedding",
+                                                                        DB.Constant(model),
+                                                                        DB.Property<Node>(x => x.Name)).Type<float[]>())
+                            .Where(n => n.Id == nodeId
+                                     && n.Name != null && n.Name != ""
+                                     && (!(n.ContentType.Like("text/%") || n.ContentType.In(allowlist)) || n.Content == null))
+                            .Prepare()
+                            .CommandText;
+
+        string f3 = database.Update<Node>()
+                            .Set(n => n.Embedding == DB.CustomFunction("embedding",
+                                                                        DB.Constant(model),
+                                                                        DB.Left(DB.ConvertFrom(DB.Property<Node>(x => x.Content), "UTF8"), 8000)).Type<float[]>())
+                            .Where(n => n.Id == nodeId
+                                     && (n.Name == null || n.Name == "")
+                                     && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
+                                     && n.Content != null)
+                            .Prepare()
+                            .CommandText;
+
+        string f4 = database.Update<Node>()
+                            .Set(n => n.Embedding == (float[]) null)
+                            .Where(n => n.Id == nodeId
+                                     && (n.Name == null || n.Name == "")
+                                     && (!(n.ContentType.Like("text/%") || n.ContentType.In(allowlist)) || n.Content == null))
+                            .Prepare()
+                            .CommandText;
+
+        return (f1, f2, f3, f4);
+    }
+
     /// <inheritdoc />
     public async Task UnlinkNodes(long sourceNodeId, long targetNodeId)
     {
