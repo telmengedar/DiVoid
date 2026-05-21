@@ -154,5 +154,25 @@ async def post_bytes(path: str, body: bytes, content_type: str) -> HttpResult:
     )
 
 
+async def delete(path: str) -> HttpResult:
+    """DELETE {base_url}/{path}."""
+    client = _assert_ready()
+    url = f"{_base_url}/{path.lstrip('/')}"
+    logger.debug("DELETE %s", url)
+    try:
+        resp = await client.delete(url)
+    except httpx.ConnectTimeout as exc:
+        raise DiVoidUnreachable(f"Connect timeout reaching DiVoid: {exc}") from exc
+    except httpx.TimeoutException as exc:
+        raise DiVoidUnreachable(f"Timeout reaching DiVoid: {exc}") from exc
+    except httpx.NetworkError as exc:
+        raise DiVoidUnreachable(f"Network error reaching DiVoid: {exc}") from exc
+    return HttpResult(
+        status=resp.status_code,
+        body=resp.content,
+        headers=dict(resp.headers),
+    )
+
+
 class DiVoidUnreachable(Exception):
     """Raised when the DiVoid API is not reachable (network / timeout)."""

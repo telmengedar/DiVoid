@@ -20,10 +20,14 @@ def register_tools(mcp_server: fastmcp.FastMCP) -> None:
     from .get_node import register as register_get_node
     from .get_content import register as register_get_content
     from .link_nodes import register as register_link_nodes
+    from .create_task import register as register_create_task
+    from .create_documentation import register as register_create_documentation
 
     register_search(mcp_server)
     register_get_node(mcp_server)
     register_get_content(mcp_server)
     register_link_nodes(mcp_server)
+    register_create_task(mcp_server)
+    register_create_documentation(mcp_server)
 
-    logger.info("Registered 4 MCP tools (Phase 1 read-side + link).")
+    logger.info("Registered 6 MCP tools (Phase 1: read-side + link + composite writes).")
