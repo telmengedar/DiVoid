@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "divoid": {
+      "command": "divoid-mcp",
+      "args": [],
+      "env": {
+        "DIVOID_MCP_LOG_LEVEL": "INFO"
+      }
+    }
+  }
+}
