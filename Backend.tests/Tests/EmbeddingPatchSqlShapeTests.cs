@@ -1,6 +1,7 @@
 #nullable disable
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
+using Backend.Services.Nodes;
 using Moq;
 using Pooshit.Ocelot.Clients;
 using Pooshit.Ocelot.Entities;
@@ -29,9 +30,9 @@ namespace Backend.tests.Tests;
 /// NP1 — drop the allowlist <c>= ANY()</c> clause from F1/F2/F3/F4.
 ///   Expected failure: "expected = ANY( clause in F1 WHERE but was absent".
 ///
-/// NP2 — swap the truncation operator from <c>convert_from( LEFT( ... ) )</c> to
-///   <c>LEFT( convert_from( ... ) )</c> in F1/F3 (the §4.4-vs-probe nesting inversion).
-///   Expected failure: "expected convert_from( LEFT( nesting in F1 SET but saw LEFT( convert_from(".
+/// NP-fix — revert <c>DB.Substring</c> to <c>DB.Left</c> in F1/F3 (the DiVoid #781 regression).
+///   Expected failure: SS1/SS5 fire with "must NOT contain LEFT(" because
+///   <c>LeftToken</c> emits <c>LEFT(bytea, integer)</c> which Postgres rejects (42883).
 ///
 /// Each test documents the exact NP substitution that must make it fail.
 /// </summary>
@@ -55,22 +56,8 @@ public class EmbeddingPatchSqlShapeTests
 
     static string F1Sql(IEntityManager em)
     {
-        string model = TextContentTypePredicate.EmbeddingModel;
-        string[] allowlist = TextContentTypePredicate.ApplicationTextTypes;
-        long nodeId = 1L;
-        return em.Update<Node>()
-                 .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                             DB.Constant(model),
-                                                             DB.CustomFunction("concat",
-                                                                 DB.Property<Node>(x => x.Name),
-                                                                 DB.Constant("\n\n"),
-                                                                 DB.ConvertFrom(DB.Left(DB.Property<Node>(x => x.Content), 8000), "UTF8"))).Type<float[]>())
-                 .Where(n => n.Id == nodeId
-                          && n.Name != null && n.Name != ""
-                          && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
-                          && n.Content != null)
-                 .Prepare()
-                 .CommandText;
+        // calls production RenderEmbeddingBranchSql directly — load-bearing per DiVoid #275
+        return NodeService.RenderEmbeddingBranchSql(em, 1L).F1Sql;
     }
 
     static string F2Sql(IEntityManager em)
@@ -91,19 +78,8 @@ public class EmbeddingPatchSqlShapeTests
 
     static string F3Sql(IEntityManager em)
     {
-        string model = TextContentTypePredicate.EmbeddingModel;
-        string[] allowlist = TextContentTypePredicate.ApplicationTextTypes;
-        long nodeId = 1L;
-        return em.Update<Node>()
-                 .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                             DB.Constant(model),
-                                                             DB.ConvertFrom(DB.Left(DB.Property<Node>(x => x.Content), 8000), "UTF8")).Type<float[]>())
-                 .Where(n => n.Id == nodeId
-                          && (n.Name == null || n.Name == "")
-                          && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
-                          && n.Content != null)
-                 .Prepare()
-                 .CommandText;
+        // calls production RenderEmbeddingBranchSql directly — load-bearing per DiVoid #275
+        return NodeService.RenderEmbeddingBranchSql(em, 1L).F3Sql;
     }
 
     static string F4Sql(IEntityManager em)
@@ -129,17 +105,19 @@ public class EmbeddingPatchSqlShapeTests
     // -----------------------------------------------------------------------
 
     [Test]
-    public void SS1_F1_SetExpression_ContainsConvertFromOuterLeftInner()
+    public void SS1_F1_SetExpression_UsesSubstringNotLeft()
     {
         IEntityManager em = CreatePostgresEntityManager();
         string sql = F1Sql(em);
 
+        // NP-fix: revert DB.Substring -> DB.Left in F1; this test fails with
+        // "SS1: F1 SET must NOT contain LEFT(" because LeftToken emits LEFT( on Postgres.
         Assert.Multiple(() => {
-            Assert.That(sql, Does.Contain("convert_from( LEFT("),
-                "SS1: F1 SET must use convert_from( LEFT( ... ) ) nesting (§4.4 form); " +
-                "if this fails the truncation operator order was swapped to LEFT( convert_from( ... ) ) (NP2)");
-            Assert.That(sql, Does.Not.Contain("LEFT( convert_from("),
-                "SS1: F1 SET must NOT use LEFT( convert_from( ... ) ) nesting (wrong order)");
+            Assert.That(sql, Does.Contain("convert_from( SUBSTRING ("),
+                "SS1: F1 SET must use convert_from( SUBSTRING( ... ) ) nesting; " +
+                "LEFT(bytea, integer) does not exist in Postgres (DiVoid #781)");
+            Assert.That(sql, Does.Not.Contain("LEFT("),
+                "SS1: F1 SET must NOT contain LEFT( -- LEFT(bytea, integer) throws 42883 on Postgres (DiVoid #781)");
         });
     }
 
@@ -210,17 +188,19 @@ public class EmbeddingPatchSqlShapeTests
     // -----------------------------------------------------------------------
 
     [Test]
-    public void SS5_F3_SetExpression_ContainsConvertFromOuterLeftInner()
+    public void SS5_F3_SetExpression_UsesSubstringNotLeft()
     {
         IEntityManager em = CreatePostgresEntityManager();
         string sql = F3Sql(em);
 
+        // NP-fix: revert DB.Substring -> DB.Left in F3; this test fails with
+        // "SS5: F3 SET must NOT contain LEFT(" because LeftToken emits LEFT( on Postgres.
         Assert.Multiple(() => {
-            Assert.That(sql, Does.Contain("convert_from( LEFT("),
-                "SS5: F3 SET must use convert_from( LEFT( ... ) ) nesting (§4.4 form); " +
-                "if this fails the truncation operator order was swapped (NP2)");
-            Assert.That(sql, Does.Not.Contain("LEFT( convert_from("),
-                "SS5: F3 SET must NOT use LEFT( convert_from( ... ) ) nesting");
+            Assert.That(sql, Does.Contain("convert_from( SUBSTRING ("),
+                "SS5: F3 SET must use convert_from( SUBSTRING( ... ) ) nesting; " +
+                "LEFT(bytea, integer) does not exist in Postgres (DiVoid #781)");
+            Assert.That(sql, Does.Not.Contain("LEFT("),
+                "SS5: F3 SET must NOT contain LEFT( -- LEFT(bytea, integer) throws 42883 on Postgres (DiVoid #781)");
         });
     }
 

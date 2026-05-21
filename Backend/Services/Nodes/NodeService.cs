@@ -690,19 +690,19 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <param name="transaction">the open transaction that wraps the patch UPDATE</param>
     /// <param name="nodeId">id of the row whose embedding is being regenerated</param>
     /// <param name="ct">cancellation token threaded from the controller</param>
-    private static async Task RegenerateEmbeddingViaBranches(IEntityManager database, Transaction transaction, long nodeId, CancellationToken ct)
+    internal static async Task RegenerateEmbeddingViaBranches(IEntityManager database, Transaction transaction, long nodeId, CancellationToken ct)
     {
         string model = TextContentTypePredicate.EmbeddingModel;
         string[] allowlist = TextContentTypePredicate.ApplicationTextTypes;
 
-        // F1: name + text content → embed(name ++ '\n\n' ++ LEFT(convert_from(content,'UTF8'),8000))
+        // F1: name + text content → embed(name ++ '\n\n' ++ substring(convert_from(content,'UTF8'),1,8000))
         await database.Update<Node>()
                       .Set(n => n.Embedding == DB.CustomFunction("embedding",
                                                                   DB.Constant(model),
                                                                   DB.CustomFunction("concat",
                                                                       DB.Property<Node>(x => x.Name),
                                                                       DB.Constant("\n\n"),
-                                                                      DB.ConvertFrom(DB.Left(DB.Property<Node>(x => x.Content), 8000), "UTF8"))).Type<float[]>())
+                                                                      DB.ConvertFrom(DB.Substring(DB.Property<Node>(x => x.Content), 1, 8000), "UTF8"))).Type<float[]>())
                       .Where(n => n.Id == nodeId
                                && n.Name != null && n.Name != ""
                                && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
@@ -723,11 +723,11 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         ct.ThrowIfCancellationRequested();
 
-        // F3: content only — empty/null name, text content → embed(LEFT(convert_from(content,'UTF8'),8000))
+        // F3: content only — empty/null name, text content → embed(substring(convert_from(content,'UTF8'),1,8000))
         await database.Update<Node>()
                       .Set(n => n.Embedding == DB.CustomFunction("embedding",
                                                                   DB.Constant(model),
-                                                                  DB.ConvertFrom(DB.Left(DB.Property<Node>(x => x.Content), 8000), "UTF8")).Type<float[]>())
+                                                                  DB.ConvertFrom(DB.Substring(DB.Property<Node>(x => x.Content), 1, 8000), "UTF8")).Type<float[]>())
                       .Where(n => n.Id == nodeId
                                && (n.Name == null || n.Name == "")
                                && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
@@ -744,6 +744,47 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                                && (!(n.ContentType.Like("text/%") || n.ContentType.In(allowlist)) || n.Content == null))
                       .ExecuteAsync(transaction);
     }
+
+    /// <summary>
+    /// renders the SQL for the two content-bearing embedding UPDATE branches (F1 and F3)
+    /// without executing them. exposed <c>internal</c> for SQL-shape tests (DiVoid #781).
+    /// </summary>
+    /// <param name="database">entity manager used to build the operation (must be Postgres-backed for production SQL)</param>
+    /// <param name="nodeId">placeholder node id for the WHERE clause</param>
+    /// <returns>tuple of F1 and F3 command text strings</returns>
+    internal static (string F1Sql, string F3Sql) RenderEmbeddingBranchSql(IEntityManager database, long nodeId)
+    {
+        string model = TextContentTypePredicate.EmbeddingModel;
+        string[] allowlist = TextContentTypePredicate.ApplicationTextTypes;
+
+        string f1Sql = database.Update<Node>()
+                                .Set(n => n.Embedding == DB.CustomFunction("embedding",
+                                                                            DB.Constant(model),
+                                                                            DB.CustomFunction("concat",
+                                                                                DB.Property<Node>(x => x.Name),
+                                                                                DB.Constant("\n\n"),
+                                                                                DB.ConvertFrom(DB.Substring(DB.Property<Node>(x => x.Content), 1, 8000), "UTF8"))).Type<float[]>())
+                                .Where(n => n.Id == nodeId
+                                         && n.Name != null && n.Name != ""
+                                         && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
+                                         && n.Content != null)
+                                .Prepare()
+                                .CommandText;
+
+        string f3Sql = database.Update<Node>()
+                                .Set(n => n.Embedding == DB.CustomFunction("embedding",
+                                                                            DB.Constant(model),
+                                                                            DB.ConvertFrom(DB.Substring(DB.Property<Node>(x => x.Content), 1, 8000), "UTF8")).Type<float[]>())
+                                .Where(n => n.Id == nodeId
+                                         && (n.Name == null || n.Name == "")
+                                         && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
+                                         && n.Content != null)
+                                .Prepare()
+                                .CommandText;
+
+        return (f1Sql, f3Sql);
+    }
+
 
     /// <inheritdoc />
     public async Task UnlinkNodes(long sourceNodeId, long targetNodeId)
