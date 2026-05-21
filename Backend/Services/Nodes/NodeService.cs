@@ -798,12 +798,15 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
 
     /// <inheritdoc />
-    public Task<NodeDetails> GetNodeById(long nodeId)
+    public async Task<NodeDetails> GetNodeById(long nodeId)
     {
         NodeMapper mapper = new();
         LoadOperation<Node> operation = mapper.CreateOperation(database);
         operation.Where(n => n.Id == nodeId);
-        return mapper.EntityFromOperation(operation);
+        NodeDetails result = await mapper.EntityFromOperation(operation);
+        if (result == null)
+            throw new NotFoundException<Node>(nodeId);
+        return result;
     }
 
     /// <inheritdoc />
