@@ -228,7 +228,7 @@ public class NodeServiceTests
     }
 
     [Test]
-    public async Task LinkNodes_DuplicateLink_ThrowsInvalidOperationException()
+    public async Task LinkNodes_DuplicateLink_IsIdempotent()
     {
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
@@ -237,12 +237,18 @@ public class NodeServiceTests
         NodeDetails b = await Create(svc, name: "B");
         await svc.LinkNodes(a.Id, b.Id);
 
-        // Same direction
-        Assert.ThrowsAsync<InvalidOperationException>(() => svc.LinkNodes(a.Id, b.Id));
+        // Second call in same direction must succeed silently (bug #702 regression)
+        Assert.DoesNotThrowAsync(() => svc.LinkNodes(a.Id, b.Id));
+
+        // Exactly one link row must exist — not zero, not two
+        long count = await fixture.EntityManager.Load<NodeLink>(Pooshit.Ocelot.Tokens.DB.Count())
+                                  .Where(l => l.SourceId == a.Id && l.TargetId == b.Id)
+                                  .ExecuteScalarAsync<long>();
+        Assert.That(count, Is.EqualTo(1), "duplicate POST must not insert a second link row");
     }
 
     [Test]
-    public async Task LinkNodes_DuplicateLinkReverseDirection_ThrowsInvalidOperationException()
+    public async Task LinkNodes_DuplicateLinkReverseDirection_IsIdempotent()
     {
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
@@ -251,8 +257,13 @@ public class NodeServiceTests
         NodeDetails b = await Create(svc, name: "B");
         await svc.LinkNodes(a.Id, b.Id);
 
-        // Reverse direction should also be treated as a duplicate
-        Assert.ThrowsAsync<InvalidOperationException>(() => svc.LinkNodes(b.Id, a.Id));
+        // Reverse direction is still a duplicate on an undirected graph — must succeed silently
+        Assert.DoesNotThrowAsync(() => svc.LinkNodes(b.Id, a.Id));
+
+        long count = await fixture.EntityManager.Load<NodeLink>(Pooshit.Ocelot.Tokens.DB.Count())
+                                  .Where(l => (l.SourceId == a.Id && l.TargetId == b.Id) || (l.SourceId == b.Id && l.TargetId == a.Id))
+                                  .ExecuteScalarAsync<long>();
+        Assert.That(count, Is.EqualTo(1), "reverse-direction duplicate POST must not insert a second link row");
     }
 
     // -----------------------------------------------------------------------
@@ -297,7 +308,7 @@ public class NodeServiceTests
     }
 
     [Test]
-    public async Task UnlinkNodes_NoLink_ThrowsNotFoundException()
+    public async Task UnlinkNodes_NoLink_IsIdempotent()
     {
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
@@ -305,7 +316,8 @@ public class NodeServiceTests
         NodeDetails a = await Create(svc, name: "A");
         NodeDetails b = await Create(svc, name: "B");
 
-        Assert.ThrowsAsync<NotFoundException<NodeLink>>(() => svc.UnlinkNodes(a.Id, b.Id));
+        // DELETE of a non-existent link must succeed silently (bug #702 sibling check)
+        Assert.DoesNotThrowAsync(() => svc.UnlinkNodes(a.Id, b.Id));
     }
 
     // -----------------------------------------------------------------------
