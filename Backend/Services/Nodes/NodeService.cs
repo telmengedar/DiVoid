@@ -269,7 +269,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <summary>
     /// original single-filter method — preserved for the existing list endpoint.
     /// </summary>
-    Expression<Func<Node, bool>> GenerateFilter(NodeFilter filter)
+    internal Expression<Func<Node, bool>> GenerateFilter(NodeFilter filter)
     {
         PredicateExpression<Node> predicate = null;
 
@@ -462,41 +462,52 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         terminal.ApplyFilter(filter, mapper);
         if (filter.LinkedTo?.Length > 0)
             combined &= BuildLinkedToFilter(terminal, filter.LinkedTo);
-        terminal.Where(combined?.Content);
 
+        // semantic predicates ANDed into combined BEFORE the single Where() call —
+        // mirrors the fix applied to ListPaged: type/status/linkedto filters survive.
         if (isSemantic)
-            ApplySemanticSearch(terminal, filter, mapper);
+            ApplySemanticSearch(terminal, filter, mapper, ref combined);
+
+        terminal.Where(combined?.Content);
 
         return new(terminal);
     }
 
     /// <summary>
-    /// applies semantic-search ordering and predicates to a <paramref name="operation"/> when
-    /// <paramref name="filter"/> carries a non-empty <c>Query</c>.
+    /// ANDs semantic-search predicates into <paramref name="predicate"/> and overrides the
+    /// ORDER BY on <paramref name="operation"/> when <paramref name="filter"/> carries a
+    /// non-empty <c>Query</c>.
     ///
     /// Both plain-list (<see cref="ListPaged"/>) and path-query (<see cref="ListPagedByPath"/>)
     /// terminal operations go through this helper so the similarity treatment is identical in
     /// both modes (per architectural doc §10).
     ///
+    /// The caller is responsible for calling <c>operation.Where(predicate?.Content)</c> exactly
+    /// once after this method returns — combining the semantic predicates with the caller's own
+    /// filter predicates in a single <c>Where</c> call.  This follows the "combine manually,
+    /// single Where call" contract (Ocelot replaces the existing clause on each Where call).
+    ///
     /// When <c>Query</c> is present this method:
     /// <list type="bullet">
-    ///   <item>appends <c>WHERE n.Embedding IS NOT NULL</c> to exclude un-embedded nodes</item>
-    ///   <item>appends <c>WHERE similarity &gt;= MinSimilarity</c> when a floor is supplied</item>
+    ///   <item>ANDs <c>n.Embedding IS NOT NULL</c> into <paramref name="predicate"/> to exclude un-embedded nodes</item>
+    ///   <item>ANDs <c>similarity &gt;= MinSimilarity</c> into <paramref name="predicate"/> when a floor is supplied</item>
     ///   <item>removes any sort that <see cref="FilterExtensions.ApplyFilter{T,TEntity}"/> may have added and
     ///         replaces it with <c>ORDER BY similarity DESC, id ASC</c></item>
     /// </list>
     /// </summary>
-    void ApplySemanticSearch(LoadOperation<Node> operation, NodeFilter filter, NodeMapper mapper)
+    internal void ApplySemanticSearch(LoadOperation<Node> operation, NodeFilter filter, NodeMapper mapper, ref PredicateExpression<Node> predicate)
     {
-        // exclude nodes without an embedding — they have no vector signal to rank on
-        operation.Where(n => n.Embedding != null);
+        // exclude nodes without an embedding — they have no vector signal to rank on.
+        // ANDed into the caller's predicate, NOT via a separate Where() call, so that
+        // type/status/linkedto/id/name filters (already in predicate) are preserved.
+        predicate &= new PredicateExpression<Node>(n => n.Embedding != null);
 
         // optional caller-supplied similarity floor; .Single is the typed float placeholder
         // for use in lambda expressions (IDBField pattern from mamgo CampaignItemTargetService)
         if (filter.MinSimilarity.HasValue)
         {
             float floor = filter.MinSimilarity.Value;
-            operation.Where(n => mapper["similarity"].Field.Single >= floor);
+            predicate &= new PredicateExpression<Node>(n => mapper["similarity"].Field.Single >= floor);
         }
 
         // similarity DESC, id ASC — replaces any sort that ApplyFilter may have set.
@@ -555,10 +566,14 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             listPredicate &= new PredicateExpression<Node>(generatedFilter);
         if (filter.LinkedTo?.Length > 0)
             listPredicate &= BuildLinkedToFilter(operation, filter.LinkedTo);
-        operation.Where(listPredicate?.Content);
 
+        // semantic predicates (Embedding IS NOT NULL, MinSimilarity floor) are ANDed into
+        // listPredicate here — BEFORE the single Where() call — so that type/status/linkedto
+        // filters are not wiped by a second Where() call inside ApplySemanticSearch.
         if (isSemantic)
-            ApplySemanticSearch(operation, filter, mapper);
+            ApplySemanticSearch(operation, filter, mapper, ref listPredicate);
+
+        operation.Where(listPredicate?.Content);
 
         // Single query: COUNT(*) OVER () window function — ApplyFilter already clamps count ≤500
         // and applies limit/offset; WindowedFromOperation decorates with the window column.
