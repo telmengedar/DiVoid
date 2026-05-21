@@ -692,7 +692,9 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <param name="ct">cancellation token threaded from the controller</param>
     private static async Task RegenerateEmbeddingViaBranches(IEntityManager database, Transaction transaction, long nodeId, CancellationToken ct)
     {
-        var (f1, f2, f3, f4) = BuildEmbeddingBranchOperations(database, nodeId);
+        (UpdateValuesOperation<Node> f1, UpdateValuesOperation<Node> f2,
+         UpdateValuesOperation<Node> f3, UpdateValuesOperation<Node> f4) =
+            BuildEmbeddingBranchOperations(database, nodeId);
 
         await f1.ExecuteAsync(transaction);
         ct.ThrowIfCancellationRequested();
@@ -707,31 +709,10 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     }
 
     /// <summary>
-    /// test seam — builds the same four UPDATE operations as
-    /// <see cref="RegenerateEmbeddingViaBranches"/> (via <see cref="BuildEmbeddingBranchOperations"/>)
-    /// and returns their rendered SQL (via <c>Prepare().CommandText</c>) without executing
-    /// against a real DB.
-    ///
-    /// Exposed as <c>internal</c> so that <c>Backend.tests</c> can assert the
-    /// SQL shape of each branch without holding a transaction or a live connection.
-    /// The <paramref name="database"/> parameter must be backed by a
-    /// <see cref="Pooshit.Ocelot.Info.PostgreInfo"/> client so that Ocelot emits
-    /// Postgres-dialect SQL (the truncation operators differ between dialects).
-    /// </summary>
-    internal static (string F1, string F2, string F3, string F4) PrepareEmbeddingBranchSql(IEntityManager database, long nodeId)
-    {
-        var (f1, f2, f3, f4) = BuildEmbeddingBranchOperations(database, nodeId);
-        return (f1.Prepare().CommandText,
-                f2.Prepare().CommandText,
-                f3.Prepare().CommandText,
-                f4.Prepare().CommandText);
-    }
-
-    /// <summary>
     /// Constructs the four UPDATE operation trees for embedding regeneration.
-    /// Single source of truth — shared by <see cref="RegenerateEmbeddingViaBranches"/>
-    /// (which executes them) and <see cref="PrepareEmbeddingBranchSql"/> (which
-    /// renders their SQL for test assertions).  Any change to the SQL shape is
+    /// Single source of truth — called by <see cref="RegenerateEmbeddingViaBranches"/>
+    /// (production execution) and directly by <c>EmbeddingPatchSqlShapeTests.RenderAllBranches</c>
+    /// (test SQL-shape assertions).  Any change to the SQL shape is
     /// automatically reflected in both callers.
     ///
     /// Branches:
@@ -740,7 +721,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     ///   F3 — content only, empty/null name, text content → embed(LEFT(convert_from(content,'UTF8'),8000))
     ///   F4 — neither name nor text content → NULL
     /// </summary>
-    private static (UpdateValuesOperation<Node> F1,
+    internal static (UpdateValuesOperation<Node> F1,
                     UpdateValuesOperation<Node> F2,
                     UpdateValuesOperation<Node> F3,
                     UpdateValuesOperation<Node> F4)

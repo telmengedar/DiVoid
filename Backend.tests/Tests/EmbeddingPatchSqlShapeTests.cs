@@ -5,6 +5,7 @@ using Backend.Services.Nodes;
 using Moq;
 using NUnit.Framework;
 using Pooshit.Ocelot.Clients;
+using Pooshit.Ocelot.Entities.Operations;
 using Pooshit.Ocelot.Entities;
 using Pooshit.Ocelot.Info;
 
@@ -24,11 +25,11 @@ namespace Backend.tests.Tests;
 /// still passed.  Jenny's substitution proof: reverting NodeService.cs to Option B
 /// without touching the test file gave 8 pass / 0 fail.
 ///
-/// Fix: tests now call <see cref="NodeService.PrepareEmbeddingBranchSql"/> — an
-/// <c>internal</c> seam method that builds the same UPDATE trees as
-/// <see cref="NodeService"/> (production code, not a mirror) and returns the Postgres
-/// SQL strings via <c>Prepare().CommandText</c>.  A reversion of NodeService.cs alone
-/// now causes SS1 and SS5 to fail with a concrete error naming the wrong nesting.
+/// Fix: tests now call <see cref="NodeService.BuildEmbeddingBranchOperations"/> — the
+/// <c>internal static</c> shared helper that builds the same UPDATE trees as the
+/// production path — and render each operation’s SQL via <c>Prepare().CommandText</c>
+/// in the test-local <c>RenderAllBranches</c> helper.  Service code carries no test-only
+/// surface.  A reversion of NodeService.cs alone now causes SS1 and SS5 to fail.
 ///
 /// Two negative-proof substitutions are pinned:
 ///
@@ -56,14 +57,23 @@ public class EmbeddingPatchSqlShapeTests
     }
 
     /// <summary>
-    /// Calls the production seam once and returns all four branch SQL strings.
-    /// This is the only place the operation tree is constructed — any change to
-    /// NodeService.RegenerateEmbeddingViaBranches automatically propagates here.
+    /// Calls <see cref="NodeService.BuildEmbeddingBranchOperations"/> — the internal
+    /// shared helper — once and renders each operation to SQL via <c>Prepare().CommandText</c>.
+    /// This is the only place the operation tree is constructed; any change to
+    /// <see cref="NodeService.BuildEmbeddingBranchOperations"/> automatically propagates here.
     /// </summary>
-    static (string F1, string F2, string F3, string F4) PrepareAllBranches()
+    static (string F1, string F2, string F3, string F4) RenderAllBranches()
     {
         IEntityManager em = CreatePostgresEntityManager();
-        return NodeService.PrepareEmbeddingBranchSql(em, nodeId: 1L);
+        (UpdateValuesOperation<Node> f1, UpdateValuesOperation<Node> f2,
+         UpdateValuesOperation<Node> f3, UpdateValuesOperation<Node> f4) =
+            NodeService.BuildEmbeddingBranchOperations(em, nodeId: 1L);
+        return (
+            f1.Prepare().CommandText,
+            f2.Prepare().CommandText,
+            f3.Prepare().CommandText,
+            f4.Prepare().CommandText
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -71,7 +81,7 @@ public class EmbeddingPatchSqlShapeTests
     //
     // NP2 substitution: in NodeService.cs only, swap
     //   DB.Left(DB.ConvertFrom(..., "UTF8"), 8000) back to
-    //   DB.ConvertFrom(DB.Left(..., 8000), "UTF8") inside PrepareEmbeddingBranchSql / F1.
+    //   DB.ConvertFrom(DB.Left(..., 8000), "UTF8") inside BuildEmbeddingBranchOperations / F1.
     // Expected failure: sql contains convert_from( LEFT( and the Does.Not.Contain fires
     //   with "Option B, rejected" — exactly the crash-on-multibyte-boundary error.
     // -----------------------------------------------------------------------
@@ -79,7 +89,7 @@ public class EmbeddingPatchSqlShapeTests
     [Test]
     public void SS1_F1_SetExpression_ContainsLeftOuterConvertFromInner()
     {
-        string sql = PrepareAllBranches().F1;
+        string sql = RenderAllBranches().F1;
 
         Assert.Multiple(() => {
             Assert.That(sql, Does.Contain("LEFT( convert_from("),
@@ -95,14 +105,14 @@ public class EmbeddingPatchSqlShapeTests
     // SS2 — F1 WHERE contains the allowlist ANY clause (NP1 pin)
     //
     // NP1 substitution: in NodeService.cs only, remove n.ContentType.In(allowlist)
-    //   from the F1 WHERE inside PrepareEmbeddingBranchSql, leaving only Like("text/%").
+    //   from the F1 WHERE inside BuildEmbeddingBranchOperations, leaving only Like("text/%").
     // Expected failure: SQL no longer contains = ANY( and this assertion fires.
     // -----------------------------------------------------------------------
 
     [Test]
     public void SS2_F1_WhereClause_ContainsAllowlistAny()
     {
-        string sql = PrepareAllBranches().F1;
+        string sql = RenderAllBranches().F1;
 
         Assert.That(sql, Does.Contain("= ANY("),
             "SS2: F1 WHERE must contain = ANY( for the ApplicationTextTypes allowlist IN clause; " +
@@ -117,7 +127,7 @@ public class EmbeddingPatchSqlShapeTests
     [Test]
     public void SS3_F1_WhereClause_ContainsAllRequiredGuards()
     {
-        string sql = PrepareAllBranches().F1;
+        string sql = RenderAllBranches().F1;
 
         Assert.Multiple(() => {
             Assert.That(sql, Does.Contain("\"name\" IS NOT NULL"),
@@ -139,7 +149,7 @@ public class EmbeddingPatchSqlShapeTests
     [Test]
     public void SS4_F2_WhereClause_ContainsAllowlistAny()
     {
-        string sql = PrepareAllBranches().F2;
+        string sql = RenderAllBranches().F2;
 
         Assert.That(sql, Does.Contain("= ANY("),
             "SS4: F2 WHERE must contain = ANY( for the allowlist negation; " +
@@ -157,7 +167,7 @@ public class EmbeddingPatchSqlShapeTests
     [Test]
     public void SS5_F3_SetExpression_ContainsLeftOuterConvertFromInner()
     {
-        string sql = PrepareAllBranches().F3;
+        string sql = RenderAllBranches().F3;
 
         Assert.Multiple(() => {
             Assert.That(sql, Does.Contain("LEFT( convert_from("),
@@ -175,7 +185,7 @@ public class EmbeddingPatchSqlShapeTests
     [Test]
     public void SS6_F3_WhereClause_ContainsAllowlistAny()
     {
-        string sql = PrepareAllBranches().F3;
+        string sql = RenderAllBranches().F3;
 
         Assert.That(sql, Does.Contain("= ANY("),
             "SS6: F3 WHERE must contain = ANY( for the ApplicationTextTypes allowlist IN clause");
@@ -188,7 +198,7 @@ public class EmbeddingPatchSqlShapeTests
     [Test]
     public void SS7_F4_WhereClause_ContainsAllowlistAny()
     {
-        string sql = PrepareAllBranches().F4;
+        string sql = RenderAllBranches().F4;
 
         Assert.That(sql, Does.Contain("= ANY("),
             "SS7: F4 WHERE must contain = ANY( for the allowlist negation; " +
@@ -202,7 +212,7 @@ public class EmbeddingPatchSqlShapeTests
     [Test]
     public void SS8_F4_SetExpression_IsNull()
     {
-        string sql = PrepareAllBranches().F4;
+        string sql = RenderAllBranches().F4;
 
         Assert.Multiple(() => {
             Assert.That(sql, Does.Contain("= NULL"),
