@@ -154,6 +154,32 @@ async def post_bytes(path: str, body: bytes, content_type: str) -> HttpResult:
     )
 
 
+async def patch_json(path: str, body: Any) -> HttpResult:
+    """PATCH {base_url}/{path} with a JSON body (e.g. a JSON-Patch array)."""
+    import json
+    client = _assert_ready()
+    url = f"{_base_url}/{path.lstrip('/')}"
+    encoded = json.dumps(body).encode("utf-8")
+    logger.debug("PATCH %s body_len=%d", url, len(encoded))
+    try:
+        resp = await client.patch(
+            url,
+            content=encoded,
+            headers={"Content-Type": "application/json"},
+        )
+    except httpx.ConnectTimeout as exc:
+        raise DiVoidUnreachable(f"Connect timeout reaching DiVoid: {exc}") from exc
+    except httpx.TimeoutException as exc:
+        raise DiVoidUnreachable(f"Timeout reaching DiVoid: {exc}") from exc
+    except httpx.NetworkError as exc:
+        raise DiVoidUnreachable(f"Network error reaching DiVoid: {exc}") from exc
+    return HttpResult(
+        status=resp.status_code,
+        body=resp.content,
+        headers=dict(resp.headers),
+    )
+
+
 async def delete(path: str) -> HttpResult:
     """DELETE {base_url}/{path}."""
     client = _assert_ready()
