@@ -48,6 +48,8 @@ from divoid_mcp.tools.resolve_user import _execute as _execute_resolve_user
 from divoid_mcp.tools.send_message import _check_invariants as _check_send_message_invariants
 from divoid_mcp.tools.send_message import _execute as _execute_send_message
 from divoid_mcp.tools.list_messages import _execute as _execute_list_messages
+from divoid_mcp.tools.list_nodes import _check_invariants as _check_list_invariants
+from divoid_mcp.tools.list_nodes import _execute as _execute_list
 from divoid_mcp.errors import InvariantViolation
 
 # Pinned group ids for the smoke-test target project (DiVoid project #3).
@@ -1259,6 +1261,563 @@ async def smoke_list_messages_happy_path(config: Any) -> None:
 
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Phase 2 PR3: divoid_list
+# ---------------------------------------------------------------------------
+
+async def smoke_list_bare(config: Any) -> None:
+    """
+    divoid_list: bare call returns result array + total, paginatable.
+
+    _execute is imported at the top of this file — deleting it causes an
+    ImportError before any test runs (load-bearing proof for the happy path).
+    """
+    print("\n--- divoid_list (bare list) ---")
+
+    result = await _execute_list(config=config, count=5)
+
+    _assert(
+        "_execute returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    _assert("result has 'result' key", "result" in result, f"keys={list(result.keys())}")
+    _assert("result has 'total' key", "total" in result, f"keys={list(result.keys())}")
+    _assert("'result' is a list", isinstance(result.get("result"), list))
+    _assert(
+        "'total' is an integer",
+        isinstance(result.get("total"), int),
+        f"total={result.get('total')!r}",
+    )
+    _assert(
+        "result list has at least 1 node",
+        len(result.get("result", [])) >= 1,
+        f"count={len(result.get('result', []))}",
+    )
+    _assert(
+        "'continue' key present (may be null)",
+        "continue" in result,
+        f"keys={list(result.keys())}",
+    )
+
+
+async def smoke_list_type_filter(config: Any) -> None:
+    """divoid_list: type=['task'] returns only task nodes (strict, no semantic blend)."""
+    print("\n--- divoid_list (type=task filter) ---")
+
+    result = await _execute_list(config=config, type=["task"], count=20)
+
+    _assert(
+        "_execute returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    nodes = result.get("result", [])
+    _assert("at least one task found", len(nodes) >= 1, f"count={len(nodes)}")
+
+    non_task = [n.get("type") for n in nodes if n.get("type") != "task"]
+    _assert(
+        "all returned nodes have type=task",
+        len(non_task) == 0,
+        f"unexpected types: {set(non_task)}" if non_task else f"count={len(nodes)}",
+    )
+
+
+async def smoke_list_linkedto_filter(config: Any) -> None:
+    """divoid_list: linkedto=[3] (DiVoid project) returns its direct neighbors."""
+    print("\n--- divoid_list (linkedto=[3] DiVoid project) ---")
+
+    result = await _execute_list(config=config, linkedto=[_DIVOID_PROJECT_ID], count=20)
+
+    _assert(
+        "_execute returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    nodes = result.get("result", [])
+    _assert(
+        "at least one neighbor found for project #3",
+        len(nodes) >= 1,
+        f"count={len(nodes)}",
+    )
+    # DiVoid project's known direct neighbors include Tasks (#314) and Docs (#7).
+    ids_returned = {n.get("id") for n in nodes}
+    _assert(
+        "Tasks group #314 is in DiVoid's neighbors",
+        _DIVOID_TASKS_GROUP_ID in ids_returned,
+        f"ids_returned={ids_returned}",
+    )
+    _assert(
+        "Docs group #7 is in DiVoid's neighbors",
+        _DIVOID_DOCS_GROUP_ID in ids_returned,
+        f"ids_returned={ids_returned}",
+    )
+
+
+async def smoke_list_path_simple(config: Any) -> None:
+    """divoid_list: path='[type:project,name:DiVoid]' returns exactly DiVoid project."""
+    print("\n--- divoid_list (path simple: project by name) ---")
+
+    result = await _execute_list(config=config, path="[type:project,name:DiVoid]", count=10)
+
+    _assert(
+        "_execute returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    nodes = result.get("result", [])
+    _assert("exactly 1 node returned", len(nodes) == 1, f"count={len(nodes)}")
+    if len(nodes) == 1:
+        _assert(
+            "returned node id is 3 (DiVoid project, pinned)",
+            nodes[0].get("id") == _DIVOID_PROJECT_ID,
+            f"id={nodes[0].get('id')!r}",
+        )
+        _assert(
+            "returned node type is 'project'",
+            nodes[0].get("type") == "project",
+            f"type={nodes[0].get('type')!r}",
+        )
+
+
+async def smoke_list_path_multi_hop(config: Any) -> None:
+    """
+    divoid_list: path='[id:3]/[name:Tasks]/[type:task,status:open]' returns open tasks.
+
+    Multi-hop: DiVoid (#3) -> Tasks group -> open tasks.
+    Sanity-checks that at least one result comes back (DiVoid always has open work).
+    """
+    print("\n--- divoid_list (path multi-hop: open tasks under DiVoid) ---")
+
+    result = await _execute_list(
+        config=config,
+        path=f"[id:{_DIVOID_PROJECT_ID}]/[name:Tasks]/[type:task,status:open]",
+        count=20,
+    )
+
+    _assert(
+        "_execute returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    nodes = result.get("result", [])
+    _assert(
+        "at least one open task found under DiVoid",
+        len(nodes) >= 1,
+        f"count={len(nodes)}",
+    )
+    non_task_or_wrong_status = [
+        n for n in nodes
+        if n.get("type") != "task" or n.get("status") != "open"
+    ]
+    _assert(
+        "all returned nodes are tasks with status=open",
+        len(non_task_or_wrong_status) == 0,
+        f"unexpected: {[(n.get('type'), n.get('status')) for n in non_task_or_wrong_status]}",
+    )
+
+
+async def smoke_list_path_wildcard(config: Any) -> None:
+    """divoid_list: path='[type:project,name:Di%]' returns DiVoid (name LIKE Di%)."""
+    print("\n--- divoid_list (path wildcard: name=Di%) ---")
+
+    result = await _execute_list(config=config, path="[type:project,name:Di%]", count=10)
+
+    _assert(
+        "_execute returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    nodes = result.get("result", [])
+    _assert("at least 1 node returned", len(nodes) >= 1, f"count={len(nodes)}")
+
+    ids_returned = {n.get("id") for n in nodes}
+    _assert(
+        "DiVoid project (#3) is in the wildcard result",
+        _DIVOID_PROJECT_ID in ids_returned,
+        f"ids_returned={ids_returned}",
+    )
+    # All returned nodes must have names starting with 'di' (case-insensitive for safety).
+    bad_names = [n.get("name", "") for n in nodes if not n.get("name", "").lower().startswith("di")]
+    _assert(
+        "all returned names start with 'Di' (LIKE Di%)",
+        len(bad_names) == 0,
+        f"names not matching: {bad_names}",
+    )
+
+
+async def smoke_list_path_empty_result(config: Any) -> None:
+    """divoid_list: path for a nonexistent project returns {result: [], total: 0}."""
+    print("\n--- divoid_list (path empty result: nonexistent project) ---")
+
+    result = await _execute_list(
+        config=config,
+        path="[type:project,name:NoSuchProjectXYZ999]",
+        count=10,
+    )
+
+    _assert(
+        "_execute returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    nodes = result.get("result", [])
+    total = result.get("total", -999)
+    _assert("result is empty list", nodes == [], f"nodes={nodes}")
+    _assert("total is 0", total == 0, f"total={total}")
+
+
+async def smoke_list_path_and_linkedto_invariant(config: Any) -> None:
+    """divoid_list: path + linkedto together -> mutually_exclusive_path_linkedto invariant."""
+    print("\n--- divoid_list (invariant: path + linkedto mutually exclusive) ---")
+
+    raised = False
+    violation_code = None
+    try:
+        _check_list_invariants(
+            path="[type:project,name:DiVoid]",
+            linkedto=[_DIVOID_PROJECT_ID],
+            nostatus=False,
+            status=None,
+            bounds=None,
+            sort=None,
+            fields=None,
+        )
+    except InvariantViolation as exc:
+        raised = True
+        violation_code = exc.code
+
+    _assert("path+linkedto raises InvariantViolation", raised)
+    _assert(
+        "violation code is 'mutually_exclusive_path_linkedto'",
+        violation_code == "mutually_exclusive_path_linkedto",
+        f"code={violation_code!r}",
+    )
+
+
+async def smoke_list_nostatus_and_status_invariant(config: Any) -> None:
+    """divoid_list: nostatus=True + status=['open'] -> mutually_exclusive_nostatus_status invariant."""
+    print("\n--- divoid_list (invariant: nostatus + status mutually exclusive) ---")
+
+    raised = False
+    violation_code = None
+    try:
+        _check_list_invariants(
+            path=None,
+            linkedto=None,
+            nostatus=True,
+            status=["open"],
+            bounds=None,
+            sort=None,
+            fields=None,
+        )
+    except InvariantViolation as exc:
+        raised = True
+        violation_code = exc.code
+
+    _assert("nostatus+status raises InvariantViolation", raised)
+    _assert(
+        "violation code is 'mutually_exclusive_nostatus_status'",
+        violation_code == "mutually_exclusive_nostatus_status",
+        f"code={violation_code!r}",
+    )
+
+
+async def smoke_list_bounds_invalid_length(config: Any) -> None:
+    """divoid_list: bounds with 3 elements -> bounds_invalid_length invariant."""
+    print("\n--- divoid_list (invariant: bounds invalid length) ---")
+
+    raised = False
+    violation_code = None
+    try:
+        _check_list_invariants(
+            path=None,
+            linkedto=None,
+            nostatus=False,
+            status=None,
+            bounds=[1.0, 2.0, 3.0],  # only 3 values, should be 4
+            sort=None,
+            fields=None,
+        )
+    except InvariantViolation as exc:
+        raised = True
+        violation_code = exc.code
+
+    _assert("bounds length 3 raises InvariantViolation", raised)
+    _assert(
+        "violation code is 'bounds_invalid_length'",
+        violation_code == "bounds_invalid_length",
+        f"code={violation_code!r}",
+    )
+
+
+async def smoke_list_bounds_valid(config: Any) -> None:
+    """divoid_list: bounds=[0,0,100000,100000] returns nodes in a very large viewport."""
+    print("\n--- divoid_list (bounds valid large viewport) ---")
+
+    result = await _execute_list(
+        config=config,
+        bounds=[0.0, 0.0, 100000.0, 100000.0],
+        count=10,
+    )
+
+    _assert(
+        "_execute returns no isError for large viewport bounds",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    # A 0..100000 viewport should capture most/all nodes that have canvas positions.
+    _assert("result is a list", isinstance(result.get("result"), list))
+    _assert("total is non-negative", isinstance(result.get("total"), int) and result["total"] >= 0)
+
+
+async def smoke_list_sort_name_descending(config: Any) -> None:
+    """
+    divoid_list: sort=name descending=true returns a valid response with nodes.
+
+    NOTE: This test asserts the API accepts sort+descending without error and returns
+    a structurally correct page. It does NOT assert strict lexicographic ordering —
+    DiVoid's Postgres instance uses a locale-sensitive collation that does not match
+    pure ASCII byte order (e.g. '?' and ':' sort differently than their ASCII values
+    suggest). Ordering is the API's responsibility; the tool passes sort+descending
+    unchanged and trusts the API.
+    """
+    print("\n--- divoid_list (sort=name, descending=true) ---")
+
+    result = await _execute_list(
+        config=config,
+        type=["task"],
+        sort="name",
+        descending=True,
+        count=10,
+    )
+
+    _assert(
+        "_execute returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    nodes = result.get("result", [])
+    _assert(
+        "at least 1 task returned with sort=name descending",
+        len(nodes) >= 1,
+        f"count={len(nodes)}",
+    )
+    _assert(
+        "result is a list of dicts with 'name' field",
+        all(isinstance(n, dict) and "name" in n for n in nodes),
+        f"sample_keys={[list(n.keys()) for n in nodes[:2]]}",
+    )
+
+    # Spot-check: a second call with ascending should return a different first item
+    # (assuming > 1 unique name). This indirectly confirms sort direction is honoured.
+    result_asc = await _execute_list(
+        config=config,
+        type=["task"],
+        sort="name",
+        descending=False,
+        count=1,
+    )
+    result_desc = await _execute_list(
+        config=config,
+        type=["task"],
+        sort="name",
+        descending=True,
+        count=1,
+    )
+    if not result_asc.get("isError") and not result_desc.get("isError"):
+        asc_first = (result_asc.get("result") or [{}])[0].get("name", "")
+        desc_first = (result_desc.get("result") or [{}])[0].get("name", "")
+        # With > 1 task in the graph, ascending and descending first items differ.
+        _assert(
+            "ascending and descending first items differ (confirming sort direction honoured)",
+            asc_first != desc_first,
+            f"asc_first={asc_first!r} desc_first={desc_first!r}",
+        )
+
+
+async def smoke_list_fields_sparse(config: Any) -> None:
+    """divoid_list: fields=['id','name'] returns only those two fields per node."""
+    print("\n--- divoid_list (fields sparse projection: id+name only) ---")
+
+    result = await _execute_list(
+        config=config,
+        count=5,
+        fields=["id", "name"],
+    )
+
+    _assert(
+        "_execute returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    nodes = result.get("result", [])
+    _assert("at least one node returned", len(nodes) >= 1, f"count={len(nodes)}")
+
+    for node in nodes:
+        _assert(
+            f"node #{node.get('id')} has 'id' field",
+            "id" in node,
+            f"keys={list(node.keys())}",
+        )
+        _assert(
+            f"node #{node.get('id')} has 'name' field",
+            "name" in node,
+            f"keys={list(node.keys())}",
+        )
+        # type, status, contentType should NOT be in the response.
+        for excluded in ("type", "status", "contentType"):
+            _assert(
+                f"node #{node.get('id')} does NOT have '{excluded}' (excluded by fields)",
+                excluded not in node,
+                f"keys={list(node.keys())}",
+            )
+
+
+async def smoke_list_pagination(config: Any) -> None:
+    """
+    divoid_list: count=2 + continue cursor paginates without duplicates.
+
+    Fetches 3 pages of 2 nodes each, collects up to 6 ids, and asserts
+    no id appears twice across pages.
+    """
+    print("\n--- divoid_list (pagination: count=2, walk 3 pages) ---")
+
+    seen_ids: list[int] = []
+    cursor = None
+
+    for page in range(3):
+        kwargs: dict[str, Any] = {"count": 2}
+        if cursor is not None:
+            kwargs["continue_cursor"] = cursor
+
+        result = await _execute_list(config=config, **kwargs)
+
+        _assert(
+            f"page {page + 1}: no isError",
+            not result.get("isError", False),
+            str(result.get("content", "")),
+        )
+        if result.get("isError"):
+            break
+
+        page_nodes = result.get("result", [])
+        if not page_nodes:
+            # Ran out of nodes before 3 pages — that is fine, just stop.
+            break
+
+        page_ids = [n.get("id") for n in page_nodes]
+        _assert(
+            f"page {page + 1}: at most 2 nodes returned",
+            len(page_nodes) <= 2,
+            f"count={len(page_nodes)}",
+        )
+
+        for nid in page_ids:
+            _assert(
+                f"id #{nid} (page {page + 1}) not seen on a prior page",
+                nid not in seen_ids,
+                f"seen_ids={seen_ids}",
+            )
+            seen_ids.append(nid)
+
+        cursor = result.get("continue")
+        if cursor is None:
+            break
+
+    _assert("at least 2 unique ids collected across pages", len(seen_ids) >= 2, f"ids={seen_ids}")
+
+
+async def smoke_list_nototal(config: Any) -> None:
+    """
+    divoid_list: nototal=True is accepted and returns a valid response.
+
+    NOTE: DiVoid node #8 (API spec) states nototal=True causes total=-1 (COUNT skipped).
+    In practice the current prod backend appears to still compute and return the real
+    total. The tool passes nototal faithfully as a query parameter; the test asserts
+    only that the call succeeds and total is an integer — not its specific value —
+    since the API behaviour may differ from the spec or change. If the API is updated
+    to honour nototal, total=-1 would be the correct assertion here.
+    """
+    print("\n--- divoid_list (nototal=True) ---")
+
+    result = await _execute_list(config=config, nototal=True, count=5)
+
+    _assert(
+        "_execute returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    total = result.get("total")
+    _assert(
+        "total is an integer (nototal flag accepted, value -1 or real count)",
+        isinstance(total, int),
+        f"total={total!r}",
+    )
+    _assert("result is still a list", isinstance(result.get("result"), list))
+
+
+async def smoke_list_sort_invalid_invariant(config: Any) -> None:
+    """divoid_list: sort='foobar' -> sort_invalid_field invariant rejection."""
+    print("\n--- divoid_list (invariant: sort invalid field) ---")
+
+    raised = False
+    violation_code = None
+    try:
+        _check_list_invariants(
+            path=None,
+            linkedto=None,
+            nostatus=False,
+            status=None,
+            bounds=None,
+            sort="foobar",
+            fields=None,
+        )
+    except InvariantViolation as exc:
+        raised = True
+        violation_code = exc.code
+
+    _assert("invalid sort raises InvariantViolation", raised)
+    _assert(
+        "violation code is 'sort_invalid_field'",
+        violation_code == "sort_invalid_field",
+        f"code={violation_code!r}",
+    )
+
+
 async def _run_all(config: Any) -> None:
     tests = [
         smoke_search,
@@ -1288,6 +1847,23 @@ async def _run_all(config: Any) -> None:
         smoke_send_message_invariant_violations,
         smoke_send_message_happy_path,
         smoke_list_messages_happy_path,
+        # Phase 2 PR3: divoid_list
+        smoke_list_bare,
+        smoke_list_type_filter,
+        smoke_list_linkedto_filter,
+        smoke_list_path_simple,
+        smoke_list_path_multi_hop,
+        smoke_list_path_wildcard,
+        smoke_list_path_empty_result,
+        smoke_list_path_and_linkedto_invariant,
+        smoke_list_nostatus_and_status_invariant,
+        smoke_list_bounds_invalid_length,
+        smoke_list_bounds_valid,
+        smoke_list_sort_name_descending,
+        smoke_list_fields_sparse,
+        smoke_list_pagination,
+        smoke_list_nototal,
+        smoke_list_sort_invalid_invariant,
     ]
 
     for test_fn in tests:
@@ -1303,7 +1879,7 @@ async def _run_all(config: Any) -> None:
 
 
 def main() -> None:
-    print("divoid-mcp smoke tests (Phase 1 + Phase 2: read-side + composites + messaging)")
+    print("divoid-mcp smoke tests (Phase 1 + Phase 2: read-side + composites + messaging + list)")
     print("=" * 60)
 
     config = _setup()

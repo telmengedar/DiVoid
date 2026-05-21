@@ -26,6 +26,7 @@ def register_tools(mcp_server: fastmcp.FastMCP) -> None:
     from .resolve_user import register as register_resolve_user
     from .send_message import register as register_send_message
     from .list_messages import register as register_list_messages
+    from .list_nodes import register as register_list_nodes
 
     register_search(mcp_server)
     register_get_node(mcp_server)
@@ -37,5 +38,6 @@ def register_tools(mcp_server: fastmcp.FastMCP) -> None:
     register_resolve_user(mcp_server)
     register_send_message(mcp_server)
     register_list_messages(mcp_server)
+    register_list_nodes(mcp_server)
 
-    logger.info("Registered 10 MCP tools (Phase 1 + Phase 2: read-side + link + composite writes + messaging).")
+    logger.info("Registered 11 MCP tools (Phase 1 + Phase 2: read-side + link + composite writes + messaging + list).")
