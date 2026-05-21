@@ -13,6 +13,10 @@ Invariants enforced at runtime (not expressible in JSON Schema / FastMCP):
   - sort must be one of: id, type, name, status.
   - count is clamped silently to [1, 500].
 
+Unknown field names in the fields parameter are passed through to the API,
+which returns HTTP 400 for unrecognised values. The error is surfaced via
+map_http_error — no client-side guard is needed.
+
 API reference: DiVoid node #8 (GET /api/nodes + path parameter section).
 Architecture: DiVoid node #695.
 """
@@ -31,8 +35,6 @@ from ..errors import InvariantViolation, make_error_content, map_http_error, map
 logger = logging.getLogger(__name__)
 
 _VALID_SORT_FIELDS = frozenset({"id", "type", "name", "status"})
-_VALID_FIELDS = frozenset({"id", "type", "name", "status", "contentType", "x", "y"})
-_DEFAULT_FIELDS = ["id", "type", "name", "status", "contentType"]
 
 _TOOL_DESCRIPTION = """\
 Structural listing of DiVoid nodes. Use this when you know the topology — type, \
@@ -96,6 +98,9 @@ def _check_invariants(
     Raises InvariantViolation with a stable code if any invariant is broken.
     Enforcement is entirely at runtime — FastMCP exposes parameters as plain
     JSON Schema types without cross-parameter constraints.
+
+    Unknown field names in the fields parameter are NOT checked here — the API
+    returns HTTP 400 for unrecognised field names, which surfaces via map_http_error.
     """
     if path is not None and linkedto:
         raise InvariantViolation(
@@ -123,15 +128,6 @@ def _check_invariants(
             "sort_invalid_field",
             f"sort must be one of: {', '.join(sorted(_VALID_SORT_FIELDS))}. Got {sort!r}.",
         )
-
-    if fields is not None:
-        unknown = [f for f in fields if f not in _VALID_FIELDS]
-        if unknown:
-            raise InvariantViolation(
-                "fields_invalid",
-                f"Unknown fields requested: {unknown}. "
-                f"Allowed: {', '.join(sorted(_VALID_FIELDS))}.",
-            )
 
 
 async def _execute(

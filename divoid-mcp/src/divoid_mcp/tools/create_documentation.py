@@ -9,9 +9,10 @@ makes 3-4 HTTP calls:
   4. POST /nodes/{id}/links                           -- link to Docs group
      (plus extra_links, one call each)
 
-Content is always required for documentation (no 'new' escape). This is enforced
-at the JSON Schema level (required + minLength: 1) and also in the invariant guard
-(belt-and-suspenders for whitespace-only content which minLength: 1 does not catch).
+Content is always required for documentation (no 'new' escape). FastMCP exposes
+content as a plain {"type": "string"} parameter without minLength or required
+enforcement — the invariant guard is the sole enforcement layer (catches both
+missing and whitespace-only content per DiVoid #493 §4).
 
 Partial failure semantics (per architecture §6.3): if step 2 succeeds but step 3 or 4
 fails, the server does NOT roll back. It returns an MCP error naming the surviving
@@ -56,10 +57,10 @@ def _check_invariants(
     Check runtime invariants before making any HTTP call.
 
     Raises InvariantViolation with a stable code if any invariant is broken.
-    The JSON Schema handles required content and minLength; this guard catches
-    whitespace-only content that passes minLength: 1.
+    The invariant guard is the sole enforcement layer for all constraints —
+    FastMCP exposes parameters as plain {"type": "string"} in the JSON Schema
+    without minLength, oneOf, or required enforcement; enforcement is entirely here.
     """
-    # Belt-and-suspenders for the schema's oneOf constraint.
     if project_id is not None and docs_group_id is not None:
         raise InvariantViolation(
             "mutually_exclusive_link_target",
@@ -75,9 +76,8 @@ def _check_invariants(
             "or provide docs_group_id directly (e.g. DiVoid Docs = 7).",
         )
 
-    # Belt-and-suspenders for content: JSON Schema catches missing/empty,
-    # but whitespace-only content is structurally invalid too (a doc of just
-    # spaces is not a document).
+    # Whitespace-only content is structurally invalid (per #493 §4 — a doc of
+    # just spaces is not a document). FastMCP does not enforce this in schema.
     if not content or not content.strip():
         raise InvariantViolation(
             "content_whitespace_only",
@@ -112,12 +112,13 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         Create a documentation node in DiVoid atomically.
 
         Args:
-            name: Search-friendly title (required, min 1 char, max 256 chars).
+            name: Search-friendly title (required).
                   Include keywords a future agent would query for.
             content: The document body (required, must be non-empty, markdown).
                      Per DiVoid #493 §4 a content-empty documentation node is
                      structurally invalid. Do not create the node until you have
-                     the content ready.
+                     the content ready. The invariant guard is the sole enforcement
+                     layer (FastMCP exposes content as plain string, no minLength).
             project_id: The id of the project whose Docs group this documentation
                         belongs to. Resolved via [id:<project_id>]/[name:Docs].
                         Mutually exclusive with docs_group_id.

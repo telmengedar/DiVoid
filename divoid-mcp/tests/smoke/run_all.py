@@ -50,6 +50,14 @@ from divoid_mcp.tools.send_message import _execute as _execute_send_message
 from divoid_mcp.tools.list_messages import _execute as _execute_list_messages
 from divoid_mcp.tools.list_nodes import _check_invariants as _check_list_invariants
 from divoid_mcp.tools.list_nodes import _execute as _execute_list
+from divoid_mcp.tools.patch_node import _check_invariants as _check_patch_node_invariants
+from divoid_mcp.tools.patch_node import _execute as _execute_patch_node
+from divoid_mcp.tools.set_status import _validate_status_for_type
+from divoid_mcp.tools.set_status import _execute as _execute_set_status
+from divoid_mcp.tools.set_content import _check_invariants as _check_set_content_invariants
+from divoid_mcp.tools.set_content import _execute as _execute_set_content
+from divoid_mcp.tools.get_links import _check_invariants as _check_get_links_invariants
+from divoid_mcp.tools.get_links import _execute as _execute_get_links
 from divoid_mcp.errors import InvariantViolation
 
 # Pinned group ids for the smoke-test target project (DiVoid project #3).
@@ -1818,6 +1826,553 @@ async def smoke_list_sort_invalid_invariant(config: Any) -> None:
     )
 
 
+### -----------------------------------------------------------------------
+### Phase 2 polish: patch_node, set_status, set_content, get_links
+### -----------------------------------------------------------------------
+
+async def smoke_patch_node_invariant_no_fields(config: Any) -> None:
+    """divoid_patch_node: no_fields_to_patch invariant fires before any HTTP call."""
+    print("\n--- divoid_patch_node (invariant: no_fields_to_patch) ---")
+
+    raised = False
+    violation_code = None
+    try:
+        _check_patch_node_invariants(name=None, status=None, x=None, y=None)
+    except InvariantViolation as exc:
+        raised = True
+        violation_code = exc.code
+
+    _assert("no fields raises InvariantViolation", raised)
+    _assert(
+        "violation code is 'no_fields_to_patch'",
+        violation_code == "no_fields_to_patch",
+        f"code={violation_code!r}",
+    )
+
+
+async def smoke_patch_node_not_found(config: Any) -> None:
+    """divoid_patch_node: 404 on a non-existent node id."""
+    print("\n--- divoid_patch_node (404 error mapping) ---")
+
+    result = await _execute_patch_node(
+        id=999999999,
+        config=config,
+        name="should not exist",
+    )
+
+    _assert("result is error", result.get("isError", False))
+    content = result.get("content", [])
+    if content:
+        error_text = content[0].get("text", "")
+        _assert(
+            "error code is node_not_found",
+            error_text.startswith("node_not_found"),
+            f"text={error_text[:80]!r}",
+        )
+
+
+async def smoke_patch_node_happy_path(config: Any) -> None:
+    """
+    divoid_patch_node: happy path — create a task, patch its name, verify, delete.
+
+    Load-bearing proof: _execute is imported by name at the top of run_all.py.
+    Deleting _execute from patch_node.py causes an ImportError that aborts the runner.
+    """
+    print("\n--- divoid_patch_node (happy path + cleanup) ---")
+
+    # Step 1: Create a scratch task node.
+    node_body = {"name": "[smoke] patch_node-original — delete me", "type": "task", "status": "open"}
+    create_result = await http_client.post_json("nodes", node_body)
+    _assert("POST /nodes (task) returns 2xx", create_result.ok, f"status={create_result.status}")
+    if not create_result.ok:
+        return
+
+    try:
+        node_id = create_result.json()["id"]
+    except Exception as exc:
+        _record("parse created node id", False, str(exc))
+        return
+
+    _assert("created node has integer id", isinstance(node_id, int), f"id={node_id!r}")
+
+    try:
+        # Step 2: Patch the name via _execute.
+        new_name = "[smoke] patch_node-patched — delete me"
+        patch_result = await _execute_patch_node(
+            id=node_id,
+            config=config,
+            name=new_name,
+        )
+
+        _assert(
+            "patch_node returns no isError",
+            not patch_result.get("isError", False),
+            str(patch_result.get("content", "")),
+        )
+        if patch_result.get("isError"):
+            return
+
+        _assert(
+            "patched node has updated name",
+            patch_result.get("name") == new_name,
+            f"name={patch_result.get('name')!r}",
+        )
+        _assert("patched node has id", patch_result.get("id") == node_id, f"id={patch_result.get('id')!r}")
+
+        # Step 3: Patch two fields at once (status + x).
+        patch2_result = await _execute_patch_node(
+            id=node_id,
+            config=config,
+            status="in-progress",
+            x=100.0,
+        )
+        _assert(
+            "patch two fields at once returns no isError",
+            not patch2_result.get("isError", False),
+            str(patch2_result.get("content", "")),
+        )
+        if not patch2_result.get("isError"):
+            _assert(
+                "patched node has updated status",
+                patch2_result.get("status") == "in-progress",
+                f"status={patch2_result.get('status')!r}",
+            )
+
+    finally:
+        # Cleanup: always delete.
+        delete_result = await http_client.delete(f"nodes/{node_id}")
+        _assert(
+            f"DELETE /nodes/{node_id} returns 2xx (cleanup)",
+            delete_result.ok,
+            f"status={delete_result.status}",
+        )
+
+
+### -----------------------------------------------------------------------
+
+async def smoke_set_status_invariant_task_wrong_status(config: Any) -> None:
+    """divoid_set_status: 'fixed' is not valid for task -> status_not_in_task_lifecycle."""
+    print("\n--- divoid_set_status (invariant: task status_not_in_task_lifecycle) ---")
+
+    raised = False
+    violation_code = None
+    try:
+        _validate_status_for_type("task", "fixed")
+    except InvariantViolation as exc:
+        raised = True
+        violation_code = exc.code
+
+    _assert("'fixed' on task raises InvariantViolation", raised)
+    _assert(
+        "violation code is 'status_not_in_task_lifecycle'",
+        violation_code == "status_not_in_task_lifecycle",
+        f"code={violation_code!r}",
+    )
+
+
+async def smoke_set_status_invariant_documentation(config: Any) -> None:
+    """divoid_set_status: any status on 'documentation' -> status_not_supported_for_type."""
+    print("\n--- divoid_set_status (invariant: documentation status_not_supported_for_type) ---")
+
+    raised = False
+    violation_code = None
+    try:
+        _validate_status_for_type("documentation", "open")
+    except InvariantViolation as exc:
+        raised = True
+        violation_code = exc.code
+
+    _assert("status on documentation raises InvariantViolation", raised)
+    _assert(
+        "violation code is 'status_not_supported_for_type'",
+        violation_code == "status_not_supported_for_type",
+        f"code={violation_code!r}",
+    )
+
+
+async def smoke_set_status_invariant_bug_wrong_status(config: Any) -> None:
+    """divoid_set_status: 'closed' is not valid for bug -> status_not_in_bug_lifecycle."""
+    print("\n--- divoid_set_status (invariant: bug status_not_in_bug_lifecycle) ---")
+
+    raised = False
+    violation_code = None
+    try:
+        _validate_status_for_type("bug", "closed")
+    except InvariantViolation as exc:
+        raised = True
+        violation_code = exc.code
+
+    _assert("'closed' on bug raises InvariantViolation", raised)
+    _assert(
+        "violation code is 'status_not_in_bug_lifecycle'",
+        violation_code == "status_not_in_bug_lifecycle",
+        f"code={violation_code!r}",
+    )
+
+
+async def smoke_set_status_not_found(config: Any) -> None:
+    """divoid_set_status: 404 on non-existent node id surfaced as node_not_found."""
+    print("\n--- divoid_set_status (404 error mapping) ---")
+
+    result = await _execute_set_status(id=999999999, status="open", config=config)
+
+    _assert("result is error", result.get("isError", False))
+    content = result.get("content", [])
+    if content:
+        error_text = content[0].get("text", "")
+        _assert(
+            "error code is node_not_found",
+            error_text.startswith("node_not_found"),
+            f"text={error_text[:80]!r}",
+        )
+
+
+async def smoke_set_status_happy_path(config: Any) -> None:
+    """
+    divoid_set_status: happy path — create task, set status to in-progress, then closed, delete.
+
+    Load-bearing proof: _execute is imported by name at the top of run_all.py.
+    Deleting _execute from set_status.py causes an ImportError that aborts the runner.
+    """
+    print("\n--- divoid_set_status (happy path + cleanup) ---")
+
+    # Step 1: Create a scratch task.
+    node_body = {"name": "[smoke] set_status — delete me", "type": "task", "status": "open"}
+    create_result = await http_client.post_json("nodes", node_body)
+    _assert("POST /nodes (task) returns 2xx", create_result.ok, f"status={create_result.status}")
+    if not create_result.ok:
+        return
+
+    try:
+        node_id = create_result.json()["id"]
+    except Exception as exc:
+        _record("parse created node id", False, str(exc))
+        return
+
+    try:
+        # Step 2: Set status to in-progress — valid task lifecycle transition.
+        result = await _execute_set_status(id=node_id, status="in-progress", config=config)
+        _assert(
+            "set_status(in-progress) returns no isError",
+            not result.get("isError", False),
+            str(result.get("content", "")),
+        )
+        if not result.get("isError"):
+            _assert(
+                "returned node has status=in-progress",
+                result.get("status") == "in-progress",
+                f"status={result.get('status')!r}",
+            )
+
+        # Step 3: Try setting 'fixed' (bug-only status) — should fire invariant.
+        inv_result = await _execute_set_status(id=node_id, status="fixed", config=config)
+        _assert(
+            "set_status('fixed') on task returns isError",
+            inv_result.get("isError", False),
+        )
+        if inv_result.get("isError"):
+            error_text = inv_result.get("content", [{}])[0].get("text", "")
+            _assert(
+                "error code is status_not_in_task_lifecycle",
+                error_text.startswith("status_not_in_task_lifecycle"),
+                f"text={error_text[:80]!r}",
+            )
+
+        # Step 4: Set status to closed — valid.
+        result2 = await _execute_set_status(id=node_id, status="closed", config=config)
+        _assert(
+            "set_status(closed) returns no isError",
+            not result2.get("isError", False),
+            str(result2.get("content", "")),
+        )
+
+    finally:
+        # Cleanup.
+        delete_result = await http_client.delete(f"nodes/{node_id}")
+        _assert(
+            f"DELETE /nodes/{node_id} returns 2xx (cleanup)",
+            delete_result.ok,
+            f"status={delete_result.status}",
+        )
+
+
+### -----------------------------------------------------------------------
+
+async def smoke_set_content_invariant_empty(config: Any) -> None:
+    """divoid_set_content: content_empty invariant fires for whitespace-only content."""
+    print("\n--- divoid_set_content (invariant: content_empty) ---")
+
+    raised = False
+    violation_code = None
+    try:
+        _check_set_content_invariants("   ")
+    except InvariantViolation as exc:
+        raised = True
+        violation_code = exc.code
+
+    _assert("whitespace-only content raises InvariantViolation", raised)
+    _assert(
+        "violation code is 'content_empty'",
+        violation_code == "content_empty",
+        f"code={violation_code!r}",
+    )
+
+    # Also test empty string.
+    raised2 = False
+    try:
+        _check_set_content_invariants("")
+    except InvariantViolation:
+        raised2 = True
+    _assert("empty string raises InvariantViolation", raised2)
+
+
+async def smoke_set_content_not_found(config: Any) -> None:
+    """divoid_set_content: 404 on a non-existent node id."""
+    print("\n--- divoid_set_content (404 error mapping) ---")
+
+    result = await _execute_set_content(
+        id=999999999,
+        content="# Test content\n\nThis should 404.",
+        config=config,
+    )
+
+    _assert("result is error", result.get("isError", False))
+    content = result.get("content", [])
+    if content:
+        error_text = content[0].get("text", "")
+        _assert(
+            "error code is node_not_found",
+            error_text.startswith("node_not_found"),
+            f"text={error_text[:80]!r}",
+        )
+
+
+async def smoke_set_content_happy_path(config: Any) -> None:
+    """
+    divoid_set_content: happy path — create a node, set content, verify length, delete.
+
+    Also verifies UTF-8 roundtrip: multibyte characters survive the post.
+
+    Load-bearing proof: _execute is imported by name at the top of run_all.py.
+    Deleting _execute from set_content.py causes an ImportError that aborts the runner.
+    """
+    print("\n--- divoid_set_content (happy path + cleanup) ---")
+
+    # Step 1: Create a bare documentation node (no content).
+    node_body = {"name": "[smoke] set_content — delete me", "type": "documentation"}
+    create_result = await http_client.post_json("nodes", node_body)
+    _assert("POST /nodes (doc) returns 2xx", create_result.ok, f"status={create_result.status}")
+    if not create_result.ok:
+        return
+
+    try:
+        node_id = create_result.json()["id"]
+    except Exception as exc:
+        _record("parse created node id", False, str(exc))
+        return
+
+    try:
+        # Step 2: Set content via _execute — includes multibyte chars for UTF-8 proof.
+        content_body = (
+            "# Smoke test content\n\n"
+            "UTF-8 multibyte: café naïve résumé 中文\n\n"
+            "This node was created by the divoid-mcp smoke test and should be deleted."
+        )
+        result = await _execute_set_content(id=node_id, content=content_body, config=config)
+
+        _assert(
+            "set_content returns no isError",
+            not result.get("isError", False),
+            str(result.get("content", "")),
+        )
+        if result.get("isError"):
+            return
+
+        _assert("result has id", result.get("id") == node_id, f"id={result.get('id')!r}")
+        _assert(
+            "result has content_length > 0",
+            isinstance(result.get("content_length"), int) and result["content_length"] > 0,
+            f"content_length={result.get('content_length')!r}",
+        )
+        _assert(
+            "result content_type is markdown",
+            "text/markdown" in result.get("content_type", ""),
+            f"content_type={result.get('content_type')!r}",
+        )
+
+        # Step 3: Verify content round-trips correctly by re-fetching.
+        content_check = await http_client.get(f"nodes/{node_id}/content")
+        _assert(
+            "GET /nodes/{id}/content returns 2xx after set",
+            content_check.ok,
+            f"status={content_check.status}",
+        )
+        if content_check.ok:
+            fetched = content_check.body.decode("utf-8")
+            _assert(
+                "UTF-8 multibyte chars round-tripped correctly",
+                "café" in fetched and "中文" in fetched,
+                f"fetched_snippet={fetched[:80]!r}",
+            )
+
+    finally:
+        # Cleanup.
+        delete_result = await http_client.delete(f"nodes/{node_id}")
+        _assert(
+            f"DELETE /nodes/{node_id} returns 2xx (cleanup)",
+            delete_result.ok,
+            f"status={delete_result.status}",
+        )
+
+
+### -----------------------------------------------------------------------
+
+async def smoke_get_links_invariant_empty_ids(config: Any) -> None:
+    """divoid_get_links: ids_empty invariant fires for empty ids list."""
+    print("\n--- divoid_get_links (invariant: ids_empty) ---")
+
+    raised = False
+    violation_code = None
+    try:
+        _check_get_links_invariants([])
+    except InvariantViolation as exc:
+        raised = True
+        violation_code = exc.code
+
+    _assert("empty ids raises InvariantViolation", raised)
+    _assert(
+        "violation code is 'ids_empty'",
+        violation_code == "ids_empty",
+        f"code={violation_code!r}",
+    )
+
+
+async def smoke_get_links_single_node(config: Any) -> None:
+    """divoid_get_links: fetch links for node #3 (DiVoid project) — should have edges."""
+    print("\n--- divoid_get_links (single known node) ---")
+
+    result = await _execute_get_links(ids=[3], config=config)
+
+    _assert(
+        "get_links returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    links = result.get("result", [])
+    _assert("result is a list", isinstance(links, list))
+    _assert("at least one link for node #3", len(links) > 0, f"count={len(links)}")
+    if links:
+        first = links[0]
+        _assert("link has source_id", "source_id" in first, f"keys={list(first.keys())}")
+        _assert("link has target_id", "target_id" in first, f"keys={list(first.keys())}")
+        _assert("source_id is int", isinstance(first["source_id"], int), f"source_id={first['source_id']!r}")
+        _assert("target_id is int", isinstance(first["target_id"], int), f"target_id={first['target_id']!r}")
+    _assert("total is int", isinstance(result.get("total"), int), f"total={result.get('total')!r}")
+
+
+async def smoke_get_links_multiple_nodes(config: Any) -> None:
+    """divoid_get_links: fetch links for multiple nodes — Tasks group + Docs group."""
+    print("\n--- divoid_get_links (multiple nodes: Tasks + Docs groups) ---")
+
+    result = await _execute_get_links(
+        ids=[_DIVOID_TASKS_GROUP_ID, _DIVOID_DOCS_GROUP_ID],
+        config=config,
+    )
+
+    _assert(
+        "get_links returns no isError for multiple ids",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    links = result.get("result", [])
+    _assert("result is a list", isinstance(links, list))
+    _assert(
+        "at least 2 links returned for Tasks + Docs groups",
+        len(links) >= 2,
+        f"count={len(links)}",
+    )
+
+    # At least one link should touch one of our target ids.
+    involved_ids = {lnk["source_id"] for lnk in links} | {lnk["target_id"] for lnk in links}
+    _assert(
+        "at least one of ids [314, 7] appears in link endpoints",
+        bool(involved_ids & {_DIVOID_TASKS_GROUP_ID, _DIVOID_DOCS_GROUP_ID}),
+        f"involved_ids_sample={list(involved_ids)[:5]}",
+    )
+
+
+async def smoke_get_links_happy_path(config: Any) -> None:
+    """
+    divoid_get_links: happy path with cleanup — create two nodes + link, verify adjacency,
+    then delete.
+
+    Load-bearing proof: _execute is imported by name at the top of run_all.py.
+    Deleting _execute from get_links.py causes an ImportError that aborts the runner.
+    """
+    print("\n--- divoid_get_links (happy path: create link + verify adjacency + cleanup) ---")
+
+    # Create two scratch nodes.
+    node_a_body = {"name": "[smoke] get_links-A — delete me", "type": "documentation"}
+    node_b_body = {"name": "[smoke] get_links-B — delete me", "type": "documentation"}
+    ra = await http_client.post_json("nodes", node_a_body)
+    rb = await http_client.post_json("nodes", node_b_body)
+
+    _assert("create node A returns 2xx", ra.ok, f"status={ra.status}")
+    _assert("create node B returns 2xx", rb.ok, f"status={rb.status}")
+    if not (ra.ok and rb.ok):
+        return
+
+    try:
+        id_a = ra.json()["id"]
+        id_b = rb.json()["id"]
+    except Exception as exc:
+        _record("parse node ids", False, str(exc))
+        return
+
+    try:
+        # Link A → B.
+        link_result = await http_client.post_json(f"nodes/{id_a}/links", id_b)
+        _assert("link A→B returns 2xx", link_result.ok, f"status={link_result.status}")
+        if not link_result.ok:
+            return
+
+        # Verify via _execute_get_links.
+        links_result = await _execute_get_links(ids=[id_a, id_b], config=config)
+        _assert(
+            "get_links returns no isError",
+            not links_result.get("isError", False),
+            str(links_result.get("content", "")),
+        )
+        if links_result.get("isError"):
+            return
+
+        pairs = {
+            (lnk["source_id"], lnk["target_id"])
+            for lnk in links_result.get("result", [])
+        }
+        has_link = (id_a, id_b) in pairs or (id_b, id_a) in pairs
+        _assert(
+            "link between A and B visible in get_links result",
+            has_link,
+            f"pairs={list(pairs)[:5]}",
+        )
+
+    finally:
+        # Cleanup: delete both nodes.
+        del_a = await http_client.delete(f"nodes/{id_a}")
+        del_b = await http_client.delete(f"nodes/{id_b}")
+        _assert(f"DELETE node A ({id_a}) returns 2xx", del_a.ok, f"status={del_a.status}")
+        _assert(f"DELETE node B ({id_b}) returns 2xx", del_b.ok, f"status={del_b.status}")
+
+
+### -----------------------------------------------------------------------
+
 async def _run_all(config: Any) -> None:
     tests = [
         smoke_search,
@@ -1864,6 +2419,22 @@ async def _run_all(config: Any) -> None:
         smoke_list_pagination,
         smoke_list_nototal,
         smoke_list_sort_invalid_invariant,
+        # Phase 2 polish: patch_node, set_status, set_content, get_links primitives
+        smoke_patch_node_invariant_no_fields,
+        smoke_patch_node_not_found,
+        smoke_patch_node_happy_path,
+        smoke_set_status_invariant_task_wrong_status,
+        smoke_set_status_invariant_documentation,
+        smoke_set_status_invariant_bug_wrong_status,
+        smoke_set_status_not_found,
+        smoke_set_status_happy_path,
+        smoke_set_content_invariant_empty,
+        smoke_set_content_not_found,
+        smoke_set_content_happy_path,
+        smoke_get_links_invariant_empty_ids,
+        smoke_get_links_single_node,
+        smoke_get_links_multiple_nodes,
+        smoke_get_links_happy_path,
     ]
 
     for test_fn in tests:
@@ -1879,7 +2450,7 @@ async def _run_all(config: Any) -> None:
 
 
 def main() -> None:
-    print("divoid-mcp smoke tests (Phase 1 + Phase 2: read-side + composites + messaging + list)")
+    print("divoid-mcp smoke tests (Phase 1 + Phase 2: read-side + composites + messaging + list + primitives)")
     print("=" * 60)
 
     config = _setup()

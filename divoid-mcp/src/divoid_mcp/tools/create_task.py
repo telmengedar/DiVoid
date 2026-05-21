@@ -13,11 +13,15 @@ Partial failure semantics (per architecture §6.3): if step 2 succeeds but step 
 fails, the server does NOT roll back. It returns an MCP error that names the surviving
 node id and the missing step so the caller can repair manually.
 
-Invariant guard (before any HTTP call):
-  - If status != "new" and content is missing/empty -> content_required
-  - Both project_id and tasks_group_id provided -> mutually_exclusive_link_target (schema)
-  - Neither provided -> no_link_target (schema)
-  - status not in allowed enum -> task_status_not_in_lifecycle (schema first, guard second)
+Invariant guards (before any HTTP call):
+  - If status != "new" and content is missing/empty → content_required
+  - Both project_id and tasks_group_id provided → mutually_exclusive_link_target
+  - Neither provided → no_link_target
+  - status not in allowed lifecycle values → task_status_not_in_lifecycle
+
+FastMCP exposes all parameters as plain JSON Schema types ({"type": "string"}, etc.)
+without minLength, oneOf, or enum constraints. The invariant guard is the sole
+enforcement layer for all of the above.
 
 Architecture reference: §8.4, §6.3
 """
@@ -62,11 +66,10 @@ def _check_invariants(
     Check runtime invariants before making any HTTP call.
 
     Raises InvariantViolation with a stable code if any invariant is broken.
-    The JSON Schema handles the oneOf (project_id XOR tasks_group_id) and
-    enum validation; these guards are belt-and-suspenders and produce better
-    error messages when the schema is not strictly enforced by the runtime.
+    The invariant guard is the sole enforcement layer for all constraints —
+    FastMCP exposes parameters as plain {"type": "string"} in the JSON Schema
+    without minLength, oneOf, or enum; enforcement is entirely here.
     """
-    # Belt-and-suspenders for the schema's oneOf constraint.
     if project_id is not None and tasks_group_id is not None:
         raise InvariantViolation(
             "mutually_exclusive_link_target",
@@ -82,7 +85,6 @@ def _check_invariants(
             "or provide tasks_group_id directly (e.g. DiVoid Tasks = 314).",
         )
 
-    # Belt-and-suspenders for the schema's enum constraint.
     if status not in _ALLOWED_STATUSES:
         raise InvariantViolation(
             "task_status_not_in_lifecycle",
@@ -91,8 +93,8 @@ def _check_invariants(
             "See DiVoid #493 §5 for the task lifecycle.",
         )
 
-    # The load-bearing content-required check — JSON Schema cannot express this
-    # (status-conditional required) reliably across all MCP runtimes.
+    # Content-required check: status-conditional requirement that the invariant
+    # guard is the sole enforcement layer for (not expressible in FastMCP's schema).
     if status != "new" and (not content or not content.strip()):
         raise InvariantViolation(
             "content_required",
@@ -129,9 +131,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         Create a task node in DiVoid atomically.
 
         Args:
-            name: Search-friendly task title (required, min 1 char, max 256 chars).
-                  Lead with an area prefix when scope is obvious
-                  (e.g. 'Backend: ...', 'Frontend: ...').
+            name: Search-friendly task title (required). Lead with an area prefix
+                  when scope is obvious (e.g. 'Backend: ...', 'Frontend: ...').
             project_id: The id of the project node whose Tasks group this task
                         belongs to. The tool resolves the Tasks group by walking
                         [id:<project_id>]/[name:Tasks]. Mutually exclusive with
