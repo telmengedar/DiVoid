@@ -92,10 +92,7 @@ public class NodeServiceTests
         NodeDetails node = await Create(svc);
         await svc.Delete(node.Id);
 
-        Assert.ThrowsAsync<NotFoundException<Node>>(() => svc.GetNodeById(node.Id)
-            .ContinueWith(t => t.Result == null
-                ? throw new NotFoundException<Node>(node.Id)
-                : t.Result));
+        Assert.ThrowsAsync<NotFoundException<Node>>(() => svc.GetNodeById(node.Id));
     }
 
     [Test]
