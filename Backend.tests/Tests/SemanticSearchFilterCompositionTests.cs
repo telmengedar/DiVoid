@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Backend.Extensions;
@@ -30,26 +31,25 @@ namespace Backend.tests.Tests;
 ///
 /// Test strategy:
 /// <list type="bullet">
-///   <item>SQL-shape assertions (using <see cref="OperationPreparator"/> on a SQLite operation
-///         tree that mirrors what <see cref="NodeService.ListPaged"/> builds) — verify that the
-///         rendered WHERE clause contains BOTH the filter predicate AND the embedding IS NOT NULL
-///         predicate in a single clause.  These tests fail if ApplySemanticSearch reverts to
-///         issuing a second <c>Where()</c> call (the NP substitution that reproduces #703).</item>
-///   <item>Service-level SQLite integration tests — verify that with the capability enabled (mock)
-///         the service propagates filter predicates correctly when query= is present.</item>
+///   <item>SQL-shape assertions (SF1–SF6): construct a <see cref="NodeService"/> and invoke
+///         the production <see cref="NodeService.ApplySemanticSearch"/> method directly.
+///         Build the filter predicate via <see cref="NodeService.GenerateFilter"/> (same path
+///         as <see cref="NodeService.ListPaged"/>), pass it <c>ref</c> to
+///         <c>ApplySemanticSearch</c>, then call <c>operation.Where(predicate?.Content)</c>
+///         once.  Assert that the rendered WHERE clause contains BOTH the filter predicate AND
+///         the embedding IS NOT NULL predicate in a single clause.
+///
+///         Load-bearing proof (per DiVoid #275): reverting ApplySemanticSearch to issue a
+///         second <c>operation.Where(n =&gt; n.Embedding != null)</c> call causes the final
+///         caller <c>operation.Where(predicate?.Content)</c> to overwrite the IS NOT NULL
+///         clause, making SF1–SF6 fail on the IS NOT NULL assertion.  Restoring the fix
+///         makes them pass again.</item>
+///
+///   <item>SF7a–d (guard tests, capability disabled): verify the isSemantic guard fires before
+///         predicate composition is reached.  These pin guard ordering, not the composition fix.
+///         They are smoke tests only — failure would produce NullReferenceException, not the
+///         expected SemanticSearchUnavailableException.</item>
 /// </list>
-///
-/// load-bearing tests per DiVoid #275:
-///   SF1 pins that type filter is in the WHERE clause alongside IS NOT NULL.
-///   SF2 pins that status filter is in the WHERE clause alongside IS NOT NULL.
-///   SF4 pins that id filter is in the WHERE clause alongside IS NOT NULL.
-///   SF5 pins that name filter is in the WHERE clause alongside IS NOT NULL.
-///   SF6 pins that path-query (linkedto path) composes correctly with semantic search.
-///
-/// NP (negative-proof) substitution for every SQL-shape test:
-///   Revert <c>ApplySemanticSearch</c> to call <c>operation.Where(n => n.Embedding != null)</c>
-///   directly (replacing the caller's WHERE) — every SF assertion that checks for the filter
-///   predicate in the WHERE clause will fail because that predicate no longer appears.
 /// </summary>
 [TestFixture]
 public class SemanticSearchFilterCompositionTests
@@ -73,6 +73,13 @@ public class SemanticSearchFilterCompositionTests
     }
 
     /// <summary>
+    /// creates a <see cref="NodeService"/> wired to <paramref name="em"/> with the
+    /// enabled embedding capability (no real Postgres needed — we only build the
+    /// operation tree and render SQL via <see cref="OperationPreparator"/>).
+    /// </summary>
+    static NodeService CreateService(IEntityManager em) => new(em, EnabledCapability);
+
+    /// <summary>
     /// renders a <see cref="LoadOperation{T}"/> to SQL text via
     /// <see cref="OperationPreparator"/> (same mechanism as the sort-override
     /// assertion in <see cref="SemanticSearchTests"/>).
@@ -89,34 +96,37 @@ public class SemanticSearchFilterCompositionTests
     // -----------------------------------------------------------------------
     // SF1 — type filter + query: WHERE must contain both type subquery and IS NOT NULL
     //
-    // NP substitution: revert ApplySemanticSearch to call operation.Where(embedding IS NOT NULL)
-    //   directly. Expected failure: "embedding" appears in WHERE but the type subquery clause
-    //   that was previously ANDed in is now absent (replaced by the standalone IS NOT NULL WHERE).
+    // Load-bearing proof:
+    //   Revert ApplySemanticSearch to call operation.Where(n => n.Embedding != null) directly.
+    //   The caller's final operation.Where(predicate?.Content) then overwrites that clause,
+    //   leaving only the type predicate in SQL — IS NOT NULL assertion fails.
+    //   Restoring the fix (AND into ref predicate) makes both assertions pass.
     // -----------------------------------------------------------------------
 
     [Test]
     public void SF1_TypeFilter_WithQuery_WhereContainsBothTypePredicateAndEmbeddingIsNotNull()
     {
         IEntityManager em = CreatePostgresEntityManager();
-        NodeMapper mapper = new(new NodeFilter { Query = "hivemind protocol", Type = ["task"] });
+        NodeService service = CreateService(em);
 
-        // build the operation tree exactly as ListPaged does for this filter
         NodeFilter filter = new() { Query = "hivemind protocol", Type = ["task"], Count = 10 };
+        NodeMapper mapper = new(filter);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
         operation.ApplyFilter(filter, mapper);
 
-        // type predicate (mirrors GenerateFilter)
-        LoadOperation<NodeType> typeSubquery = em.Load<NodeType>(t => t.Id)
-                                                  .Where(t => t.Type.In(filter.Type));
-        PredicateExpression<Node> predicate = new PredicateExpression<Node>(n => n.TypeId.In(typeSubquery));
+        // build filter predicate exactly as ListPaged does (via production GenerateFilter)
+        Expression<Func<Node, bool>>? generated = service.GenerateFilter(filter);
+        PredicateExpression<Node>? predicate = generated != null
+            ? new PredicateExpression<Node>(generated)
+            : null;
 
-        // semantic predicate is ANDed in (the fixed path — NOT a second Where() call)
-        predicate &= new PredicateExpression<Node>(n => n.Embedding != null);
+        // invoke the production method under test — must AND embedding IS NOT NULL into predicate
+        service.ApplySemanticSearch(operation, filter, mapper, ref predicate);
 
-        operation.Where(predicate.Content);
-        // ORDER BY is set separately — not relevant to this WHERE assertion
+        // single Where() call — mirrors the ListPaged caller contract
+        operation.Where(predicate?.Content);
 
         string sql = RenderSql(operation);
         int whereIndex = sql.IndexOf("WHERE", System.StringComparison.OrdinalIgnoreCase);
@@ -126,40 +136,40 @@ public class SemanticSearchFilterCompositionTests
         Assert.Multiple(() => {
             Assert.That(whereSection, Does.Contain("IS NOT NULL").IgnoreCase,
                 "SF1: WHERE clause must contain IS NOT NULL (embedding predicate) when query= is present; " +
-                "if absent the embedding IS NOT NULL was stripped by a second Where() call replacing the first");
-            // The type subquery appears as IN ( SELECT ... ) referencing nodetype
+                "absent means ApplySemanticSearch issued a second Where() call (reverted bug)");
             Assert.That(whereSection, Does.Contain("nodetype").IgnoreCase.Or.Contain("type_id").IgnoreCase,
                 "SF1: WHERE clause must contain the type subquery; " +
-                "if absent the type filter was wiped by a second Where() call (the #703 regression)");
+                "absent means the type filter was wiped by a second Where() call (bug #703)");
         });
     }
 
     // -----------------------------------------------------------------------
     // SF2 — status filter + query: WHERE must contain both status predicate and IS NOT NULL
     //
-    // NP substitution: same as SF1.
-    // Expected failure: status predicate absent from WHERE (replaced by standalone IS NOT NULL).
+    // Load-bearing proof: same as SF1.
+    // Expected failure on regression: status predicate absent from WHERE.
     // -----------------------------------------------------------------------
 
     [Test]
     public void SF2_StatusFilter_WithQuery_WhereContainsBothStatusPredicateAndEmbeddingIsNotNull()
     {
         IEntityManager em = CreatePostgresEntityManager();
-        NodeMapper mapper = new(new NodeFilter { Query = "open tasks", Status = ["open"] });
+        NodeService service = CreateService(em);
 
         NodeFilter filter = new() { Query = "open tasks", Status = ["open"], Count = 10 };
+        NodeMapper mapper = new(filter);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
         operation.ApplyFilter(filter, mapper);
 
-        // status predicate (mirrors GenerateFilter — no wildcard in "open")
-        PredicateExpression<Node> predicate = new PredicateExpression<Node>(n => n.Status.In(filter.Status));
+        Expression<Func<Node, bool>>? generated = service.GenerateFilter(filter);
+        PredicateExpression<Node>? predicate = generated != null
+            ? new PredicateExpression<Node>(generated)
+            : null;
 
-        // semantic predicate ANDed in (fixed path)
-        predicate &= new PredicateExpression<Node>(n => n.Embedding != null);
-
-        operation.Where(predicate.Content);
+        service.ApplySemanticSearch(operation, filter, mapper, ref predicate);
+        operation.Where(predicate?.Content);
 
         string sql = RenderSql(operation);
         int whereIndex = sql.IndexOf("WHERE", System.StringComparison.OrdinalIgnoreCase);
@@ -171,46 +181,43 @@ public class SemanticSearchFilterCompositionTests
                 "SF2: WHERE clause must contain IS NOT NULL (embedding predicate) when query= is present");
             Assert.That(whereSection, Does.Contain("status").IgnoreCase,
                 "SF2: WHERE clause must contain the status predicate; " +
-                "if absent the status filter was wiped by the second Where() call (bug #703)");
+                "absent means the status filter was wiped by the second Where() call (bug #703)");
         });
     }
 
     // -----------------------------------------------------------------------
-    // SF3 — linkedto filter + query (Postgres UNION path):
-    //   WHERE must contain both the link subquery and IS NOT NULL
+    // SF3 — linkedto filter + query: WHERE must contain both link predicate and IS NOT NULL
     //
-    // NP substitution: same as SF1.
-    // Expected failure: link subquery absent from WHERE.
+    // Load-bearing proof: same as SF1.
+    // Expected failure on regression: link subquery absent from WHERE.
     // -----------------------------------------------------------------------
 
     [Test]
     public void SF3_LinkedToFilter_WithQuery_WhereContainsBothLinkPredicateAndEmbeddingIsNotNull()
     {
-        // Use Postgres mock — SupportsLateralJoin=true on Postgres means BuildLinkedToFilter
-        // uses the LATERAL JOIN path in production, but for the SQL-shape assertion here we
-        // replicate the UNION-based fallback shape directly (same predicate composition test).
         IEntityManager em = CreatePostgresEntityManager();
+        NodeService service = CreateService(em);
+
         long[] linkedTo = [42L];
-
-        NodeMapper mapper = new(new NodeFilter { Query = "auth design", LinkedTo = linkedTo });
-
         NodeFilter filter = new() { Query = "auth design", LinkedTo = linkedTo, Count = 10 };
+        NodeMapper mapper = new(filter);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
         operation.ApplyFilter(filter, mapper);
 
-        // linkedto predicate (UNION path for SQLite — mirrors BuildLinkedToFilter)
+        // GenerateFilter does not handle LinkedTo — it is handled separately via
+        // BuildLinkedToFilter (internal, not exposed).  Build the linkedto predicate
+        // using the UNION-of-two-directions shape (same path as SQLite fallback in
+        // BuildLinkedToFilter) to get a non-null starting predicate.
         LoadOperation<NodeLink> linkOp = em.Load<NodeLink>(l => l.SourceId)
                                             .Where(l => l.SourceId.In(linkedTo) || l.TargetId.In(linkedTo))
                                             .Union(em.Load<NodeLink>(n => n.TargetId)
                                                      .Where(l => l.SourceId.In(linkedTo) || l.TargetId.In(linkedTo)));
         PredicateExpression<Node> predicate = new PredicateExpression<Node>(n => n.Id.In(linkOp) && !n.Id.In(linkedTo));
 
-        // semantic predicate ANDed in (fixed path)
-        predicate &= new PredicateExpression<Node>(n => n.Embedding != null);
-
-        operation.Where(predicate.Content);
+        service.ApplySemanticSearch(operation, filter, mapper, ref predicate);
+        operation.Where(predicate?.Content);
 
         string sql = RenderSql(operation);
         int whereIndex = sql.IndexOf("WHERE", System.StringComparison.OrdinalIgnoreCase);
@@ -222,38 +229,38 @@ public class SemanticSearchFilterCompositionTests
                 "SF3: WHERE clause must contain IS NOT NULL (embedding predicate) when query= is present");
             Assert.That(whereSection, Does.Contain("nodelink").IgnoreCase.Or.Contain("source_id").IgnoreCase,
                 "SF3: WHERE clause must contain the link subquery; " +
-                "if absent the linkedto filter was wiped by the second Where() call (bug #703)");
+                "absent means the linkedto filter was wiped by the second Where() call (bug #703)");
         });
     }
 
     // -----------------------------------------------------------------------
     // SF4 — id filter + query: WHERE must contain both id IN clause and IS NOT NULL
     //
-    // NP substitution: same as SF1.
-    // Expected failure: id IN clause absent.
+    // Load-bearing proof: same as SF1.
+    // Expected failure on regression: id IN clause absent.
     // -----------------------------------------------------------------------
 
     [Test]
     public void SF4_IdFilter_WithQuery_WhereContainsBothIdPredicateAndEmbeddingIsNotNull()
     {
         IEntityManager em = CreatePostgresEntityManager();
+        NodeService service = CreateService(em);
+
         long[] ids = [1L, 2L, 3L];
-
-        NodeMapper mapper = new(new NodeFilter { Query = "some query", Id = ids });
-
         NodeFilter filter = new() { Query = "some query", Id = ids, Count = 10 };
+        NodeMapper mapper = new(filter);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
         operation.ApplyFilter(filter, mapper);
 
-        // id predicate (mirrors GenerateFilter)
-        PredicateExpression<Node> predicate = new PredicateExpression<Node>(n => n.Id.In(ids));
+        Expression<Func<Node, bool>>? generated = service.GenerateFilter(filter);
+        PredicateExpression<Node>? predicate = generated != null
+            ? new PredicateExpression<Node>(generated)
+            : null;
 
-        // semantic predicate ANDed in (fixed path)
-        predicate &= new PredicateExpression<Node>(n => n.Embedding != null);
-
-        operation.Where(predicate.Content);
+        service.ApplySemanticSearch(operation, filter, mapper, ref predicate);
+        operation.Where(predicate?.Content);
 
         string sql = RenderSql(operation);
         int whereIndex = sql.IndexOf("WHERE", System.StringComparison.OrdinalIgnoreCase);
@@ -266,38 +273,38 @@ public class SemanticSearchFilterCompositionTests
             // id IN clause appears as = ANY( @p ) on Postgres
             Assert.That(whereSection, Does.Contain("= ANY(").IgnoreCase.Or.Contain("id").IgnoreCase,
                 "SF4: WHERE clause must contain the id predicate; " +
-                "if absent the id filter was wiped by the second Where() call (bug #703)");
+                "absent means the id filter was wiped by the second Where() call (bug #703)");
         });
     }
 
     // -----------------------------------------------------------------------
     // SF5 — name filter + query: WHERE must contain both name predicate and IS NOT NULL
     //
-    // NP substitution: same as SF1.
-    // Expected failure: name IN clause absent.
+    // Load-bearing proof: same as SF1.
+    // Expected failure on regression: name IN clause absent.
     // -----------------------------------------------------------------------
 
     [Test]
     public void SF5_NameFilter_WithQuery_WhereContainsBothNamePredicateAndEmbeddingIsNotNull()
     {
         IEntityManager em = CreatePostgresEntityManager();
+        NodeService service = CreateService(em);
+
         string[] names = ["The Hivemind Protocol", "Agents"];
-
-        NodeMapper mapper = new(new NodeFilter { Query = "protocol", Name = names });
-
         NodeFilter filter = new() { Query = "protocol", Name = names, Count = 10 };
+        NodeMapper mapper = new(filter);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
         operation.ApplyFilter(filter, mapper);
 
-        // name predicate (no wildcards — mirrors GenerateFilter)
-        PredicateExpression<Node> predicate = new PredicateExpression<Node>(n => n.Name.In(names));
+        Expression<Func<Node, bool>>? generated = service.GenerateFilter(filter);
+        PredicateExpression<Node>? predicate = generated != null
+            ? new PredicateExpression<Node>(generated)
+            : null;
 
-        // semantic predicate ANDed in (fixed path)
-        predicate &= new PredicateExpression<Node>(n => n.Embedding != null);
-
-        operation.Where(predicate.Content);
+        service.ApplySemanticSearch(operation, filter, mapper, ref predicate);
+        operation.Where(predicate?.Content);
 
         string sql = RenderSql(operation);
         int whereIndex = sql.IndexOf("WHERE", System.StringComparison.OrdinalIgnoreCase);
@@ -309,41 +316,41 @@ public class SemanticSearchFilterCompositionTests
                 "SF5: WHERE clause must contain IS NOT NULL (embedding predicate) when query= is present");
             Assert.That(whereSection, Does.Contain("name").IgnoreCase,
                 "SF5: WHERE clause must contain the name predicate; " +
-                "if absent the name filter was wiped by the second Where() call (bug #703)");
+                "absent means the name filter was wiped by the second Where() call (bug #703)");
         });
     }
 
     // -----------------------------------------------------------------------
-    // SF6 — path-query + query: path terminal WHERE must contain both path predicate
-    //         and IS NOT NULL (exercises the ComposeHops fix path)
+    // SF6 — path-query + query: terminal WHERE must contain both path predicate
+    //       and IS NOT NULL (exercises the ComposeHops fix path)
     //
-    // NP substitution: same as SF1 but in ComposeHops.
-    // Expected failure: type predicate from the hop absent in the terminal WHERE.
+    // Load-bearing proof: same as SF1 but in ComposeHops.
+    // Expected failure on regression: type predicate from the hop absent in terminal WHERE.
     // -----------------------------------------------------------------------
 
     [Test]
     public void SF6_PathQuery_WithQuery_TerminalWhereContainsBothHopPredicateAndEmbeddingIsNotNull()
     {
-        // Construct the terminal operation tree exactly as ComposeHops would for a single-hop
-        // path "[type:task]" with a non-empty Query.  Using Postgres mock for OperationPreparator rendering.
         IEntityManager em = CreatePostgresEntityManager();
+        NodeService service = CreateService(em);
 
-        NodeMapper mapper = new(new NodePathFilter { Path = "[type:task]", Query = "hivemind" });
+        NodePathFilter filter = new() { Path = "[type:task]", Query = "hivemind", Count = 10 };
+        NodeMapper mapper = new(filter);
+        filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
-        // single-hop: terminal predicate is the hop filter itself
-        // (mirrors ComposeHops terminalPredicate for hops.Length == 1)
+        // Construct the terminal operation tree exactly as ComposeHops does for a single-hop
+        // path "[type:task]" with a non-empty Query.  For a single hop the terminal predicate
+        // is the hop filter (type IN subquery) — replicate that here.
         LoadOperation<NodeType> typeSubquery = em.Load<NodeType>(t => t.Id)
                                                   .Where(t => t.Type.In(new[] { "task" }));
-
-        // combined = terminalPredicate & standardPredicate — for this test standardPredicate is null
         PredicateExpression<Node> combined = new PredicateExpression<Node>(n => n.TypeId.In(typeSubquery));
 
-        // semantic predicate ANDed in (fixed path — mirrors the patched ComposeHops)
-        combined &= new PredicateExpression<Node>(n => n.Embedding != null);
+        LoadOperation<Node> terminal = mapper.CreateOperation(em, filter.Fields);
+        terminal.ApplyFilter(filter, mapper);
 
-        string[] fields = [.. mapper.DefaultListFields, "similarity"];
-        LoadOperation<Node> terminal = mapper.CreateOperation(em, fields);
-        terminal.Where(combined.Content);
+        // invoke the production method — must AND embedding IS NOT NULL into combined
+        service.ApplySemanticSearch(terminal, filter, mapper, ref combined);
+        terminal.Where(combined?.Content);
 
         string sql = RenderSql(terminal);
         int whereIndex = sql.IndexOf("WHERE", System.StringComparison.OrdinalIgnoreCase);
@@ -353,24 +360,27 @@ public class SemanticSearchFilterCompositionTests
         Assert.Multiple(() => {
             Assert.That(whereSection, Does.Contain("IS NOT NULL").IgnoreCase,
                 "SF6: terminal WHERE clause must contain IS NOT NULL when query= is present; " +
-                "if absent the embedding predicate was lost when the terminal was composed");
+                "absent means ApplySemanticSearch issued a second Where() (reverted ComposeHops bug)");
             Assert.That(whereSection, Does.Contain("nodetype").IgnoreCase.Or.Contain("type_id").IgnoreCase,
                 "SF6: terminal WHERE clause must contain the hop type subquery; " +
-                "if absent the path filter was wiped by the second Where() call in ComposeHops (bug #703)");
+                "absent means the path filter was wiped by a second Where() call in ComposeHops (bug #703)");
         });
     }
 
     // -----------------------------------------------------------------------
-    // SF7 — service-level regression: ListPaged with type filter + query on SQLite
-    //   throws SemanticSearchUnavailableException (capability guard), NOT a crash
-    //   from a null-predicate mismatch.  Verifies the fix does not break the guard path.
+    // SF7a–d — guard tests (capability disabled).
     //
-    // This is a smoke-test: if the fix introduced a null-reference in predicate composition
-    // the exception would be NullReferenceException, not SemanticSearchUnavailableException.
+    // These tests pin the guard ordering inside ListPaged / ListPagedByPath:
+    //   the isSemantic && !embeddingCapability.IsEnabled guard fires BEFORE
+    //   predicate composition is reached, so these never exercise ApplySemanticSearch.
+    //
+    // They are smoke tests: if the guard were removed or moved after composition,
+    // the exception type would change from SemanticSearchUnavailableException to
+    // NullReferenceException (or a DB error), and these tests would catch that.
     // -----------------------------------------------------------------------
 
     [Test]
-    public void SF7_ListPaged_TypeFilter_WithQuery_OnSqlite_ThrowsCorrectGuardException()
+    public void SF7a_ListPaged_TypeFilter_WithQuery_OnSqlite_ThrowsCorrectGuardException()
     {
         using DatabaseFixture fixture = new();
         NodeService svc = new(fixture.EntityManager, DisabledCapability);

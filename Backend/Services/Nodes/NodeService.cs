@@ -268,7 +268,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <summary>
     /// original single-filter method — preserved for the existing list endpoint.
     /// </summary>
-    Expression<Func<Node, bool>> GenerateFilter(NodeFilter filter)
+    internal Expression<Func<Node, bool>> GenerateFilter(NodeFilter filter)
     {
         PredicateExpression<Node> predicate = null;
 
@@ -494,7 +494,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     ///         replaces it with <c>ORDER BY similarity DESC, id ASC</c></item>
     /// </list>
     /// </summary>
-    void ApplySemanticSearch(LoadOperation<Node> operation, NodeFilter filter, NodeMapper mapper, ref PredicateExpression<Node> predicate)
+    internal void ApplySemanticSearch(LoadOperation<Node> operation, NodeFilter filter, NodeMapper mapper, ref PredicateExpression<Node> predicate)
     {
         // exclude nodes without an embedding — they have no vector signal to rank on.
         // ANDed into the caller's predicate, NOT via a separate Where() call, so that
