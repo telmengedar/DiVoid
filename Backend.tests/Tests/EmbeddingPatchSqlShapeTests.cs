@@ -1,37 +1,44 @@
 #nullable disable
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
+using Backend.Services.Nodes;
 using Moq;
+using NUnit.Framework;
 using Pooshit.Ocelot.Clients;
-using Pooshit.Ocelot.Entities;
 using Pooshit.Ocelot.Entities.Operations;
-using Pooshit.Ocelot.Expressions;
-using Pooshit.Ocelot.Fields;
+using Pooshit.Ocelot.Entities;
 using Pooshit.Ocelot.Info;
-using Pooshit.Ocelot.Tokens;
 
 namespace Backend.tests.Tests;
 
 /// <summary>
 /// SQL-shape assertions for the four-branch embedding UPDATE (task #444, PR #81).
 ///
-/// Jenny's review (DiVoid #685) found that the seven R-fixtures in
+/// Jenny's review (DiVoid #685) found that the R-fixtures in
 /// <see cref="EmbeddingPatchSqlCompositionTests"/> do not pin the SQL form — they assert
 /// <c>EmbeddingInputComposer.Compose</c> output (invariant under SQL changes) or
 /// "embedding IS NULL on SQLite" (always true, SQL form never executes there).
 ///
-/// This file fills that gap by capturing the SQL text that Ocelot emits for each branch
-/// via <c>Update&lt;Node&gt;().Prepare().CommandText</c> on a <see cref="PostgreInfo"/> client
-/// (no real DB connection; <c>Prepare()</c> is compile-time SQL generation).
+/// Round 2 (DiVoid #723 / PR #91): the original SS1–SS8 replicated the operation tree
+/// in static helper methods (F1Sql/F3Sql/etc.), making the tests tautological — the
+/// helpers moved in lock-step with any production change, so a bug reintroduction
+/// still passed.  Jenny's substitution proof: reverting NodeService.cs to Option B
+/// without touching the test file gave 8 pass / 0 fail.
+///
+/// Fix: tests now call <see cref="NodeService.BuildEmbeddingBranchOperations"/> — the
+/// <c>internal static</c> shared helper that builds the same UPDATE trees as the
+/// production path — and render each operation’s SQL via <c>Prepare().CommandText</c>
+/// in the test-local <c>RenderAllBranches</c> helper.  Service code carries no test-only
+/// surface.  A reversion of NodeService.cs alone now causes SS1 and SS5 to fail.
 ///
 /// Two negative-proof substitutions are pinned:
 ///
 /// NP1 — drop the allowlist <c>= ANY()</c> clause from F1/F2/F3/F4.
 ///   Expected failure: "expected = ANY( clause in F1 WHERE but was absent".
 ///
-/// NP2 — swap the truncation operator from <c>convert_from( LEFT( ... ) )</c> to
-///   <c>LEFT( convert_from( ... ) )</c> in F1/F3 (the §4.4-vs-probe nesting inversion).
-///   Expected failure: "expected convert_from( LEFT( nesting in F1 SET but saw LEFT( convert_from(".
+/// NP2 — swap the truncation operator from <c>LEFT( convert_from( ... ) )</c> (Option A)
+///   back to <c>convert_from( LEFT( ... ) )</c> (Option B) in F1/F3.
+///   Expected failure: "F1 SET must NOT use convert_from( LEFT( ... ) ) nesting (Option B, rejected)".
 ///
 /// Each test documents the exact NP substitution that must make it fail.
 /// </summary>
@@ -49,113 +56,63 @@ public class EmbeddingPatchSqlShapeTests
         return new EntityManager(clientMock.Object);
     }
 
-    // -----------------------------------------------------------------------
-    // SQL shape for each branch (mirrors NodeService.RegenerateEmbeddingViaBranches exactly)
-    // -----------------------------------------------------------------------
-
-    static string F1Sql(IEntityManager em)
+    /// <summary>
+    /// Calls <see cref="NodeService.BuildEmbeddingBranchOperations"/> — the internal
+    /// shared helper — once and renders each operation to SQL via <c>Prepare().CommandText</c>.
+    /// This is the only place the operation tree is constructed; any change to
+    /// <see cref="NodeService.BuildEmbeddingBranchOperations"/> automatically propagates here.
+    /// </summary>
+    static (string F1, string F2, string F3, string F4) RenderAllBranches()
     {
-        string model = TextContentTypePredicate.EmbeddingModel;
-        string[] allowlist = TextContentTypePredicate.ApplicationTextTypes;
-        long nodeId = 1L;
-        return em.Update<Node>()
-                 .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                             DB.Constant(model),
-                                                             DB.CustomFunction("concat",
-                                                                 DB.Property<Node>(x => x.Name),
-                                                                 DB.Constant("\n\n"),
-                                                                 DB.ConvertFrom(DB.Left(DB.Property<Node>(x => x.Content), 8000), "UTF8"))).Type<float[]>())
-                 .Where(n => n.Id == nodeId
-                          && n.Name != null && n.Name != ""
-                          && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
-                          && n.Content != null)
-                 .Prepare()
-                 .CommandText;
-    }
-
-    static string F2Sql(IEntityManager em)
-    {
-        string model = TextContentTypePredicate.EmbeddingModel;
-        string[] allowlist = TextContentTypePredicate.ApplicationTextTypes;
-        long nodeId = 1L;
-        return em.Update<Node>()
-                 .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                             DB.Constant(model),
-                                                             DB.Property<Node>(x => x.Name)).Type<float[]>())
-                 .Where(n => n.Id == nodeId
-                          && n.Name != null && n.Name != ""
-                          && (!(n.ContentType.Like("text/%") || n.ContentType.In(allowlist)) || n.Content == null))
-                 .Prepare()
-                 .CommandText;
-    }
-
-    static string F3Sql(IEntityManager em)
-    {
-        string model = TextContentTypePredicate.EmbeddingModel;
-        string[] allowlist = TextContentTypePredicate.ApplicationTextTypes;
-        long nodeId = 1L;
-        return em.Update<Node>()
-                 .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                             DB.Constant(model),
-                                                             DB.ConvertFrom(DB.Left(DB.Property<Node>(x => x.Content), 8000), "UTF8")).Type<float[]>())
-                 .Where(n => n.Id == nodeId
-                          && (n.Name == null || n.Name == "")
-                          && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
-                          && n.Content != null)
-                 .Prepare()
-                 .CommandText;
-    }
-
-    static string F4Sql(IEntityManager em)
-    {
-        string[] allowlist = TextContentTypePredicate.ApplicationTextTypes;
-        long nodeId = 1L;
-        return em.Update<Node>()
-                 .Set(n => n.Embedding == (float[]) null)
-                 .Where(n => n.Id == nodeId
-                          && (n.Name == null || n.Name == "")
-                          && (!(n.ContentType.Like("text/%") || n.ContentType.In(allowlist)) || n.Content == null))
-                 .Prepare()
-                 .CommandText;
+        IEntityManager em = CreatePostgresEntityManager();
+        (UpdateValuesOperation<Node> f1, UpdateValuesOperation<Node> f2,
+         UpdateValuesOperation<Node> f3, UpdateValuesOperation<Node> f4) =
+            NodeService.BuildEmbeddingBranchOperations(em, nodeId: 1L);
+        return (
+            f1.Prepare().CommandText,
+            f2.Prepare().CommandText,
+            f3.Prepare().CommandText,
+            f4.Prepare().CommandText
+        );
     }
 
     // -----------------------------------------------------------------------
-    // SS1 — F1 SET expression uses convert_from( LEFT( ... ) ) nesting (§4.4 form)
+    // SS1 — F1 SET expression uses LEFT( convert_from( ... ) ) nesting (Option A, char-aware)
     //
-    // NP2 substitution: swap DB.ConvertFrom(DB.Left(..., 8000), "UTF8") to
-    //   DB.Left(DB.ConvertFrom(..., "UTF8"), 8000) in the F1 SET.
-    // Expected failure: SQL contains LEFT( convert_from( instead of convert_from( LEFT(
-    //   and this assertion fails with the "nesting order" message.
+    // NP2 substitution: in NodeService.cs only, swap
+    //   DB.Left(DB.ConvertFrom(..., "UTF8"), 8000) back to
+    //   DB.ConvertFrom(DB.Left(..., 8000), "UTF8") inside BuildEmbeddingBranchOperations / F1.
+    // Expected failure: sql contains convert_from( LEFT( and the Does.Not.Contain fires
+    //   with "Option B, rejected" — exactly the crash-on-multibyte-boundary error.
     // -----------------------------------------------------------------------
 
     [Test]
-    public void SS1_F1_SetExpression_ContainsConvertFromOuterLeftInner()
+    public void SS1_F1_SetExpression_ContainsLeftOuterConvertFromInner()
     {
-        IEntityManager em = CreatePostgresEntityManager();
-        string sql = F1Sql(em);
+        string sql = RenderAllBranches().F1;
 
         Assert.Multiple(() => {
-            Assert.That(sql, Does.Contain("convert_from( LEFT("),
-                "SS1: F1 SET must use convert_from( LEFT( ... ) ) nesting (§4.4 form); " +
-                "if this fails the truncation operator order was swapped to LEFT( convert_from( ... ) ) (NP2)");
-            Assert.That(sql, Does.Not.Contain("LEFT( convert_from("),
-                "SS1: F1 SET must NOT use LEFT( convert_from( ... ) ) nesting (wrong order)");
+            Assert.That(sql, Does.Contain("LEFT( convert_from("),
+                "SS1: F1 SET must use LEFT( convert_from( ... ) ) nesting (Option A, char-aware); " +
+                "revert NodeService.cs to Option B (convert_from( LEFT( ... ) )) and this fails with " +
+                "invalid UTF-8 byte sequence on multi-byte chars spanning the 8000-byte boundary");
+            Assert.That(sql, Does.Not.Contain("convert_from( LEFT("),
+                "SS1: F1 SET must NOT use convert_from( LEFT( ... ) ) nesting (Option B, rejected)");
         });
     }
 
     // -----------------------------------------------------------------------
     // SS2 — F1 WHERE contains the allowlist ANY clause (NP1 pin)
     //
-    // NP1 substitution: remove n.ContentType.In(allowlist) from F1's WHERE,
-    //   leaving only n.ContentType.Like("text/%").
+    // NP1 substitution: in NodeService.cs only, remove n.ContentType.In(allowlist)
+    //   from the F1 WHERE inside BuildEmbeddingBranchOperations, leaving only Like("text/%").
     // Expected failure: SQL no longer contains = ANY( and this assertion fires.
     // -----------------------------------------------------------------------
 
     [Test]
     public void SS2_F1_WhereClause_ContainsAllowlistAny()
     {
-        IEntityManager em = CreatePostgresEntityManager();
-        string sql = F1Sql(em);
+        string sql = RenderAllBranches().F1;
 
         Assert.That(sql, Does.Contain("= ANY("),
             "SS2: F1 WHERE must contain = ANY( for the ApplicationTextTypes allowlist IN clause; " +
@@ -170,8 +127,7 @@ public class EmbeddingPatchSqlShapeTests
     [Test]
     public void SS3_F1_WhereClause_ContainsAllRequiredGuards()
     {
-        IEntityManager em = CreatePostgresEntityManager();
-        string sql = F1Sql(em);
+        string sql = RenderAllBranches().F1;
 
         Assert.Multiple(() => {
             Assert.That(sql, Does.Contain("\"name\" IS NOT NULL"),
@@ -193,8 +149,7 @@ public class EmbeddingPatchSqlShapeTests
     [Test]
     public void SS4_F2_WhereClause_ContainsAllowlistAny()
     {
-        IEntityManager em = CreatePostgresEntityManager();
-        string sql = F2Sql(em);
+        string sql = RenderAllBranches().F2;
 
         Assert.That(sql, Does.Contain("= ANY("),
             "SS4: F2 WHERE must contain = ANY( for the allowlist negation; " +
@@ -202,25 +157,24 @@ public class EmbeddingPatchSqlShapeTests
     }
 
     // -----------------------------------------------------------------------
-    // SS5 — F3 SET expression uses convert_from( LEFT( ... ) ) nesting (§4.4 form)
+    // SS5 — F3 SET expression uses LEFT( convert_from( ... ) ) nesting (Option A, char-aware)
     //
-    // NP2 substitution: swap DB.ConvertFrom(DB.Left(..., 8000), "UTF8") to
-    //   DB.Left(DB.ConvertFrom(..., "UTF8"), 8000) in the F3 SET.
-    // Expected failure: SQL contains LEFT( convert_from( and the Does.Contain fires.
+    // NP2 substitution: in NodeService.cs only, swap DB.Left(DB.ConvertFrom(..., "UTF8"), 8000)
+    //   back to DB.ConvertFrom(DB.Left(..., 8000), "UTF8") in the F3 SET.
+    // Expected failure: SQL contains convert_from( LEFT( and the Does.Not.Contain fires.
     // -----------------------------------------------------------------------
 
     [Test]
-    public void SS5_F3_SetExpression_ContainsConvertFromOuterLeftInner()
+    public void SS5_F3_SetExpression_ContainsLeftOuterConvertFromInner()
     {
-        IEntityManager em = CreatePostgresEntityManager();
-        string sql = F3Sql(em);
+        string sql = RenderAllBranches().F3;
 
         Assert.Multiple(() => {
-            Assert.That(sql, Does.Contain("convert_from( LEFT("),
-                "SS5: F3 SET must use convert_from( LEFT( ... ) ) nesting (§4.4 form); " +
-                "if this fails the truncation operator order was swapped (NP2)");
-            Assert.That(sql, Does.Not.Contain("LEFT( convert_from("),
-                "SS5: F3 SET must NOT use LEFT( convert_from( ... ) ) nesting");
+            Assert.That(sql, Does.Contain("LEFT( convert_from("),
+                "SS5: F3 SET must use LEFT( convert_from( ... ) ) nesting (Option A, char-aware); " +
+                "revert NodeService.cs to Option B (convert_from( LEFT( ... ) )) and this fails (NP2)");
+            Assert.That(sql, Does.Not.Contain("convert_from( LEFT("),
+                "SS5: F3 SET must NOT use convert_from( LEFT( ... ) ) nesting (Option B, rejected)");
         });
     }
 
@@ -231,8 +185,7 @@ public class EmbeddingPatchSqlShapeTests
     [Test]
     public void SS6_F3_WhereClause_ContainsAllowlistAny()
     {
-        IEntityManager em = CreatePostgresEntityManager();
-        string sql = F3Sql(em);
+        string sql = RenderAllBranches().F3;
 
         Assert.That(sql, Does.Contain("= ANY("),
             "SS6: F3 WHERE must contain = ANY( for the ApplicationTextTypes allowlist IN clause");
@@ -245,8 +198,7 @@ public class EmbeddingPatchSqlShapeTests
     [Test]
     public void SS7_F4_WhereClause_ContainsAllowlistAny()
     {
-        IEntityManager em = CreatePostgresEntityManager();
-        string sql = F4Sql(em);
+        string sql = RenderAllBranches().F4;
 
         Assert.That(sql, Does.Contain("= ANY("),
             "SS7: F4 WHERE must contain = ANY( for the allowlist negation; " +
@@ -260,8 +212,7 @@ public class EmbeddingPatchSqlShapeTests
     [Test]
     public void SS8_F4_SetExpression_IsNull()
     {
-        IEntityManager em = CreatePostgresEntityManager();
-        string sql = F4Sql(em);
+        string sql = RenderAllBranches().F4;
 
         Assert.Multiple(() => {
             Assert.That(sql, Does.Contain("= NULL"),
