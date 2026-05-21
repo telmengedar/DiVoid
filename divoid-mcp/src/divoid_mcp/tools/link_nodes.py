@@ -4,8 +4,8 @@ divoid_link_nodes — create a link between two existing nodes.
 Wraps POST /api/nodes/{source_id}/links with the target id as the body.
 The DiVoid graph is undirected: link_nodes(a, b) == link_nodes(b, a).
 
-Duplicate links are tolerated by the DiVoid API (idempotent).
-The tool surfaces this transparently — re-linking is safe.
+The DiVoid API handles duplicate links idempotently (200 OK on re-link).
+Re-linking is safe — no pre-check required.
 
 Architecture reference: §8.6
 """
@@ -83,26 +83,6 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             return {"isError": True, "content": make_error_content(code, msg)}
 
         if not result.ok:
-            # DiVoid returns HTTP 500 with {"code":"unhandled","text":"Nodes already linked"}
-            # when the link already exists. Treat this as a successful idempotent operation
-            # so that callers can safely link without pre-checking.
-            if result.status == 500:
-                try:
-                    body_json = result.json()
-                    if "already linked" in body_json.get("text", "").lower():
-                        logger.info(
-                            "divoid_link_nodes source=%d target=%d: link already exists (idempotent ok)",
-                            source_id, target_id,
-                        )
-                        return {
-                            "source_id": source_id,
-                            "target_id": target_id,
-                            "linked": True,
-                            "already_existed": True,
-                        }
-                except Exception:
-                    pass
-
             code, msg = map_http_error(
                 result.status, result.body, config.api_key, "divoid_link_nodes"
             )
@@ -117,5 +97,4 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             "source_id": source_id,
             "target_id": target_id,
             "linked": True,
-            "already_existed": False,
         }

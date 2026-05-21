@@ -60,18 +60,6 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             logger.info("divoid_get_node id=%d err=%s status=%d", id, code, result.status)
             return {"isError": True, "content": make_error_content(code, msg)}
 
-        # DiVoid's GET /api/nodes/{id} returns 200 with empty body when the node
-        # does not exist (rather than 404). Detect this and return node_not_found.
-        if not result.body or not result.body.strip():
-            logger.info("divoid_get_node id=%d → 200 empty body (node does not exist)", id)
-            return {
-                "isError": True,
-                "content": make_error_content(
-                    "node_not_found",
-                    f"Node {id} does not exist (DiVoid returned an empty response).",
-                ),
-            }
-
         data = result.json()
         logger.info("divoid_get_node id=%d ok type=%s name=%r", id, data.get("type"), data.get("name"))
 
