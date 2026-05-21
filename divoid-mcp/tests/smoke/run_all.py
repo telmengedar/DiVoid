@@ -22,6 +22,9 @@ What "structurally correct" means:
 - divoid_create_task:     creates node + content + Tasks group link atomically
 - divoid_create_documentation: creates node + content + Docs group link atomically
 - divoid_create_session_log:   creates node + content + Docs group link atomically
+- divoid_resolve_user:    GET /nodes/{id}/user -> {user_id: int}
+- divoid_send_message:    resolve node->user + POST /messages atomically; cleanup via DELETE
+- divoid_list_messages:   GET /messages -> {result, total, continue}
 
 Pinned group ids for smoke-test target (DiVoid project #3):
   Tasks group: #314
@@ -41,6 +44,10 @@ from divoid_mcp.tools.create_task import _check_invariants as _check_task_invari
 from divoid_mcp.tools.create_documentation import _check_invariants as _check_doc_invariants
 from divoid_mcp.tools.create_session_log import _check_invariants as _check_session_log_invariants
 from divoid_mcp.tools.create_session_log import _execute as _execute_create_session_log
+from divoid_mcp.tools.resolve_user import _execute as _execute_resolve_user
+from divoid_mcp.tools.send_message import _check_invariants as _check_send_message_invariants
+from divoid_mcp.tools.send_message import _execute as _execute_send_message
+from divoid_mcp.tools.list_messages import _execute as _execute_list_messages
 from divoid_mcp.errors import InvariantViolation
 
 # Pinned group ids for the smoke-test target project (DiVoid project #3).
@@ -976,6 +983,281 @@ async def smoke_create_session_log_happy_path(config: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 2 PR2: messaging tools
+# ---------------------------------------------------------------------------
+
+# Selene's agent node id and expected user id (pinned).
+_SELENE_NODE_ID = 11
+_SELENE_USER_ID = 2
+
+
+async def smoke_resolve_user_happy_path(config: Any) -> None:
+    """
+    divoid_resolve_user: Selene's agent node (#11) resolves to user_id=2.
+
+    Pins the node->user mapping so we catch any change to Selene's User binding.
+    Uses _execute directly — deleting the function breaks the import at the top
+    of this file, making this load-bearing in the correct direction.
+    """
+    print("\n--- divoid_resolve_user (happy path: node #11 -> user_id=2) ---")
+
+    result = await _execute_resolve_user(node_id=_SELENE_NODE_ID, config=config)
+
+    _assert(
+        "_execute returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    _assert(
+        "user_id is present in result",
+        "user_id" in result,
+        f"keys={list(result.keys())}",
+    )
+    _assert(
+        f"user_id == {_SELENE_USER_ID} (Selene, pinned)",
+        result.get("user_id") == _SELENE_USER_ID,
+        f"user_id={result.get('user_id')!r}",
+    )
+
+
+async def smoke_resolve_user_not_found(config: Any) -> None:
+    """
+    divoid_resolve_user: non-existent node -> structured 404, not crash.
+
+    The API collapses "no such node" and "node has no User binding" into a
+    single 404; we verify the tool surfaces it as isError=True with a stable code.
+    """
+    print("\n--- divoid_resolve_user (not found: node #999999999) ---")
+
+    result = await _execute_resolve_user(node_id=999999999, config=config)
+
+    _assert(
+        "_execute returns isError=True for non-existent node",
+        result.get("isError", False),
+        f"result={result!r}",
+    )
+    if result.get("isError"):
+        content = result.get("content", [])
+        # Content is a list of {"type": "text", "text": "..."}.
+        text = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
+        _assert(
+            "error text contains a stable code",
+            "node_not_found" in text or "404" in text,
+            f"text={text[:200]!r}",
+        )
+
+
+async def smoke_send_message_invariant_violations(config: Any) -> None:
+    """
+    divoid_send_message: invariant guard rejects malformed calls before HTTP.
+
+    Tests: empty subject, empty body, both recipient fields, neither recipient field.
+    All four must raise InvariantViolation with a distinct stable code.
+    """
+    print("\n--- divoid_send_message (invariant violations) ---")
+
+    # Empty subject.
+    raised, code = False, None
+    try:
+        _check_send_message_invariants(
+            subject="",
+            body="Some body.",
+            recipient_node_id=_SELENE_NODE_ID,
+            recipient_user_id=None,
+        )
+    except InvariantViolation as exc:
+        raised, code = True, exc.code
+    _assert("empty subject raises InvariantViolation", raised)
+    _assert("empty subject code is 'subject_empty'", code == "subject_empty", f"code={code!r}")
+
+    # Empty body.
+    raised, code = False, None
+    try:
+        _check_send_message_invariants(
+            subject="[DiVoid] test",
+            body="   ",
+            recipient_node_id=_SELENE_NODE_ID,
+            recipient_user_id=None,
+        )
+    except InvariantViolation as exc:
+        raised, code = True, exc.code
+    _assert("whitespace-only body raises InvariantViolation", raised)
+    _assert("whitespace body code is 'body_empty'", code == "body_empty", f"code={code!r}")
+
+    # Both recipient fields set.
+    raised, code = False, None
+    try:
+        _check_send_message_invariants(
+            subject="[DiVoid] test",
+            body="Some body.",
+            recipient_node_id=_SELENE_NODE_ID,
+            recipient_user_id=_SELENE_USER_ID,
+        )
+    except InvariantViolation as exc:
+        raised, code = True, exc.code
+    _assert("both recipient fields raises InvariantViolation", raised)
+    _assert(
+        "both recipients code is 'mutually_exclusive_recipient'",
+        code == "mutually_exclusive_recipient",
+        f"code={code!r}",
+    )
+
+    # Neither recipient field set.
+    raised, code = False, None
+    try:
+        _check_send_message_invariants(
+            subject="[DiVoid] test",
+            body="Some body.",
+            recipient_node_id=None,
+            recipient_user_id=None,
+        )
+    except InvariantViolation as exc:
+        raised, code = True, exc.code
+    _assert("neither recipient field raises InvariantViolation", raised)
+    _assert("no recipient code is 'no_recipient'", code == "no_recipient", f"code={code!r}")
+
+
+async def smoke_send_message_happy_path(config: Any) -> None:
+    """
+    divoid_send_message: self-message to Selene via recipient_node_id, verify inbox, DELETE.
+
+    Uses _execute directly (load-bearing: deleting _execute breaks the import).
+    Sends a self-message (Selene -> Selene, the canonical pattern), verifies it
+    appears in the inbox via divoid_list_messages, then DELETEs it to clean up.
+    """
+    print("\n--- divoid_send_message (happy path self-message + verify + cleanup) ---")
+
+    subject = "[DiVoid] smoke-test message — delete me"
+    body = (
+        "This is a smoke-test message sent by divoid-mcp run_all.py. "
+        "It should be deleted at the end of the test. "
+        "If you see this message it was not cleaned up."
+    )
+
+    result = await _execute_send_message(
+        subject=subject,
+        body=body,
+        config=config,
+        recipient_node_id=_SELENE_NODE_ID,
+    )
+
+    _assert(
+        "_execute returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    message_id = result.get("message_id")
+    _assert("result has integer message_id", isinstance(message_id, int), f"id={message_id!r}")
+    if not isinstance(message_id, int):
+        return
+
+    _assert(
+        "result recipient_user_id == 2 (Selene)",
+        result.get("recipient_user_id") == _SELENE_USER_ID,
+        f"recipient_user_id={result.get('recipient_user_id')!r}",
+    )
+    _assert(
+        "result recipient_node_id == 11 (Selene node, echoed back)",
+        result.get("recipient_node_id") == _SELENE_NODE_ID,
+        f"recipient_node_id={result.get('recipient_node_id')!r}",
+    )
+    _assert(
+        "result subject matches sent subject",
+        result.get("subject") == subject,
+        f"subject={result.get('subject')!r}",
+    )
+    _assert(
+        "result has sent_at timestamp",
+        bool(result.get("sent_at")),
+        f"sent_at={result.get('sent_at')!r}",
+    )
+
+    # Verify the message appears in the inbox.
+    inbox = await _execute_list_messages(count=50, continue_offset=0, config=config)
+    _assert(
+        "inbox fetch succeeds",
+        not inbox.get("isError", False),
+        str(inbox.get("content", "")),
+    )
+    if not inbox.get("isError", False):
+        found_ids = [m.get("id") for m in inbox.get("result", [])]
+        _assert(
+            f"sent message #{message_id} appears in inbox",
+            message_id in found_ids,
+            f"inbox_ids={found_ids}",
+        )
+
+    # Cleanup: DELETE the test message.
+    delete_result = await http_client.delete(f"messages/{message_id}")
+    _assert(
+        f"DELETE /messages/{message_id} returns 2xx (cleanup)",
+        delete_result.ok,
+        f"status={delete_result.status}",
+    )
+
+    # Verify it is gone from inbox.
+    inbox_after = await _execute_list_messages(count=50, continue_offset=0, config=config)
+    if not inbox_after.get("isError", False):
+        ids_after = [m.get("id") for m in inbox_after.get("result", [])]
+        _assert(
+            f"deleted message #{message_id} is gone from inbox",
+            message_id not in ids_after,
+            f"ids_after={ids_after}",
+        )
+
+
+async def smoke_list_messages_happy_path(config: Any) -> None:
+    """
+    divoid_list_messages: inbox returns {result, total, continue} with correct shape.
+
+    Uses _execute directly (load-bearing: deleting _execute breaks the import).
+    The send+cleanup test above has already ensured the inbox is clean of
+    smoke-test messages, so we just verify structure and known pre-existing messages.
+    """
+    print("\n--- divoid_list_messages (happy path: shape + pagination field) ---")
+
+    result = await _execute_list_messages(count=10, continue_offset=0, config=config)
+
+    _assert(
+        "_execute returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    _assert("result has 'result' key", "result" in result, f"keys={list(result.keys())}")
+    _assert("result has 'total' key", "total" in result, f"keys={list(result.keys())}")
+    _assert("result key 'continue' is present", "continue" in result, f"keys={list(result.keys())}")
+    _assert(
+        "'result' is a list",
+        isinstance(result.get("result"), list),
+        f"type={type(result.get('result'))!r}",
+    )
+    _assert(
+        "'total' is a non-negative integer",
+        isinstance(result.get("total"), int) and result["total"] >= 0,
+        f"total={result.get('total')!r}",
+    )
+
+    # Each message in the result must have the expected fields.
+    messages = result.get("result", [])
+    for msg in messages:
+        for field in ("id", "authorId", "recipientId", "subject", "body", "createdAt"):
+            _assert(
+                f"message #{msg.get('id')} has field '{field}'",
+                field in msg,
+                f"keys={list(msg.keys())}",
+            )
+
+
+# ---------------------------------------------------------------------------
 
 async def _run_all(config: Any) -> None:
     tests = [
@@ -1000,6 +1282,12 @@ async def _run_all(config: Any) -> None:
         smoke_create_session_log_invariant_violation,
         smoke_create_session_log_missing_project,
         smoke_create_session_log_happy_path,
+        # Phase 2 PR2: messaging tools
+        smoke_resolve_user_happy_path,
+        smoke_resolve_user_not_found,
+        smoke_send_message_invariant_violations,
+        smoke_send_message_happy_path,
+        smoke_list_messages_happy_path,
     ]
 
     for test_fn in tests:
@@ -1015,7 +1303,7 @@ async def _run_all(config: Any) -> None:
 
 
 def main() -> None:
-    print("divoid-mcp smoke tests (Phase 1 read-side + PR2 composites + Phase 2 session-log)")
+    print("divoid-mcp smoke tests (Phase 1 + Phase 2: read-side + composites + messaging)")
     print("=" * 60)
 
     config = _setup()
