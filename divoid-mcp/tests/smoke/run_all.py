@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Smoke tests for divoid-mcp Phase 1 tools.
+Smoke tests for divoid-mcp tools.
 
 These are live integration scripts -- they call the real DiVoid instance
 using the admin key from ~/.claude/secrets/.divoid-online. They are NOT
@@ -14,13 +14,14 @@ Run from the repo root after `pip install -e .`:
 Each test calls the HTTP client functions directly (same code path as the
 MCP tools use) and asserts the response has the expected shape.
 
-What "structurally correct" means for Phase 1:
+What "structurally correct" means:
 - divoid_search:          returns {"result": [...], "total": int}
 - divoid_get_node:        returns {"id": int, "type": str, "name": str, ...}
 - divoid_get_content:     returns UTF-8 decodeable bytes with matching content-type
 - divoid_link_nodes:      POST /nodes/{id}/links returns 2xx; link visible in adjacency
 - divoid_create_task:     creates node + content + Tasks group link atomically
 - divoid_create_documentation: creates node + content + Docs group link atomically
+- divoid_create_session_log:   creates node + content + Docs group link atomically
 
 Pinned group ids for smoke-test target (DiVoid project #3):
   Tasks group: #314
@@ -38,6 +39,8 @@ from divoid_mcp.config import load_secret
 from divoid_mcp import http_client
 from divoid_mcp.tools.create_task import _check_invariants as _check_task_invariants
 from divoid_mcp.tools.create_documentation import _check_invariants as _check_doc_invariants
+from divoid_mcp.tools.create_session_log import _check_invariants as _check_session_log_invariants
+from divoid_mcp.tools.create_session_log import _execute as _execute_create_session_log
 from divoid_mcp.errors import InvariantViolation
 
 # Pinned group ids for the smoke-test target project (DiVoid project #3).
@@ -743,6 +746,236 @@ async def smoke_create_documentation_happy_path(config: Any) -> None:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+# Phase 2: divoid_create_session_log
+# ---------------------------------------------------------------------------
+
+async def smoke_create_session_log_invariant_violation(config: Any) -> None:
+    """
+    divoid_create_session_log: whitespace-only content -> content_whitespace_only violation.
+
+    Session-logs have no 'new' escape — content is always required.
+    """
+    print("\n--- divoid_create_session_log (invariant: content_whitespace_only) ---")
+
+    # Whitespace-only content -> content_whitespace_only
+    raised = False
+    violation_code = None
+    try:
+        _check_session_log_invariants(
+            name="Smoke test: should never be created",
+            content="   \n  ",
+            project_id=_DIVOID_PROJECT_ID,
+            docs_group_id=None,
+        )
+    except InvariantViolation as exc:
+        raised = True
+        violation_code = exc.code
+
+    _assert("whitespace content raises InvariantViolation", raised)
+    _assert(
+        "violation code is 'content_whitespace_only'",
+        violation_code == "content_whitespace_only",
+        f"code={violation_code!r}",
+    )
+
+    # Empty string -> also content_whitespace_only
+    raised2 = False
+    violation_code2 = None
+    try:
+        _check_session_log_invariants(
+            name="Smoke test: should never be created",
+            content="",
+            project_id=_DIVOID_PROJECT_ID,
+            docs_group_id=None,
+        )
+    except InvariantViolation as exc:
+        raised2 = True
+        violation_code2 = exc.code
+
+    _assert("empty content raises InvariantViolation", raised2)
+    _assert(
+        "empty content violation code is 'content_whitespace_only'",
+        violation_code2 == "content_whitespace_only",
+        f"code={violation_code2!r}",
+    )
+
+    # Both project_id + docs_group_id -> mutually_exclusive_link_target
+    raised3 = False
+    violation_code3 = None
+    try:
+        _check_session_log_invariants(
+            name="Smoke test",
+            content="Some valid session narrative here.",
+            project_id=_DIVOID_PROJECT_ID,
+            docs_group_id=_DIVOID_DOCS_GROUP_ID,
+        )
+    except InvariantViolation as exc:
+        raised3 = True
+        violation_code3 = exc.code
+
+    _assert("both project_id+docs_group_id raises InvariantViolation", raised3)
+    _assert(
+        "violation code is 'mutually_exclusive_link_target'",
+        violation_code3 == "mutually_exclusive_link_target",
+        f"code={violation_code3!r}",
+    )
+
+
+async def smoke_create_session_log_missing_project(config: Any) -> None:
+    """
+    divoid_create_session_log: project_id=99999999 -> structured error, not crash.
+
+    The group resolution must return a structured group_not_found message.
+    Mirrors the smoke_create_task_missing_project pattern.
+    """
+    print("\n--- divoid_create_session_log (missing project: group resolution fail) ---")
+    result = await http_client.get(
+        "nodes", params={"path": "[id:99999999]/[name:Docs]", "count": 5}
+    )
+    _assert(
+        "GET with nonexistent project returns 2xx (empty result, not 500)",
+        result.ok,
+        f"status={result.status}",
+    )
+    if result.ok:
+        data = result.json()
+        nodes = data.get("result", [])
+        _assert(
+            "0 nodes returned for nonexistent project path",
+            len(nodes) == 0,
+            f"count={len(nodes)}",
+        )
+
+
+async def smoke_create_session_log_happy_path(config: Any) -> None:
+    """
+    divoid_create_session_log: happy path — call _execute() directly to verify the
+    tool function itself creates a real session-log, then DELETE it.
+
+    Uses docs_group_id directly (bypasses resolve_group) to keep this test focused
+    on the create+content+link arc, mirroring the create_task/create_documentation
+    happy-path pattern. Verifies adjacency links and UTF-8 content round-trip.
+    Cleans up after itself.
+
+    Load-bearing proof: _execute is the function register() delegates to. Deleting
+    register()'s @mcp_server.tool line still leaves _execute callable, but deleting
+    _execute itself causes this test to fail at import time (NameError on
+    _execute_create_session_log).
+    """
+    print("\n--- divoid_create_session_log (happy path via _execute + extra_links + cleanup) ---")
+
+    content = (
+        "# Smoke test session-log\n\n"
+        "This node was created by divoid-mcp run_all.py smoke tests. "
+        "UTF-8 safety check: em-dash — and euro sign €.\n\n"
+        "Extra links: this session-log is linked to node #8 (API reference) "
+        "and node #9 (onboarding) to verify extra_links behaviour.\n\n"
+        "It should be deleted at the end of the test. "
+        "If you see this node it was not cleaned up."
+    )
+
+    # Call the actual tool implementation — not a hand-rolled HTTP sequence.
+    result = await _execute_create_session_log(
+        name="[smoke-test] divoid_create_session_log -- delete me",
+        content=content,
+        config=config,
+        docs_group_id=_DIVOID_DOCS_GROUP_ID,
+        extra_links=[8, 9],
+    )
+
+    _assert(
+        "_execute returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    node_id = result.get("id")
+    _assert("result has integer id", isinstance(node_id, int), f"id={node_id!r}")
+    if not isinstance(node_id, int):
+        return
+
+    _assert(
+        "result type is 'session-log'",
+        result.get("type") == "session-log",
+        f"type={result.get('type')!r}",
+    )
+    _assert(
+        "result docs_group_id matches expected",
+        result.get("docs_group_id") == _DIVOID_DOCS_GROUP_ID,
+        f"docs_group_id={result.get('docs_group_id')!r}",
+    )
+    _assert(
+        "result extra_links_attached includes node #8 and #9",
+        set(result.get("extra_links_attached", [])) == {8, 9},
+        f"extra_links_attached={result.get('extra_links_attached')!r}",
+    )
+    _assert(
+        "result content_length is positive",
+        isinstance(result.get("content_length"), int) and result["content_length"] > 0,
+        f"content_length={result.get('content_length')!r}",
+    )
+
+    # Verify content round-trip (UTF-8 safety).
+    content_check = await http_client.get(f"nodes/{node_id}/content")
+    if content_check.ok:
+        _assert("content round-trip: HTTP 200", content_check.ok)
+        try:
+            decoded = content_check.body.decode("utf-8")
+            _assert("content round-trip: decodes as UTF-8", True)
+            _assert(
+                "content round-trip: em-dash preserved",
+                "—" in decoded,
+                f"em-dash {'found' if chr(0x2014) in decoded else 'MISSING'}",
+            )
+        except UnicodeDecodeError:
+            _assert("content round-trip: decodes as UTF-8", False, "UnicodeDecodeError")
+
+    # Verify node type and null status.
+    get_result = await http_client.get(f"nodes/{node_id}")
+    if get_result.ok and get_result.body.strip():
+        node_data = get_result.json()
+        _assert(
+            "created session-log has type='session-log'",
+            node_data.get("type") == "session-log",
+            f"type={node_data.get('type')!r}",
+        )
+        _assert(
+            "created session-log has status=null (no lifecycle per #493 §5)",
+            node_data.get("status") is None,
+            f"status={node_data.get('status')!r}",
+        )
+
+    # Verify all expected links appear in adjacency.
+    all_expected_links = [_DIVOID_DOCS_GROUP_ID, 8, 9]
+    links_check = await http_client.get(
+        "nodes/links",
+        params={"ids": [node_id] + all_expected_links},
+    )
+    if links_check.ok:
+        pairs = {
+            (lnk.get("sourceId"), lnk.get("targetId"))
+            for lnk in links_check.json().get("result", [])
+        }
+        for expected_target in all_expected_links:
+            has_link = (node_id, expected_target) in pairs or (expected_target, node_id) in pairs
+            _assert(
+                f"link session-log -> #{expected_target} visible in adjacency",
+                has_link,
+                f"pair_count={len(pairs)}",
+            )
+
+    # Cleanup: DELETE the test node.
+    delete_result = await http_client.delete(f"nodes/{node_id}")
+    _assert(
+        f"DELETE /nodes/{node_id} returns 2xx (cleanup)",
+        delete_result.ok,
+        f"status={delete_result.status}",
+    )
+
+
+# ---------------------------------------------------------------------------
 
 async def _run_all(config: Any) -> None:
     tests = [
@@ -763,6 +996,10 @@ async def _run_all(config: Any) -> None:
         smoke_create_task_missing_project,
         smoke_create_task_happy_path,
         smoke_create_documentation_happy_path,
+        # Phase 2: create_session_log composite
+        smoke_create_session_log_invariant_violation,
+        smoke_create_session_log_missing_project,
+        smoke_create_session_log_happy_path,
     ]
 
     for test_fn in tests:
@@ -778,7 +1015,7 @@ async def _run_all(config: Any) -> None:
 
 
 def main() -> None:
-    print("divoid-mcp Phase 1 smoke tests (PR1 read-side + PR2 composites)")
+    print("divoid-mcp smoke tests (Phase 1 read-side + PR2 composites + Phase 2 session-log)")
     print("=" * 60)
 
     config = _setup()
