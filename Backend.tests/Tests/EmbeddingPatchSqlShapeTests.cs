@@ -29,9 +29,9 @@ namespace Backend.tests.Tests;
 /// NP1 — drop the allowlist <c>= ANY()</c> clause from F1/F2/F3/F4.
 ///   Expected failure: "expected = ANY( clause in F1 WHERE but was absent".
 ///
-/// NP2 — swap the truncation operator from <c>convert_from( LEFT( ... ) )</c> to
-///   <c>LEFT( convert_from( ... ) )</c> in F1/F3 (the §4.4-vs-probe nesting inversion).
-///   Expected failure: "expected convert_from( LEFT( nesting in F1 SET but saw LEFT( convert_from(".
+/// NP2 — swap the truncation operator from <c>LEFT( convert_from( ... ) )</c> (Option A)
+///   back to <c>convert_from( LEFT( ... ) )</c> (Option B) in F1/F3.
+///   Expected failure: "F1 SET must NOT use convert_from( LEFT( ... ) ) nesting (Option B, rejected)".
 ///
 /// Each test documents the exact NP substitution that must make it fail.
 /// </summary>
@@ -64,7 +64,7 @@ public class EmbeddingPatchSqlShapeTests
                                                              DB.CustomFunction("concat",
                                                                  DB.Property<Node>(x => x.Name),
                                                                  DB.Constant("\n\n"),
-                                                                 DB.ConvertFrom(DB.Left(DB.Property<Node>(x => x.Content), 8000), "UTF8"))).Type<float[]>())
+                                                                 DB.Left(DB.ConvertFrom(DB.Property<Node>(x => x.Content), "UTF8"), 8000))).Type<float[]>())
                  .Where(n => n.Id == nodeId
                           && n.Name != null && n.Name != ""
                           && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
@@ -97,7 +97,7 @@ public class EmbeddingPatchSqlShapeTests
         return em.Update<Node>()
                  .Set(n => n.Embedding == DB.CustomFunction("embedding",
                                                              DB.Constant(model),
-                                                             DB.ConvertFrom(DB.Left(DB.Property<Node>(x => x.Content), 8000), "UTF8")).Type<float[]>())
+                                                             DB.Left(DB.ConvertFrom(DB.Property<Node>(x => x.Content), "UTF8"), 8000)).Type<float[]>())
                  .Where(n => n.Id == nodeId
                           && (n.Name == null || n.Name == "")
                           && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
@@ -120,26 +120,27 @@ public class EmbeddingPatchSqlShapeTests
     }
 
     // -----------------------------------------------------------------------
-    // SS1 — F1 SET expression uses convert_from( LEFT( ... ) ) nesting (§4.4 form)
+    // SS1 — F1 SET expression uses LEFT( convert_from( ... ) ) nesting (Option A, char-aware)
     //
-    // NP2 substitution: swap DB.ConvertFrom(DB.Left(..., 8000), "UTF8") to
-    //   DB.Left(DB.ConvertFrom(..., "UTF8"), 8000) in the F1 SET.
-    // Expected failure: SQL contains LEFT( convert_from( instead of convert_from( LEFT(
-    //   and this assertion fails with the "nesting order" message.
+    // NP2 substitution: swap DB.Left(DB.ConvertFrom(..., "UTF8"), 8000) back to
+    //   DB.ConvertFrom(DB.Left(..., 8000), "UTF8") in the F1 SET (revert to Option B).
+    // Expected failure: SQL contains convert_from( LEFT( and the Does.Not.Contain fires
+    //   with "Option B, rejected" — which is exactly the crash-on-multibyte-boundary error.
     // -----------------------------------------------------------------------
 
     [Test]
-    public void SS1_F1_SetExpression_ContainsConvertFromOuterLeftInner()
+    public void SS1_F1_SetExpression_ContainsLeftOuterConvertFromInner()
     {
         IEntityManager em = CreatePostgresEntityManager();
         string sql = F1Sql(em);
 
         Assert.Multiple(() => {
-            Assert.That(sql, Does.Contain("convert_from( LEFT("),
-                "SS1: F1 SET must use convert_from( LEFT( ... ) ) nesting (§4.4 form); " +
-                "if this fails the truncation operator order was swapped to LEFT( convert_from( ... ) ) (NP2)");
-            Assert.That(sql, Does.Not.Contain("LEFT( convert_from("),
-                "SS1: F1 SET must NOT use LEFT( convert_from( ... ) ) nesting (wrong order)");
+            Assert.That(sql, Does.Contain("LEFT( convert_from("),
+                "SS1: F1 SET must use LEFT( convert_from( ... ) ) nesting (Option A, char-aware); " +
+                "revert to Option B (convert_from( LEFT( ... ) )) and this fails with invalid UTF-8 " +
+                "byte sequence on multi-byte chars spanning the 8000-byte boundary");
+            Assert.That(sql, Does.Not.Contain("convert_from( LEFT("),
+                "SS1: F1 SET must NOT use convert_from( LEFT( ... ) ) nesting (Option B, rejected)");
         });
     }
 
@@ -202,25 +203,25 @@ public class EmbeddingPatchSqlShapeTests
     }
 
     // -----------------------------------------------------------------------
-    // SS5 — F3 SET expression uses convert_from( LEFT( ... ) ) nesting (§4.4 form)
+    // SS5 — F3 SET expression uses LEFT( convert_from( ... ) ) nesting (Option A, char-aware)
     //
-    // NP2 substitution: swap DB.ConvertFrom(DB.Left(..., 8000), "UTF8") to
-    //   DB.Left(DB.ConvertFrom(..., "UTF8"), 8000) in the F3 SET.
-    // Expected failure: SQL contains LEFT( convert_from( and the Does.Contain fires.
+    // NP2 substitution: swap DB.Left(DB.ConvertFrom(..., "UTF8"), 8000) back to
+    //   DB.ConvertFrom(DB.Left(..., 8000), "UTF8") in the F3 SET (revert to Option B).
+    // Expected failure: SQL contains convert_from( LEFT( and the Does.Not.Contain fires.
     // -----------------------------------------------------------------------
 
     [Test]
-    public void SS5_F3_SetExpression_ContainsConvertFromOuterLeftInner()
+    public void SS5_F3_SetExpression_ContainsLeftOuterConvertFromInner()
     {
         IEntityManager em = CreatePostgresEntityManager();
         string sql = F3Sql(em);
 
         Assert.Multiple(() => {
-            Assert.That(sql, Does.Contain("convert_from( LEFT("),
-                "SS5: F3 SET must use convert_from( LEFT( ... ) ) nesting (§4.4 form); " +
-                "if this fails the truncation operator order was swapped (NP2)");
-            Assert.That(sql, Does.Not.Contain("LEFT( convert_from("),
-                "SS5: F3 SET must NOT use LEFT( convert_from( ... ) ) nesting");
+            Assert.That(sql, Does.Contain("LEFT( convert_from("),
+                "SS5: F3 SET must use LEFT( convert_from( ... ) ) nesting (Option A, char-aware); " +
+                "revert to Option B (convert_from( LEFT( ... ) )) and this fails (NP2)");
+            Assert.That(sql, Does.Not.Contain("convert_from( LEFT("),
+                "SS5: F3 SET must NOT use convert_from( LEFT( ... ) ) nesting (Option B, rejected)");
         });
     }
 

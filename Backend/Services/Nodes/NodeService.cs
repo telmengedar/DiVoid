@@ -702,7 +702,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                                                                   DB.CustomFunction("concat",
                                                                       DB.Property<Node>(x => x.Name),
                                                                       DB.Constant("\n\n"),
-                                                                      DB.ConvertFrom(DB.Left(DB.Property<Node>(x => x.Content), 8000), "UTF8"))).Type<float[]>())
+                                                                      DB.Left(DB.ConvertFrom(DB.Property<Node>(x => x.Content), "UTF8"), 8000))).Type<float[]>())
                       .Where(n => n.Id == nodeId
                                && n.Name != null && n.Name != ""
                                && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
@@ -727,7 +727,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         await database.Update<Node>()
                       .Set(n => n.Embedding == DB.CustomFunction("embedding",
                                                                   DB.Constant(model),
-                                                                  DB.ConvertFrom(DB.Left(DB.Property<Node>(x => x.Content), 8000), "UTF8")).Type<float[]>())
+                                                                  DB.Left(DB.ConvertFrom(DB.Property<Node>(x => x.Content), "UTF8"), 8000)).Type<float[]>())
                       .Where(n => n.Id == nodeId
                                && (n.Name == null || n.Name == "")
                                && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
