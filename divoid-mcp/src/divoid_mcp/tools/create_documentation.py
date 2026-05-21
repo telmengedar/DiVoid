@@ -30,6 +30,7 @@ import mcp.server.fastmcp as fastmcp
 from .. import http_client
 from ..config import DivoidConfig
 from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
+from ._groups import resolve_group
 
 logger = logging.getLogger(__name__)
 
@@ -88,49 +89,12 @@ def _check_invariants(
 
 async def _resolve_docs_group(project_id: int, config: DivoidConfig) -> tuple[int | None, str | None]:
     """
-    Resolve the Docs group id for a given project by walking the graph.
+    Resolve the Docs group id for a given project.
 
-    Returns (group_id, None) on success, or (None, error_message) on failure.
-    Uses the path query: GET /nodes?path=[id:<project_id>]/[name:Docs]
+    Thin wrapper around the shared `resolve_group` helper so external callers
+    (smoke tests) that import this name directly keep working after the refactor.
     """
-    path_query = f"[id:{project_id}]/[name:Docs]"
-    try:
-        result = await http_client.get("nodes", params={"path": path_query, "count": 5})
-    except http_client.DiVoidUnreachable as exc:
-        code, msg = map_unreachable(exc, config.api_key, "resolve Docs group")
-        return None, f"{code}: {msg}"
-
-    if not result.ok:
-        code, msg = map_http_error(result.status, result.body, config.api_key, "resolve Docs group")
-        return None, f"{code}: {msg}"
-
-    try:
-        data = result.json()
-        nodes = data.get("result", [])
-    except Exception as exc:
-        return None, f"Failed to parse group resolution response: {exc}"
-
-    if len(nodes) == 0:
-        return None, (
-            f"docs_group_not_found: No Docs group found for project #{project_id}. "
-            "Walk the project's adjacency to confirm the group exists "
-            "(GET /api/nodes?linkedto=<project_id>). If no Docs group exists, "
-            "create one per DiVoid #493 §2."
-        )
-
-    if len(nodes) > 1:
-        ids = [n.get("id") for n in nodes]
-        return None, (
-            f"docs_group_not_found: Path query returned {len(nodes)} matches for "
-            f"[id:{project_id}]/[name:Docs] — expected exactly 1. ids={ids}. "
-            "This indicates duplicate group structure; fix manually."
-        )
-
-    group_id = nodes[0].get("id")
-    if not isinstance(group_id, int):
-        return None, f"docs_group_not_found: Group node id is not an integer: {group_id!r}"
-
-    return group_id, None
+    return await resolve_group(project_id, "Docs", config)
 
 
 def register(mcp_server: fastmcp.FastMCP) -> None:
