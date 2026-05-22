@@ -29,7 +29,7 @@ public static class CorsExtensions {
                 }
 
                 policy.WithOrigins(allowedOrigins)
-                      .WithMethods("GET", "POST", "PATCH", "DELETE", "OPTIONS")
+                      .WithMethods("GET", "POST", "PATCH", "DELETE")
                       .WithHeaders("Authorization", "Content-Type", "Accept")
                       .DisallowCredentials();
             });
