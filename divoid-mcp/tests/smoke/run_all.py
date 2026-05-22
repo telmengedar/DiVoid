@@ -1767,38 +1767,6 @@ async def smoke_list_pagination(config: Any) -> None:
     _assert("at least 2 unique ids collected across pages", len(seen_ids) >= 2, f"ids={seen_ids}")
 
 
-async def smoke_list_nototal(config: Any) -> None:
-    """
-    divoid_list: nototal=True is accepted and returns a valid response.
-
-    NOTE: DiVoid node #8 (API spec) states nototal=True causes total=-1 (COUNT skipped).
-    In practice the current prod backend appears to still compute and return the real
-    total. The tool passes nototal faithfully as a query parameter; the test asserts
-    only that the call succeeds and total is an integer — not its specific value —
-    since the API behaviour may differ from the spec or change. If the API is updated
-    to honour nototal, total=-1 would be the correct assertion here.
-    """
-    print("\n--- divoid_list (nototal=True) ---")
-
-    result = await _execute_list(config=config, nototal=True, count=5)
-
-    _assert(
-        "_execute returns no isError",
-        not result.get("isError", False),
-        str(result.get("content", "")),
-    )
-    if result.get("isError"):
-        return
-
-    total = result.get("total")
-    _assert(
-        "total is an integer (nototal flag accepted, value -1 or real count)",
-        isinstance(total, int),
-        f"total={total!r}",
-    )
-    _assert("result is still a list", isinstance(result.get("result"), list))
-
-
 async def smoke_list_sort_invalid_invariant(config: Any) -> None:
     """divoid_list: sort='foobar' -> sort_invalid_field invariant rejection."""
     print("\n--- divoid_list (invariant: sort invalid field) ---")
@@ -2496,7 +2464,6 @@ async def _run_all(config: Any) -> None:
         smoke_list_sort_name_descending,
         smoke_list_fields_sparse,
         smoke_list_pagination,
-        smoke_list_nototal,
         smoke_list_sort_invalid_invariant,
         # Phase 2 polish: patch_node, set_status, set_content, get_links primitives
         smoke_patch_node_invariant_no_fields,

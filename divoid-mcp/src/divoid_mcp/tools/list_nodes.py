@@ -75,8 +75,7 @@ FILTER SEMANTICS (when no path=):
 
 PAGINATION: supply the `continue` value from a previous response to fetch the next
   page. `continue` is null/absent when there are no more results. count defaults to
-  20 and is capped at 500. Set nototal=true to skip the COUNT query for large result
-  sets where only the first page matters.
+  20 and is capped at 500.
 
 FIELDS: default projection is [id, type, name, status, contentType]. Add x or y to
   get canvas positions. Omit fields to reduce token footprint on large result sets.\
@@ -138,7 +137,6 @@ async def _execute(
     status: list[str] | None = None,
     linkedto: list[int] | None = None,
     nostatus: bool = False,
-    nototal: bool = False,
     path: str | None = None,
     bounds: list[float] | None = None,
     count: int = 20,
@@ -173,8 +171,6 @@ async def _execute(
         params["linkedto"] = linkedto
     if nostatus:
         params["nostatus"] = "true"
-    if nototal:
-        params["nototal"] = "true"
     if path is not None:
         params["path"] = path
     if bounds is not None:
@@ -234,7 +230,6 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         status: list[str] | None = None,
         linkedto: list[int] | None = None,
         nostatus: bool = False,
-        nototal: bool = False,
         path: str | None = None,
         bounds: list[float] | None = None,
         count: int = 20,
@@ -257,8 +252,6 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                       Single-hop. Mutually exclusive with path (invariant guard).
             nostatus: If true, return only nodes with no status set.
                       Mutually exclusive with status[] (invariant guard).
-            nototal: If true, skip the COUNT query. Response total will be -1.
-                     Use for large scans where total is not needed — saves a round-trip.
             path: Path-query expression for multi-hop traversal. Raw string, passed as-is
                   to the API. Example: '[type:project,name:DiVoid]/[type:task,status:open]'.
                   See tool description for grammar. The first segment must have at least one
@@ -297,7 +290,6 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             status=status,
             linkedto=linkedto,
             nostatus=nostatus,
-            nototal=nototal,
             path=path,
             bounds=bounds,
             count=count,
