@@ -68,7 +68,12 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
             Models.Auth.ApiKeyDetails details = await apiKeyService.GetApiKey(key);
 
             ClaimsIdentity identity = new(SchemeName);
-            identity.AddClaim(new Claim(ClaimTypes.NameIdentifier, details.UserId?.ToString() ?? "0"));
+            // NameIdentifier carries the underlying-scheme principal id (the API-key's owning user id).
+            // divoid.user_id is the same value here but is the scheme-agnostic claim all consumers
+            // should use to read the DiVoid row id.
+            string userIdString = details.UserId?.ToString() ?? "0";
+            identity.AddClaim(new Claim(ClaimTypes.NameIdentifier, userIdString));
+            identity.AddClaim(new Claim("divoid.user_id", userIdString));
             foreach (string permission in details.Permissions ?? [])
                 identity.AddClaim(new Claim("permission", permission));
 
