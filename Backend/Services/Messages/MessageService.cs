@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Backend.Extensions;
 using Backend.Errors.Exceptions;
@@ -77,7 +78,7 @@ public class MessageService : IMessageService {
 
 
     /// <inheritdoc />
-    public async Task<AsyncPageResponseWriter<MessageDetails>> ListPaged(long callerId, bool isAdmin, MessageFilter filter = null) {
+    public async Task<AsyncPageResponseWriter<MessageDetails>> ListPaged(long callerId, bool isAdmin, MessageFilter filter = null, CancellationToken ct = default) {
         filter ??= new();
 
         MessageMapper mapper = new();
@@ -93,7 +94,7 @@ public class MessageService : IMessageService {
         operation.Where(predicate?.Content);
 
         WindowResult<MessageDetails, long> windowed =
-            await mapper.WindowedFromOperation<long, Message>(operation, DB.CountOver(), CancellationToken.None, filter.Fields);
+            await mapper.WindowedFromOperation<long, Message>(operation, DB.CountOver(), ct, filter.Fields);
 
         return new AsyncPageResponseWriter<MessageDetails>(
             windowed.Items,

@@ -1,3 +1,4 @@
+using System.Threading;
 using Backend.Auth;
 using Backend.Models.Messages;
 using Backend.Services.Messages;
@@ -42,16 +43,17 @@ public class MessageController(ILogger<MessageController> logger, IMessageServic
     /// non-admin callers see only messages where they are the author or recipient.
     /// </summary>
     /// <param name="filter">paging, sort, and id filter criteria</param>
+    /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
     /// <returns>streamed page of message details</returns>
     [HttpGet]
     [Authorize(Policy = "read")]
     [ProducesResponseType(200)]
     [ProducesResponseType(400)]
     [ProducesResponseType(401)]
-    public Task<AsyncPageResponseWriter<MessageDetails>> List([FromQuery] MessageFilter filter) {
+    public Task<AsyncPageResponseWriter<MessageDetails>> List([FromQuery] MessageFilter filter, CancellationToken ct) {
         long callerId = User.GetDivoidUserId();
         bool isAdmin = User.HasClaim("permission", "admin");
-        return messageService.ListPaged(callerId, isAdmin, filter);
+        return messageService.ListPaged(callerId, isAdmin, filter, ct);
     }
 
 
