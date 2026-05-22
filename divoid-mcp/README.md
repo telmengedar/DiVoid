@@ -1,70 +1,44 @@
 # divoid-mcp
 
-MCP server wrapping the [DiVoid](https://divoid.mamgo.io) graph API. Exposes DiVoid as a Model Context Protocol server so Claude Code agents can read, search, and write to the graph without raw `curl` plumbing.
+MCP server wrapping the [DiVoid](https://divoid.mamgo.io) graph API. Since 2026-05-22 this server is the **canonical interface** for agents interacting with DiVoid — prefer the `divoid_*` tools over raw `curl`. See [DiVoid node #190 § Tooling](https://divoid.mamgo.io/api/nodes/190/content) for the full policy; the short version is: use MCP by default, fall back to REST only when the server isn't available or a tool misbehaves, and file a DiVoid task when you do fall back.
 
-## What it does
+## User install
 
-- **`divoid_search`** — semantic search over the graph (question-style queries)
-- **`divoid_get_node`** — fetch a single node's properties by id
-- **`divoid_get_content`** — fetch the text body of a node
-- **`divoid_link_nodes`** — create a link between two existing nodes
-- **MCP resources** — live content of the five canonical DiVoid reference docs (nodes #9, #190, #8, #493, #435)
+Full step-by-step guide (non-technical friendly, covers Claude Code, Claude Desktop, and generic MCP hosts): [`docs/install.md`](docs/install.md) / DiVoid node [**#829**](https://divoid.mamgo.io/api/nodes/829/content).
 
-Phase 2 will add composite create tools (`divoid_create_task`, `divoid_create_documentation`) and mutation tools.
+Quick path for experienced users:
+
+```
+pip install "git+https://github.com/telmengedar/DiVoid.git#subdirectory=divoid-mcp"
+claude mcp add --transport stdio --scope user divoid -- python -m divoid_mcp
+```
+
+## Tools (15)
+
+| Tool | What it does |
+|---|---|
+| `divoid_search` | Semantic search over the graph — returns nodes ranked by cosine similarity to a plain-language query |
+| `divoid_get_node` | Fetch a single node's metadata (id, type, name, status) by id |
+| `divoid_get_content` | Fetch the text body of a node — decoded as UTF-8 |
+| `divoid_list` | List nodes with filtering by type, status, linkedto, name, id; returns paged results |
+| `divoid_get_links` | Return all nodes linked to a given node (one-hop neighbours) |
+| `divoid_link_nodes` | Create an undirected link between two existing nodes |
+| `divoid_patch_node` | Apply JSON-Patch operations to a node's metadata fields |
+| `divoid_set_status` | Set or clear a node's status field — enforces valid lifecycle values client-side |
+| `divoid_set_content` | Post content to a node's body — UTF-8 safe, no bash heredoc mangling |
+| `divoid_create_task` | Atomic create: makes the node, sets its content, links it to the project's Tasks group |
+| `divoid_create_documentation` | Atomic create: makes the node, sets its content, links it to the project's Docs group |
+| `divoid_create_session_log` | Atomic create: makes the node, sets its content, links it to the project's Docs group + any extra links you specify |
+| `divoid_resolve_user` | Look up a DiVoid user by name — returns the user id needed for message routing |
+| `divoid_send_message` | Send a message to a DiVoid user's inbox |
+| `divoid_list_messages` | List messages in a user's inbox, optionally filtered by project |
+
+Five MCP resources are also exposed for the canonical DiVoid reference documents: nodes #9 (onboarding), #190 (Hivemind Protocol), #8 (API reference), #493 (structural conventions), #435 (messaging system).
 
 ## Prerequisites
 
 - Python 3.11+
-- A DiVoid admin API key in `~/.claude/secrets/.divoid-online` (two-line `Url=...` / `ApiKey=...` format)
-
-## Install
-
-```bash
-cd C:\dev\claude\divoid-mcp
-pip install -e .
-```
-
-Or without an editable install:
-
-```bash
-pip install .
-```
-
-## Register in Claude Code
-
-Copy `examples/.mcp.json` to your project's `.mcp.json`, or add the `divoid` server entry to your existing `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "divoid": {
-      "command": "divoid-mcp",
-      "args": [],
-      "env": {
-        "DIVOID_MCP_LOG_LEVEL": "INFO"
-      }
-    }
-  }
-}
-```
-
-If `divoid-mcp` is not on `PATH` (no `pip install` or not activated venv), use the module form:
-
-```json
-{
-  "mcpServers": {
-    "divoid": {
-      "command": "python",
-      "args": ["-m", "divoid_mcp"],
-      "env": {
-        "DIVOID_MCP_LOG_LEVEL": "INFO"
-      }
-    }
-  }
-}
-```
-
-See `examples/.mcp.json` for both forms with comments.
+- A DiVoid API key in `~/.claude/secrets/.divoid-online` (two-line `Url=...` / `ApiKey=...` format)
 
 ## Configuration
 
@@ -79,22 +53,20 @@ The API key **never** appears in tool parameters, error messages, or logs. The f
 
 **Log level** is controlled via `DIVOID_MCP_LOG_LEVEL` (default `INFO`). Valid values: `DEBUG`, `INFO`, `WARNING`, `ERROR`. All logs go to **stderr** (stdout carries the JSON-RPC stream).
 
-## Tests
+## Smoke tests
 
-divoid-mcp has two independent test tiers. They have different purposes and neither replaces the other.
-
-**Live smoke tests** (`python tests/smoke/run_all.py`) pin the DiVoid API contract. Each tool is called once against the real DiVoid instance and the HTTP response shape is validated. This tier catches DiVoid API changes (endpoint renames, field removals, new error codes) that would silently break the MCP server. Requires `~/.claude/secrets/.divoid-online` with valid credentials. See `tests/smoke/README.md` for the full assertion table.
+Run the live smoke suite against the real DiVoid instance — each tool is called once and the response shape is validated:
 
 ```bash
-cd C:\dev\claude\divoid-mcp
 pip install -e .
 python tests/smoke/run_all.py
 ```
 
-**Hermetic unit tests** (`pytest tests/unit/`) pin the tool routing logic. The HTTP layer is mocked via `respx` — no network calls are made, no credentials are required. This tier catches regressions in the tool's branch routing (e.g. the two-case 404 dispatch in `get_content.py`) that the smoke suite would miss, because smoke tests assert on raw HTTP responses, not on the MCP-side response shape. Fast (< 1s expected).
+Results print as `PASS` / `FAIL` with details. Requires `~/.claude/secrets/.divoid-online` with valid credentials. See `tests/smoke/README.md` for the full assertion table.
+
+**Hermetic unit tests** pin the tool routing logic without network calls:
 
 ```bash
-cd C:\dev\claude\divoid-mcp
 pip install -e ".[dev]"
 pytest tests/unit/ -v
 ```
@@ -114,11 +86,3 @@ Key decisions:
 
 On startup the server fetches the health endpoint and computes a SHA-256 of node #8's content, comparing it against a constant pinned in `src/divoid_mcp/version.py`. A mismatch logs a `WARNING` but does not block startup. See `docs/drift-policy.md` for the update procedure.
 
-## Phase 2 (planned)
-
-- `divoid_create_task` — atomic create + content + Tasks-group link
-- `divoid_create_documentation` — atomic create + content + Docs-group link
-- `divoid_list` — path-query traversal
-- `divoid_patch_node`, `divoid_set_status`, `divoid_set_content`
-- `divoid_send_message`, `divoid_list_messages`
-- `divoid_create_session_log`, `divoid_resolve_user`, `divoid_get_links`
