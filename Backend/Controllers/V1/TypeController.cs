@@ -28,9 +28,9 @@ public class TypeController(ILogger<TypeController> logger, INodeService nodeSer
     [ProducesResponseType(200)]
     [ProducesResponseType(401)]
     [ProducesResponseType(403)]
-    public Task<AsyncPageResponseWriter<TypeListItem>> ListTypes() {
+    public Task<AsyncPageResponseWriter<TypeListItem>> ListTypes(CancellationToken ct) {
         long callerId = User.GetDivoidUserId();
         logger.LogInformation("event=type.list callerId={CallerId}", callerId);
-        return nodeService.ListTypes();
+        return nodeService.ListTypes(ct);
     }
 }

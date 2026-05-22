@@ -143,7 +143,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     }
 
     /// <inheritdoc />
-    public async Task<AsyncPageResponseWriter<TypeListItem>> ListTypes()
+    public async Task<AsyncPageResponseWriter<TypeListItem>> ListTypes(CancellationToken ct = default)
     {
         TypeListMapper mapper = new();
         LoadOperation<NodeType> operation = mapper.CreateOperation(database, mapper.DefaultListFields);
@@ -153,7 +153,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             new OrderByCriteria(DB.Property<NodeType>(t => t.Type, "type"), ascending: true));
 
         WindowResult<TypeListItem, long> windowed =
-            await mapper.WindowedFromOperation<long, NodeType>(operation, DB.CountOver(), CancellationToken.None, mapper.DefaultListFields);
+            await mapper.WindowedFromOperation<long, NodeType>(operation, DB.CountOver(), ct, mapper.DefaultListFields);
 
         return new AsyncPageResponseWriter<TypeListItem>(
             windowed.Items,

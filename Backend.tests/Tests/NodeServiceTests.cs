@@ -530,6 +530,39 @@ public class NodeServiceTests
     }
 
     // -----------------------------------------------------------------------
+    // ListTypes — CancellationToken signature regression (DiVoid #875)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Load-bearing signature regression test (DiVoid #275).
+    ///
+    /// Asserts that <see cref="INodeService.ListTypes"/> carries a <c>CancellationToken</c>
+    /// parameter so streaming reads on the types endpoint are cancelled on client disconnect.
+    ///
+    /// NEGATIVE PROOF: remove the <c>CancellationToken</c> parameter from
+    /// <see cref="INodeService.ListTypes"/> — this test fails with the message below.
+    /// POSITIVE PROOF: with the parameter present this test passes.
+    /// </summary>
+    [Test]
+    public void ListTypes_SignatureIncludesCancellationToken()
+    {
+        MethodInfo? method = typeof(INodeService)
+            .GetMethod(nameof(INodeService.ListTypes));
+
+        Assert.That(method, Is.Not.Null,
+            "T15: INodeService must expose a ListTypes method");
+
+        ParameterInfo[] parameters = method!.GetParameters();
+        bool hasCancellationToken = parameters.Any(p => p.ParameterType == typeof(CancellationToken));
+
+        Assert.That(hasCancellationToken, Is.True,
+            "T15 (CRITICAL): INodeService.ListTypes must accept a CancellationToken parameter " +
+            "so that streaming reads are cancelled on client disconnect (DiVoid #875). " +
+            "A failure here means the CT plumbing has been removed and cursor leaks on Postgres/SQLite " +
+            "are possible again.");
+    }
+
+    // -----------------------------------------------------------------------
     // Patch — Node has no [AllowPatch] properties at time of writing.
     // -----------------------------------------------------------------------
 

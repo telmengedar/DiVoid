@@ -87,8 +87,9 @@ public interface INodeService
     /// ordered by count descending then type name ascending.
     /// returns an empty result for a graph with no nodes.
     /// </summary>
+    /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
     /// <returns>page envelope of type-catalog rows; <c>continue</c> is always null</returns>
-    Task<AsyncPageResponseWriter<TypeListItem>> ListTypes();
+    Task<AsyncPageResponseWriter<TypeListItem>> ListTypes(CancellationToken ct = default);
 
     /// <summary>
     /// deletes an existing node
