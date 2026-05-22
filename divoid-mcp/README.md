@@ -79,9 +79,11 @@ The API key **never** appears in tool parameters, error messages, or logs. The f
 
 **Log level** is controlled via `DIVOID_MCP_LOG_LEVEL` (default `INFO`). Valid values: `DEBUG`, `INFO`, `WARNING`, `ERROR`. All logs go to **stderr** (stdout carries the JSON-RPC stream).
 
-## Smoke tests
+## Tests
 
-Run against the live DiVoid instance:
+divoid-mcp has two independent test tiers. They have different purposes and neither replaces the other.
+
+**Live smoke tests** (`python tests/smoke/run_all.py`) pin the DiVoid API contract. Each tool is called once against the real DiVoid instance and the HTTP response shape is validated. This tier catches DiVoid API changes (endpoint renames, field removals, new error codes) that would silently break the MCP server. Requires `~/.claude/secrets/.divoid-online` with valid credentials. See `tests/smoke/README.md` for the full assertion table.
 
 ```bash
 cd C:\dev\claude\divoid-mcp
@@ -89,9 +91,13 @@ pip install -e .
 python tests/smoke/run_all.py
 ```
 
-Each tool is called once and the response shape is validated. Results are printed as `PASS` / `FAIL` with details. Requires the `~/.claude/secrets/.divoid-online` credential file to be present and valid.
+**Hermetic unit tests** (`pytest tests/unit/`) pin the tool routing logic. The HTTP layer is mocked via `respx` — no network calls are made, no credentials are required. This tier catches regressions in the tool's branch routing (e.g. the two-case 404 dispatch in `get_content.py`) that the smoke suite would miss, because smoke tests assert on raw HTTP responses, not on the MCP-side response shape. Fast (< 1s expected).
 
-See `tests/smoke/README.md` for details on what each test asserts.
+```bash
+cd C:\dev\claude\divoid-mcp
+pip install -e ".[dev]"
+pytest tests/unit/ -v
+```
 
 ## Architecture
 
