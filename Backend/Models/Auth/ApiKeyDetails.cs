@@ -1,5 +1,3 @@
-using System.Text.Json.Serialization;
-
 namespace Backend.Models.Auth;
 
 /// <summary>
@@ -50,6 +48,5 @@ public class ApiKeyDetails {
     /// <summary>
     /// full key string returned exactly once on creation; null on all subsequent reads
     /// </summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string PlaintextKey { get; set; }
 }
