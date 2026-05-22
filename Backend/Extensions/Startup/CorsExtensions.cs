@@ -22,12 +22,6 @@ public static class CorsExtensions {
 
         services.AddCors(options => {
             options.AddPolicy(PolicyName, policy => {
-                if (allowedOrigins.Length == 0) {
-                    // No origins configured — CORS policy is a no-op (nothing is allowed).
-                    policy.SetIsOriginAllowed(_ => false);
-                    return;
-                }
-
                 policy.WithOrigins(allowedOrigins)
                       .WithMethods("GET", "POST", "PATCH", "DELETE")
                       .WithHeaders("Authorization", "Content-Type", "Accept")

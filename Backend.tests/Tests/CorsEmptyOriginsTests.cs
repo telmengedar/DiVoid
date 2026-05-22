@@ -10,24 +10,30 @@ using NUnit.Framework;
 namespace Backend.tests.Tests;
 
 /// <summary>
-/// Regression tests that pin the empty-origins no-op branch in
+/// Regression tests that pin the empty-origins no-op behaviour in
 /// <c>CorsExtensions.AddDivoidCors</c>.
 ///
-/// When <c>Cors:AllowedOrigins</c> is absent (or empty), the extension calls
-/// <c>policy.SetIsOriginAllowed(_ =&gt; false)</c> and returns early — CORS is
-/// effectively disabled and no <c>Access-Control-Allow-Origin</c> header should
-/// appear on any response.  This fixture spins its own
-/// <see cref="WebApplicationFactory{TEntryPoint}"/> without any allowed-origins
-/// config so it cannot share the two-origins factory in <see cref="CorsTests"/>.
+/// When <c>Cors:AllowedOrigins</c> is absent (or empty),
+/// <c>policy.WithOrigins(new string[0])</c> leaves the ASP.NET Core
+/// <c>CorsPolicy.Origins</c> collection empty.  The default
+/// <c>IsOriginAllowed</c> delegate performs <c>Origins.Contains(origin)</c>
+/// which returns <c>false</c> for every origin — so no
+/// <c>Access-Control-Allow-Origin</c> header is emitted.  No explicit guard
+/// predicate is needed; the behaviour is a natural consequence of an empty
+/// origins list (confirmed via ASP.NET Core source:
+/// <c>CorsPolicyBuilder.WithOrigins</c> / <c>CorsPolicy.DefaultIsOriginAllowed</c>,
+/// dotnet/aspnetcore v9.0.5).
 ///
-/// Load-bearing property (DiVoid #275 / task #233): if the empty-origins guard
-/// (<c>if (allowedOrigins.Length == 0) { policy.SetIsOriginAllowed(_ =&gt; false); return; }</c>)
-/// is removed, a future change that falls through to <c>AllowAnyOrigin()</c> or an
-/// open default would cause both tests below to fail.  The substitution probe in the
-/// PR confirms whether the guard is actually load-bearing in the current ASP.NET Core
-/// CORS implementation.
+/// This fixture spins its own <see cref="WebApplicationFactory{TEntryPoint}"/>
+/// without any allowed-origins config so it cannot share the two-origins
+/// factory in <see cref="CorsTests"/>.
 ///
-/// PR #34 (CORS policy), PR #105 (sibling auth-pipeline order test).
+/// Load-bearing property (DiVoid #275 / task #233 / task #877): if a future
+/// change introduces <c>AllowAnyOrigin()</c> or any other open default in the
+/// empty-origins branch, both tests below will fail — that is the intended
+/// trip-wire.
+///
+/// PR #34 (CORS policy), PR #109 (substitution-probe regression), PR #112 (guard drop).
 /// </summary>
 [TestFixture]
 public class CorsEmptyOriginsTests {
@@ -40,8 +46,9 @@ public class CorsEmptyOriginsTests {
 
         // Clear ALL default config sources (including appsettings.json which ships with
         // two canonical origins) and supply only the minimal keys needed for the test host
-        // to start.  Cors:AllowedOrigins is intentionally absent so the empty-origins guard
-        // in AddDivoidCors fires: policy.SetIsOriginAllowed(_ => false); return;
+        // to start.  Cors:AllowedOrigins is intentionally absent so WithOrigins receives
+        // an empty array — ASP.NET Core's default IsOriginAllowed then returns false for
+        // every origin, producing no ACAO header.
         factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder => {
             builder.ConfigureAppConfiguration((_, config) => {
                 config.Sources.Clear();
@@ -49,7 +56,7 @@ public class CorsEmptyOriginsTests {
                     ["Auth:Enabled"]    = "false",
                     ["Database:Type"]   = "Sqlite",
                     ["Database:Source"] = dbPath
-                    // Cors:AllowedOrigins absent → empty array → no-op guard fires
+                    // Cors:AllowedOrigins absent → empty array → WithOrigins([]) → no ACAO
                 });
             });
         });
@@ -80,8 +87,8 @@ public class CorsEmptyOriginsTests {
     // -----------------------------------------------------------------------
     // Load-bearing: when no origins are configured, CORS must be a no-op.
     //
-    // Both tests must fail if the empty-origins guard is removed and the
-    // downstream WithOrigins()/AllowAnyOrigin() behaviour changes.
+    // Both tests trip if a future change introduces AllowAnyOrigin() or any
+    // other open default in the empty-origins branch of AddDivoidCors.
     // -----------------------------------------------------------------------
 
     /// <summary>
@@ -101,7 +108,7 @@ public class CorsEmptyOriginsTests {
         string? acao = AcaoHeader(response);
         Assert.That(acao, Is.Null.Or.Empty,
             "OPTIONS preflight with no origins configured must not produce Access-Control-Allow-Origin — " +
-            "the empty-origins guard in AddDivoidCors must be active");
+            "WithOrigins([]) must not emit ACAO headers (ASP.NET Core default IsOriginAllowed returns false)");
     }
 
     /// <summary>
@@ -120,6 +127,6 @@ public class CorsEmptyOriginsTests {
         string? acao = AcaoHeader(response);
         Assert.That(acao, Is.Null.Or.Empty,
             "GET with no origins configured must not produce Access-Control-Allow-Origin — " +
-            "the empty-origins guard in AddDivoidCors must be active");
+            "WithOrigins([]) must not emit ACAO headers (ASP.NET Core default IsOriginAllowed returns false)");
     }
 }
