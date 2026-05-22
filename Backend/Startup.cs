@@ -1,5 +1,4 @@
 using System.Linq;
-using System.Text.Json.Serialization;
 using Backend.Auth;
 using Backend.Errors;
 using Backend.Errors.Exceptions;
@@ -98,7 +97,7 @@ public class Startup
         services.AddControllers(o =>
         {
             o.ModelBinderProviders.Insert(0, new ArrayParameterBinderProvider());
-        }).AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+        });
 
         services.AddDivoidCors(Configuration);
         services.ConfigureDatabaseService(Configuration);
