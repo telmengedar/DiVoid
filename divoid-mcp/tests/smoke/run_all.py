@@ -34,6 +34,7 @@ Pinned group ids for smoke-test target (DiVoid project #3):
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
 import traceback
 from typing import Any
@@ -2372,6 +2373,84 @@ async def smoke_get_links_happy_path(config: Any) -> None:
 
 
 ### -----------------------------------------------------------------------
+### Server bootstrap smoke test (the one that catches FastMCP API mismatches)
+### -----------------------------------------------------------------------
+
+async def smoke_server_bootstrap(config: Any) -> None:
+    """
+    Server bootstrap: spawn `python -m divoid_mcp` as a subprocess and verify
+    clean startup.
+
+    This is the test that would have caught the `version=__version__` TypeError
+    (FastMCP.__init__() got an unexpected keyword argument 'version') before
+    it reached production.  The subprocess reads its own secrets file the same
+    way as a real deployment — no config passed from the parent.
+
+    Load-bearing proof (DiVoid #275): reverting server.py to include
+    `version=__version__` in the FastMCP constructor call causes this test
+    to FAIL with the traceback assertion.  The substitution proof was run
+    during development of this PR and confirmed before restore.
+
+    What we assert:
+    1. The process started (Popen succeeds; no immediate crash on import).
+    2. stderr contains the two expected startup log lines:
+         "divoid-mcp <version> starting."
+         "config-loaded" (or "divoid-mcp ready")
+    3. stderr contains NO Python traceback (no "Traceback (most recent call last)").
+    """
+    print("\n--- server bootstrap (subprocess spawn + stderr log check) ---")
+
+    from divoid_mcp.version import __version__ as _version
+
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "divoid_mcp"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    try:
+        # Give the server up to 5 seconds to log its startup lines and then exit
+        # (it will block on stdin forever unless we close it — stdin=DEVNULL
+        # causes the JSON-RPC reader to get EOF and exit cleanly).
+        try:
+            _, stderr_bytes = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            _, stderr_bytes = proc.communicate()
+
+        stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+    finally:
+        # Always ensure the process is gone.
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+    # Assertion 1: startup log line present.
+    expected_starting = f"divoid-mcp {_version} starting."
+    _assert(
+        "stderr contains startup log line",
+        expected_starting in stderr_text,
+        f"expected={expected_starting!r} stderr_snippet={stderr_text[:300]!r}",
+    )
+
+    # Assertion 2: ready line present (server got past FastMCP construction).
+    _assert(
+        "stderr contains 'ready' log line (FastMCP constructed without error)",
+        "divoid-mcp ready" in stderr_text,
+        f"stderr_snippet={stderr_text[:300]!r}",
+    )
+
+    # Assertion 3: NO Python traceback.
+    has_traceback = "Traceback (most recent call last)" in stderr_text
+    _assert(
+        "stderr contains no Python traceback",
+        not has_traceback,
+        f"traceback found — stderr_snippet={stderr_text[:500]!r}" if has_traceback else "",
+    )
+
+
+### -----------------------------------------------------------------------
 
 async def _run_all(config: Any) -> None:
     tests = [
@@ -2435,6 +2514,8 @@ async def _run_all(config: Any) -> None:
         smoke_get_links_single_node,
         smoke_get_links_multiple_nodes,
         smoke_get_links_happy_path,
+        # Bootstrap: subprocess spawn verifies FastMCP API compat at startup
+        smoke_server_bootstrap,
     ]
 
     for test_fn in tests:
@@ -2450,7 +2531,7 @@ async def _run_all(config: Any) -> None:
 
 
 def main() -> None:
-    print("divoid-mcp smoke tests (Phase 1 + Phase 2: read-side + composites + messaging + list + primitives)")
+    print("divoid-mcp smoke tests (Phase 1 + Phase 2: read-side + composites + messaging + list + primitives + bootstrap)")
     print("=" * 60)
 
     config = _setup()

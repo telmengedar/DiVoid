@@ -65,9 +65,8 @@ async def _async_main(config) -> None:
 
     mcp_server = FastMCP(
         "divoid-mcp",
-        version=__version__,
         instructions=(
-            "This server wraps the DiVoid graph API. "
+            f"divoid-mcp {__version__} — wraps the DiVoid graph API. "
             "Start with divoid_search for question-shaped queries. "
             "Use divoid_get_node to inspect metadata, divoid_get_content for bodies. "
             "Resources divoid://node/9 and divoid://node/190 carry the operating conventions."
