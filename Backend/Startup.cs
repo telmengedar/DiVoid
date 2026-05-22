@@ -120,7 +120,7 @@ public class Startup
             if (string.IsNullOrWhiteSpace(audience))
                 throw new MissingAudienceException(
                     "Keycloak:Audience is empty. The service will not start with Auth:Enabled=true without a configured audience. " +
-                    "Set Keycloak:Audience to the DiVoid Keycloak client_id in the environment-specific appsettings override.");
+                    "Set Keycloak:Audience to whatever value appears in the aud claim of a real access token issued by the DiVoid client (literal string \"DiVoid\" for this realm/client) in the environment-specific appsettings override.");
 
             string authority = Configuration["Keycloak:Authority"] ?? "https://auth.mamgo.io/realms/master";
             bool requireHttpsMetadata = Configuration.GetValue("Keycloak:RequireHttpsMetadata", false);
