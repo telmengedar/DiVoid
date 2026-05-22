@@ -1,3 +1,4 @@
+using System.Threading;
 using System.Threading.Tasks;
 using Backend.Models.Messages;
 using Pooshit.AspNetCore.Services.Formatters.DataStream;
@@ -38,8 +39,9 @@ public interface IMessageService {
     /// <param name="callerId">id of the authenticated caller</param>
     /// <param name="isAdmin">whether the caller holds the admin permission</param>
     /// <param name="filter">paging, sort, and id filters to apply</param>
+    /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
     /// <returns>streamed page of message details</returns>
-    Task<AsyncPageResponseWriter<MessageDetails>> ListPaged(long callerId, bool isAdmin, MessageFilter filter = null);
+    Task<AsyncPageResponseWriter<MessageDetails>> ListPaged(long callerId, bool isAdmin, MessageFilter filter = null, CancellationToken ct = default);
 
     /// <summary>
     /// deletes a message.

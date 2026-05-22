@@ -1,12 +1,16 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Reflection;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Backend.Models.Messages;
 using Backend.Models.Users;
+using Backend.Services.Messages;
 using Backend.tests.Fixtures;
 using NUnit.Framework;
 using Pooshit.Json;
@@ -698,5 +702,29 @@ public class MessageHttpTests
         Assert.That(created.Subject, Is.EqualTo("trimmed subject"),
             "T14: leading and trailing whitespace must be stripped from subject server-side. " +
             "A failure here means the service's subject-trim call is missing.");
+    }
+
+    // -----------------------------------------------------------------------
+    // T15 — IMessageService.ListPaged carries a CancellationToken parameter
+    //        (DiVoid #428 — load-bearing signature regression)
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public void T15_ListPaged_SignatureIncludesCancellationToken()
+    {
+        MethodInfo? method = typeof(IMessageService)
+            .GetMethod(nameof(IMessageService.ListPaged));
+
+        Assert.That(method, Is.Not.Null,
+            "T15: IMessageService must expose a ListPaged method");
+
+        ParameterInfo[] parameters = method!.GetParameters();
+        bool hasCancellationToken = parameters.Any(p => p.ParameterType == typeof(CancellationToken));
+
+        Assert.That(hasCancellationToken, Is.True,
+            "T15 (CRITICAL): IMessageService.ListPaged must accept a CancellationToken parameter " +
+            "so that streaming reads are cancelled on client disconnect (DiVoid #428). " +
+            "A failure here means the CT plumbing has been removed and cursor leaks on Postgres/SQLite " +
+            "are possible again.");
     }
 }
