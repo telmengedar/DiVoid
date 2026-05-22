@@ -30,8 +30,9 @@ public interface INodeService
     /// lists existing nodes
     /// </summary>
     /// <param name="filter">filter to apply</param>
+    /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
     /// <returns>page of nodes matching filter</returns>
-    Task<AsyncPageResponseWriter<NodeDetails>> ListPaged(NodeFilter filter = null);
+    Task<AsyncPageResponseWriter<NodeDetails>> ListPaged(NodeFilter filter = null, CancellationToken ct = default);
 
     /// <summary>
     /// lists nodes reachable via a graph path expression

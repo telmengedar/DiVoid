@@ -75,7 +75,7 @@ namespace Backend.Controllers.V1
                 logger.LogInformation("Path query: {Path}", filter.Path);
                 return nodeService.ListPagedByPath(filter, ct);
             }
-            return nodeService.ListPaged(filter);
+            return nodeService.ListPaged(filter, ct);
         }
 
         /// <summary>
