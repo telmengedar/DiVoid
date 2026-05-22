@@ -497,6 +497,39 @@ public class NodeServiceTests
     }
 
     // -----------------------------------------------------------------------
+    // ListPaged — CancellationToken signature regression (DiVoid #872)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Load-bearing signature regression test (DiVoid #275).
+    ///
+    /// Asserts that <see cref="INodeService.ListPaged"/> carries a <c>CancellationToken</c>
+    /// parameter so streaming reads on the non-path branch are cancelled on client disconnect.
+    ///
+    /// NEGATIVE PROOF: remove the <c>CancellationToken</c> parameter from
+    /// <see cref="INodeService.ListPaged"/> — this test fails with the message below.
+    /// POSITIVE PROOF: with the parameter present this test passes.
+    /// </summary>
+    [Test]
+    public void ListPaged_SignatureIncludesCancellationToken()
+    {
+        MethodInfo? method = typeof(INodeService)
+            .GetMethod(nameof(INodeService.ListPaged));
+
+        Assert.That(method, Is.Not.Null,
+            "T15: INodeService must expose a ListPaged method");
+
+        ParameterInfo[] parameters = method!.GetParameters();
+        bool hasCancellationToken = parameters.Any(p => p.ParameterType == typeof(CancellationToken));
+
+        Assert.That(hasCancellationToken, Is.True,
+            "T15 (CRITICAL): INodeService.ListPaged must accept a CancellationToken parameter " +
+            "so that streaming reads are cancelled on client disconnect (DiVoid #872). " +
+            "A failure here means the CT plumbing has been removed and cursor leaks on Postgres/SQLite " +
+            "are possible again.");
+    }
+
+    // -----------------------------------------------------------------------
     // Patch — Node has no [AllowPatch] properties at time of writing.
     // -----------------------------------------------------------------------
 

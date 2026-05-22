@@ -536,7 +536,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
 
     /// <inheritdoc />
-    public async Task<AsyncPageResponseWriter<NodeDetails>> ListPaged(NodeFilter filter = null)
+    public async Task<AsyncPageResponseWriter<NodeDetails>> ListPaged(NodeFilter filter = null, CancellationToken ct = default)
     {
         filter ??= new();
 
@@ -578,7 +578,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         // Single query: COUNT(*) OVER () window function — ApplyFilter already clamps count ≤500
         // and applies limit/offset; WindowedFromOperation decorates with the window column.
         WindowResult<NodeDetails, long> windowed =
-            await mapper.WindowedFromOperation<long, Node>(operation, DB.CountOver(), CancellationToken.None, filter.Fields);
+            await mapper.WindowedFromOperation<long, Node>(operation, DB.CountOver(), ct, filter.Fields);
 
         return new AsyncPageResponseWriter<NodeDetails>(
             windowed.Items,
