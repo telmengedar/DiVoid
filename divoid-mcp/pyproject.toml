@@ -24,6 +24,10 @@ dev = [
     "respx>=0.21",
 ]
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests/unit"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/divoid_mcp"]
 
