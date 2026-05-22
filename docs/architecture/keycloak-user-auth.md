@@ -445,7 +445,7 @@ This approach exercises the real `JwtBearer` middleware path — meaningfully be
 Create the following DiVoid `task` nodes, linked to project 3:
 
 1. **"Configure Keycloak user-attribute mapper for `UserId` on the `DiVoid` client (master realm)"** — Keycloak admin step. Confirms A2, A3. Required before any human can authenticate in prod.
-2. **"Set `Keycloak:Audience` in DiVoid production config to the `DiVoid` Keycloak client_id"** — populates A4.
+2. **"Set `Keycloak:Audience` in DiVoid production config to the literal string that appears in the `aud` claim of access tokens issued by the DiVoid client (currently `"DiVoid"` for this realm/client)"** — populates A4.
 3. **"Add `/api/auth/whoami` endpoint for the upcoming frontend"** — returns the resolved DiVoid user id + permissions for the current principal. Trivial once this PR lands.
 4. **"Cache claims-transformation DB lookup"** — in-process LRU keyed on DiVoid user id, ~30s TTL, invalidate on PATCH /api/users/{id}. Only if profiling shows the per-request DB hit is material.
 5. **"Decide whether to layer Keycloak realm/client roles onto DiVoid permissions"** — option (b) from section 11.1, for if/when DiVoid permission granularity grows beyond `admin/write/read`.

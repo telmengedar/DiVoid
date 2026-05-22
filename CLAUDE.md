@@ -40,7 +40,7 @@ The Pooshit packages (`Pooshit.AspNetCore.Services`, `Pooshit.Ocelot`, `Pooshit.
 
 A simple "nodes and links" content store. `Node` records carry typed content (`ContentType` + `byte[] Content` + optional `float[] Embedding`) and are connected by undirected `NodeLink` edges. `NodeType` is a separate table joined into list/get queries so the API exposes types as strings while the DB stores them by id. `User` and `ApiKey` entities back two authentication schemes: `ApiKey` (service callers, CLI agents) and `JwtBearer` (Keycloak OIDC, upcoming web frontend). Both are registered in `Startup.ConfigureServices`; see `docs/architecture/auth-and-bootstrap.md` and `docs/architecture/keycloak-user-auth.md`.
 
-**Key config value when `Auth:Enabled=true`:** `Keycloak:Audience` must be set to the Keycloak `DiVoid` client_id, or the service refuses to start (fail-closed). `DIVOID_KEY_PEPPER` must also be set (≥32 bytes) for the API-key path.
+**Key config value when `Auth:Enabled=true`:** `Keycloak:Audience` must be set to whatever value appears in the `aud` claim of a real access token issued by the DiVoid client (literal string `"DiVoid"` for this realm/client), or the service refuses to start (fail-closed). `DIVOID_KEY_PEPPER` must also be set (≥32 bytes) for the API-key path.
 
 ### Data layer (Pooshit.Ocelot)
 
