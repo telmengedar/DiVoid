@@ -340,6 +340,21 @@ public class ApiKeyServiceTests
     }
 
     [Test]
+    public async Task UpdateApiKey_Permissions_ArrayShape_RoundTripsAsStringArray()
+    {
+        using DatabaseFixture fixture = new();
+        ApiKeyService svc = MakeService(fixture);
+        ApiKeyDetails created = await svc.CreateApiKey(new ApiKeyParameters { UserId = 1, Permissions = ["read"] });
+
+        await svc.UpdateApiKey(
+            created.Id,
+            new PatchOperation { Op = "replace", Path = "/Permissions", Value = new object[] { "read", "write" } });
+
+        ApiKeyDetails fetched = await svc.GetApiKeyById(created.Id);
+        Assert.That(fetched.Permissions, Is.EqualTo(new[] { "read", "write" }));
+    }
+
+    [Test]
     public async Task DeleteApiKey_ExistingKey_RemovesRecord()
     {
         using DatabaseFixture fixture = new();
