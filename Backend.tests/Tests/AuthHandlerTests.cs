@@ -322,6 +322,58 @@ public class AuthHandlerTests
         Assert.That(stub.WasCalled, Is.False,
             "GetApiKey must not be called for a JWT-shaped bearer — the guard must short-circuit before the DB");
     }
+
+    // -----------------------------------------------------------------------
+    // Claims emission - ApiKeyAuthenticationHandler emits divoid.user_id (DiVoid #240)
+    //
+    // Substitution probe: remove the divoid.user_id AddClaim call from
+    // ApiKeyAuthenticationHandler - the assertion below fails with
+    // "divoid.user_id claim count must be 1" - confirms load-bearing (#275).
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task ApiKeyHandler_Success_EmitsDivoidUserIdClaim()
+    {
+        // Arrange: stub service that returns a valid ApiKeyDetails with a known user id.
+        long expectedUserId = 7;
+        FixedReturnApiKeyService stub = new(new ApiKeyDetails {
+            UserId      = expectedUserId,
+            Permissions = ["read"]
+        });
+
+        IOptionsMonitor<AuthenticationSchemeOptions> options =
+            new TestOptionsMonitor<AuthenticationSchemeOptions>(new AuthenticationSchemeOptions());
+
+        ApiKeyAuthenticationHandler handler = new(
+            options,
+            NullLoggerFactory.Instance,
+            UrlEncoder.Default,
+            stub);
+
+        DefaultHttpContext httpContext = new();
+        httpContext.Request.Headers["Authorization"] = "Bearer valid-api-key-no-dots";
+
+        AuthenticationScheme scheme = new(
+            ApiKeyAuthenticationHandler.SchemeName,
+            displayName: null,
+            typeof(ApiKeyAuthenticationHandler));
+
+        await handler.InitializeAsync(scheme, httpContext);
+
+        // Act
+        AuthenticateResult result = await handler.AuthenticateAsync();
+
+        // Assert: success and exactly one divoid.user_id claim with the correct value
+        Assert.That(result.Succeeded, Is.True, "Handler must succeed for a valid API key");
+
+        System.Collections.Generic.IEnumerable<System.Security.Claims.Claim> divoidUserIdClaims =
+            result.Principal!.FindAll(Backend.Auth.ClaimsExtensions.DivoidUserIdClaimType);
+
+        Assert.That(divoidUserIdClaims, Has.Exactly(1).Items,
+            "ApiKeyAuthenticationHandler must emit exactly one divoid.user_id claim");
+        Assert.That(divoidUserIdClaims.First().Value, Is.EqualTo(expectedUserId.ToString()),
+            "divoid.user_id claim must carry the API key's owning user id");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +393,36 @@ file sealed class ThrowIfCalledApiKeyService : IApiKeyService
         WasCalled = true;
         throw new InvalidOperationException("GetApiKey must not be called for a JWT-shaped bearer token");
     }
+
+    public Task<ApiKeyDetails> CreateApiKey(ApiKeyParameters apiKey) =>
+        throw new NotSupportedException();
+
+    public Task<ApiKeyDetails> GetApiKeyById(long keyId) =>
+        throw new NotSupportedException();
+
+    public AsyncPageResponseWriter<ApiKeyDetails> ListApiKeys(ListFilter filter = null!) =>
+        throw new NotSupportedException();
+
+    public Task<ApiKeyDetails> UpdateApiKey(long keyId, params PatchOperation[] patches) =>
+        throw new NotSupportedException();
+
+    public Task DeleteApiKey(long keyId) =>
+        throw new NotSupportedException();
+
+    public Task<bool> AnyAdminKeyExists() =>
+        throw new NotSupportedException();
+}
+
+/// <summary>
+/// IApiKeyService stub that always returns a fixed <see cref="ApiKeyDetails"/> for any key.
+/// </summary>
+file sealed class FixedReturnApiKeyService : IApiKeyService
+{
+    readonly ApiKeyDetails details;
+
+    public FixedReturnApiKeyService(ApiKeyDetails details) => this.details = details;
+
+    public Task<ApiKeyDetails> GetApiKey(string fullKey) => Task.FromResult(details);
 
     public Task<ApiKeyDetails> CreateApiKey(ApiKeyParameters apiKey) =>
         throw new NotSupportedException();

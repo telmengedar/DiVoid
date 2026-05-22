@@ -216,7 +216,7 @@ public class UserMeHttpTests
     // KeycloakClaimsTransformation skips disabled users (adds no permission
     // claims), but the /me action uses [Authorize] (RequireAuthenticatedUser).
     // The JWT itself is valid; the user is disabled → transformation skips
-    // augmentation → principal has no numeric NameIdentifier from DiVoid →
+    // augmentation → principal has no "divoid.user_id" claim from DiVoid →
     // ClaimsExtensions.GetDivoidUserId throws AuthorizationFailedException → 403.
     // -----------------------------------------------------------------------
 
@@ -233,33 +233,22 @@ public class UserMeHttpTests
     }
 
     // -----------------------------------------------------------------------
-    // Case 6 — NameIdentifier-collision contract (Jenny non-blocker #239)
+    // Case 6 - divoid.user_id claim contract (DiVoid #240)
     //
-    // When the JWT subject claim is a numeric string (e.g. a legacy Keycloak
-    // realm where sub was assigned as a number), both the Keycloak identity
-    // (carrying sub as NameIdentifier) and the DiVoid augmentation identity
-    // (carrying the DiVoid user id as NameIdentifier) are numeric.
+    // After the refactor, KeycloakClaimsTransformation emits a distinct
+    // "divoid.user_id" claim (not a second NameIdentifier).  GetDivoidUserId
+    // reads that claim directly.  This means that even when the JWT subject is
+    // a numeric string (a Keycloak configuration that would previously have
+    // caused the scan to pick the wrong NameIdentifier claim), /me correctly
+    // identifies the DiVoid user via the unambiguous "divoid.user_id" claim.
     //
-    // GetDivoidUserId scans all NameIdentifier claims and stops at the first
-    // long-parseable value.  KeycloakClaimsTransformation always adds the DiVoid
-    // augmentation identity AFTER the original Keycloak identity, so the
-    // original sub (first numeric claim) is returned.
-    //
-    // To distinguish them the DiVoid id must differ from the sub value.
-    // We mint a token with subject="42" (numeric) and DiVoid userId = actual row id.
-    // The row id will be larger than 42 (guaranteed by auto-increment in the test DB
-    // that has already had other rows inserted).  GetDivoidUserId will pick subject=42
-    // first and GetUserById will throw NotFoundException → 404, confirming the
-    // first-numeric-claim contract.
-    //
-    // This test deliberately documents the current behaviour (first numeric claim
-    // wins) so that any future change to pick the DiVoid-specific claim instead
-    // (Jenny non-blocker #241 — distinct claim type refactor) will require
-    // updating this test intentionally.
+    // Substitution probe: comment out the divoid.user_id AddClaim call in
+    // KeycloakClaimsTransformation - GetDivoidUserId throws
+    // AuthorizationFailedException - /me returns 403 instead of 200 - fails.
     // -----------------------------------------------------------------------
 
     [Test]
-    public async Task Jwt_NumericSubject_FirstNumericNameIdentifierWins()
+    public async Task Jwt_NumericSubject_DivoidUserIdClaimAlwaysResolvesCorrectUser()
     {
         string uniqueSuffix = Guid.NewGuid().ToString("N")[..8];
         long userId = await InsertEnabledUserAsync(
@@ -267,29 +256,19 @@ public class UserMeHttpTests
             $"numeric-sub-{uniqueSuffix}@example.com",
             Json.WriteString(new[] { "read" }));
 
-        // subject="42" is numeric — it will be the first NameIdentifier claim on the
-        // Keycloak identity.  userId is the actual DiVoid row id (much larger) and
-        // is added as a second NameIdentifier by KeycloakClaimsTransformation.
-        // GetDivoidUserId picks the first long-parseable value = 42.
-        // No user with id=42 exists (well — if one does by coincidence the test inserts
-        // a unique name anyway, so GetUserById will either 404 or return the wrong user).
-        // We verify the status is NOT 200 with the correct userId, confirming that
-        // subject="42" was picked rather than the DiVoid id.
+        // subject="42" is numeric - this would have confused the old NameIdentifier
+        // scan, but the refactor emits a distinct "divoid.user_id" claim that
+        // GetDivoidUserId reads directly.  The response must always resolve to
+        // the correct DiVoid user regardless of the sub value.
         const string numericSub = "42";
         string token = fixture.MintToken(subject: numericSub, userId: userId);
         HttpResponseMessage response = await GetMeWithTokenAsync(token);
 
-        // The first numeric NameIdentifier is the sub claim (42).
-        // If a user with id=42 happens to exist the response is 200 but with id=42, not userId.
-        // If no user with id=42 exists the response is 404.
-        // Either way the response must NOT be 200 with id == userId.
-        if ((int)response.StatusCode == 200) {
-            UserDetails user = await ReadUserDetailsAsync(response);
-            Assert.That(user.Id, Is.Not.EqualTo(userId),
-                "When subject is numeric, GetDivoidUserId must pick the sub claim (first numeric NameIdentifier), not the DiVoid augmentation claim");
-        } else {
-            Assert.That((int)response.StatusCode, Is.EqualTo(404),
-                "When subject=42 maps to no user, /me must return 404");
-        }
+        Assert.That((int)response.StatusCode, Is.EqualTo(200),
+            "JWT with numeric sub must still return 200 - divoid.user_id claim is unambiguous");
+
+        UserDetails user = await ReadUserDetailsAsync(response);
+        Assert.That(user.Id, Is.EqualTo(userId),
+            "divoid.user_id claim must resolve to the correct DiVoid user id, not the numeric sub");
     }
 }

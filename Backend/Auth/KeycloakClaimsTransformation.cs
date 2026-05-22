@@ -88,9 +88,12 @@ public class KeycloakClaimsTransformation : IClaimsTransformation {
             return principal;
         }
 
-        // Build a new identity with DiVoid claims layered on top of the Keycloak ones
+        // Build a new identity with DiVoid claims layered on top of the Keycloak ones.
+        // We publish divoid.user_id (not NameIdentifier) so that the claim type is
+        // unambiguous: NameIdentifier remains the underlying-scheme principal id (the
+        // JWT sub), and divoid.user_id is always the DiVoid row id regardless of scheme.
         ClaimsIdentity identity = new(JwtBearerDefaults.AuthenticationScheme);
-        identity.AddClaim(new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()));
+        identity.AddClaim(new Claim("divoid.user_id", user.Id.ToString()));
         identity.AddClaim(new Claim(AugmentedMarker, "1"));
 
         string[] permissions = string.IsNullOrEmpty(user.Permissions)
