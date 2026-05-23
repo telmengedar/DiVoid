@@ -164,7 +164,7 @@ describe('Test 3 — TaskListView uses path=[id:N]/[name:Tasks]/[type:task]', ()
    * HTTP request containing a `path` parameter. This mirrors the state where
    * useNodePath is replaced with a direct prop — the path predicate disappears.
    */
-  it('negative: direct render without hook sends no path parameter', async () => {
+  it('negative: bare NodeResultTable does not fire its own HTTP request (regression guard for the path-parameter presentation contract)', async () => {
     let capturedPath: string | null = 'sentinel';
 
     server.use(
