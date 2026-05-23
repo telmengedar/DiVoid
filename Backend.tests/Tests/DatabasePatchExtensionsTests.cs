@@ -178,6 +178,77 @@ public class DatabasePatchExtensionsTests
     }
 
     // ------------------------------------------------------------------
+    // JsonColumn element-type safety (DiVoid #222)
+    // ------------------------------------------------------------------
+
+    [Test]
+    public void Patch_Replace_Permissions_IntegerElements_ThrowsArgumentException()
+    {
+        // [42, 99] must be rejected — integer elements are not valid for a string[] JSON column.
+        using DatabaseFixture fixture = new();
+        ArgumentException ex = Assert.Throws<ArgumentException>(() =>
+            fixture.EntityManager.Update<ApiKey>()
+                   .Patch(new PatchOperation { Op = "replace", Path = "/permissions", Value = new object[] { 42, 99 } })
+        );
+        Assert.That(ex.Message, Does.Contain("elements must be strings"));
+    }
+
+    [Test]
+    public void Patch_Replace_Permissions_BooleanElements_ThrowsArgumentException()
+    {
+        // [true, false] must be rejected — boolean elements are not valid for a string[] JSON column.
+        using DatabaseFixture fixture = new();
+        ArgumentException ex = Assert.Throws<ArgumentException>(() =>
+            fixture.EntityManager.Update<ApiKey>()
+                   .Patch(new PatchOperation { Op = "replace", Path = "/permissions", Value = new object[] { true, false } })
+        );
+        Assert.That(ex.Message, Does.Contain("elements must be strings"));
+    }
+
+    [Test]
+    public void Patch_Replace_Permissions_NullElement_ThrowsArgumentException()
+    {
+        // ["x", null] must be rejected — null elements are not valid for a string[] JSON column.
+        using DatabaseFixture fixture = new();
+#nullable disable
+        object[] valueWithNull = new object[] { "x", null };
+#nullable restore
+        ArgumentException ex = Assert.Throws<ArgumentException>(() =>
+            fixture.EntityManager.Update<ApiKey>()
+                   .Patch(new PatchOperation { Op = "replace", Path = "/permissions", Value = valueWithNull })
+        );
+        Assert.That(ex.Message, Does.Contain("elements must be strings"));
+    }
+
+    [Test]
+    public void Patch_Replace_Permissions_ObjectElement_ThrowsArgumentException_Not500()
+    {
+        // [{"a":1}] must yield ArgumentException → HTTP 400, not InvalidCastException → HTTP 500.
+        using DatabaseFixture fixture = new();
+        ArgumentException ex = Assert.Throws<ArgumentException>(() =>
+            fixture.EntityManager.Update<ApiKey>()
+                   .Patch(new PatchOperation { Op = "replace", Path = "/permissions", Value = new object[] { new Dictionary<string, int> { { "a", 1 } } } })
+        );
+        Assert.That(ex.Message, Does.Contain("elements must be strings"));
+    }
+
+    [Test]
+    public async Task Patch_Replace_Permissions_NullTopLevel_ClearsColumn()
+    {
+        // A top-level null value must clear the JSON column (store null), not throw 400.
+        using DatabaseFixture fixture = new();
+        long id = await InsertApiKey(fixture, permissions: "[\"read\"]");
+
+        await fixture.EntityManager.Update<ApiKey>()
+                     .Patch(new PatchOperation { Op = "replace", Path = "/permissions", Value = null })
+                     .Where(k => k.Id == id)
+                     .ExecuteAsync();
+
+        ApiKey? updated = await LoadKey(fixture, id);
+        Assert.That(updated!.Permissions, Is.Null);
+    }
+
+    // ------------------------------------------------------------------
     // Multiple operations in one call
     // ------------------------------------------------------------------
 

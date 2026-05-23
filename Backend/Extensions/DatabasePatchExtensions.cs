@@ -84,10 +84,33 @@ public static class DatabasePatchExtensions {
         return updateoperation;
     }
 
+    /// <summary>
+    /// converts a patch value for a <c>[JsonColumn]</c> property into the JSON string
+    /// that should be written to the database column.
+    /// </summary>
+    /// <param name="value">raw patch value — null clears the column; an <see cref="object"/>[] of strings sets it</param>
+    /// <param name="entitytype">entity type owning the property (used in error messages)</param>
+    /// <param name="property">the <c>[JsonColumn]</c> property being patched</param>
+    /// <returns>JSON-encoded string array, or null to clear the column</returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="value"/> is not null and not an <see cref="object"/>[], or when any
+    /// element of the array is not a <see cref="string"/>. Mapped to HTTP 400 by
+    /// <see cref="Backend.Errors.ArgumentExceptionHandler"/>.
+    /// </exception>
     static string ResolveJsonColumnValue(object value, Type entitytype, PropertyInfo property) {
+        if (value == null)
+            return null;
+
         if (value is not object[] arr)
             throw new ArgumentException(
-                $"'{entitytype.Name}::{property.Name}' must be an array; got {value?.GetType().Name ?? "null"}.");
-        return Json.WriteString(arr.Select(el => Converter.Convert<string>(el)).ToArray());
+                $"'{entitytype.Name}::{property.Name}' must be an array; got {value.GetType().Name}.");
+
+        foreach (object el in arr) {
+            if (el is not string)
+                throw new ArgumentException(
+                    $"'{entitytype.Name}::{property.Name}' array elements must be strings; got {el?.GetType().Name ?? "null"}.");
+        }
+
+        return Json.WriteString(arr.Cast<string>().ToArray());
     }
 }
