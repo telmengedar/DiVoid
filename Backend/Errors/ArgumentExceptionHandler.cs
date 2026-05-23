@@ -11,8 +11,10 @@ namespace Backend.Errors;
 ///
 /// <see cref="ArgumentException"/> is thrown by
 /// <see cref="Extensions.DatabasePatchExtensions.ResolveJsonColumnValue"/> when a caller
-/// supplies a value of the wrong type for a <c>[JsonColumn]</c> property
-/// (e.g. a string, number, or object instead of an array).
+/// supplies a value of the wrong type for a <c>[JsonColumn]</c> property — for example, a
+/// non-array top-level value (string, number, object), or an array whose elements are not all
+/// strings (numbers, booleans, nulls, or nested objects). Supplying a top-level null is valid
+/// and clears the column.
 /// </summary>
 public class ArgumentExceptionHandler : ErrorHandler<ArgumentException> {
 
