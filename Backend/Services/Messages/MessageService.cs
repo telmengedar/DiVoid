@@ -43,10 +43,10 @@ public class MessageService : IMessageService {
         if (string.IsNullOrEmpty(details.Body))
             throw new ArgumentException("Body must not be empty", nameof(details));
 
-        User recipient = await database.Load<User>()
-                                       .Where(u => u.Id == details.RecipientId && u.Enabled)
-                                       .ExecuteEntityAsync();
-        if (recipient == null)
+        long recipientExists = await database.Load<User>(DB.Count())
+                                              .Where(u => u.Id == details.RecipientId && u.Enabled)
+                                              .ExecuteScalarAsync<long>();
+        if (recipientExists == 0)
             throw new NotFoundException<User>(details.RecipientId);
 
         DateTime now = DateTime.UtcNow;
