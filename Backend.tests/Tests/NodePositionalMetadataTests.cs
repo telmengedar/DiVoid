@@ -280,7 +280,12 @@ public class NodePositionalMetadataTests
         await Patch(t4.Id, 500.0, 500.0);
         await Patch(t5.Id, 600.0, 600.0);
 
-        // Link all to project
+        // Outsider: inside bounds but NOT linked to project.
+        // If the path predicate is dropped, this node leaks into the result set.
+        NodeDetails outsider = await Create("bptask", "OutsiderInsideBounds");
+        await Patch(outsider.Id, 50.0, 50.0);   // inside [10,10,200,200], no link to project
+
+        // Link all five task nodes to project (outsider intentionally excluded)
         foreach (long taskId in new[] { t1.Id, t2.Id, t3.Id, t4.Id, t5.Id })
         {
             HttpResponseMessage r = await isolatedHttp.Post<long, HttpResponseMessage>(
@@ -294,11 +299,14 @@ public class NodePositionalMetadataTests
             $"{TestSetup.BaseUrl}/api/nodes?path={encodedPath}&bounds=10,10,200,200&fields=id,x,y");
         Page<NodeDetails> page = Json.Read<Page<NodeDetails>>(body);
 
-        Assert.That(page.Result, Has.Length.EqualTo(3), "Only three tasks fall inside bounds [10,10,200,200]");
+        // Four nodes are inside bounds, but only three are linked to the project via path.
+        // outsider is inside bounds but excluded by the path predicate.
+        Assert.That(page.Result, Has.Length.EqualTo(3), "Only three tasks fall inside bounds [10,10,200,200] AND path");
         long[] resultIds = page.Result.Select(n => n.Id).ToArray();
         Assert.That(resultIds, Does.Contain(t1.Id));
         Assert.That(resultIds, Does.Contain(t2.Id));
         Assert.That(resultIds, Does.Contain(t3.Id));
+        Assert.That(resultIds, Does.Not.Contain(outsider.Id), "outsider is inside bounds but not in path -- path predicate must exclude it");
     }
 
 
