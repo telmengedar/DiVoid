@@ -27,6 +27,7 @@ from mcp.server.fastmcp import FastMCP
 from divoid_mcp import http_client
 from divoid_mcp.config import DivoidConfig
 from divoid_mcp.tools.get_content import register as register_get_content
+from divoid_mcp.tools.list_nodes import register as register_list_nodes
 from divoid_mcp.tools.search import register as register_search
 
 # ---------------------------------------------------------------------------
@@ -64,6 +65,7 @@ def server() -> FastMCP:
     mcp_server.config = config  # type: ignore[attr-defined]
 
     register_get_content(mcp_server)
+    register_list_nodes(mcp_server)
     register_search(mcp_server)
 
     return mcp_server
@@ -296,3 +298,305 @@ async def test_search_no_results(server: FastMCP) -> None:
     assert result.get("total") == 0, (
         f"Expected total=0, got: {result.get('total')!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# divoid_list — include_content tests (DiVoid #1181)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_default_no_content_in_fields(server: FastMCP) -> None:
+    """Default divoid_list call must NOT send fields=content and must NOT return content."""
+    api_response = {
+        "result": [{"id": 1, "type": "documentation", "name": "Onboarding", "status": None}],
+        "total": 1,
+    }
+
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_list", {})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url_params = str(captured_request[0].url)
+    assert "content" not in url_params, (
+        f"Default call must not include 'content' in fields, URL: {url_params!r}"
+    )
+    rows = result.get("result", [])
+    assert len(rows) == 1
+    assert "content" not in rows[0], (
+        f"Default call must not return 'content' in rows, got: {rows[0]!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_include_content_appends_to_default_fields(server: FastMCP) -> None:
+    """include_content=True with no explicit fields → fields contains content + defaults."""
+    api_response = {
+        "result": [
+            {
+                "id": 9,
+                "type": "documentation",
+                "name": "Onboarding",
+                "status": None,
+                "contentType": "text/markdown",
+                "content": "# Hello DiVoid",
+            }
+        ],
+        "total": 1,
+    }
+
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_list", {"include_content": True})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url_params = str(captured_request[0].url)
+    assert "content" in url_params, (
+        f"include_content=True must add 'content' to fields, URL: {url_params!r}"
+    )
+    # The default projection fields must also be present.
+    for expected_field in ("id", "type", "name", "status", "contentType"):
+        assert expected_field in url_params, (
+            f"Expected default field {expected_field!r} in URL, got: {url_params!r}"
+        )
+    rows = result.get("result", [])
+    assert len(rows) == 1
+    assert rows[0].get("content") == "# Hello DiVoid", (
+        f"Expected content to be passed through, got: {rows[0].get('content')!r}"
+    )
+    assert rows[0].get("contentType") == "text/markdown", (
+        f"Expected contentType to be passed through, got: {rows[0].get('contentType')!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_include_content_appends_to_explicit_fields(server: FastMCP) -> None:
+    """include_content=True with explicit fields → 'content' appended; original fields kept."""
+    api_response = {
+        "result": [{"id": 42, "name": "My Node", "content": "some body"}],
+        "total": 1,
+    }
+
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_list", {"fields": ["id", "name"], "include_content": True})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url_params = str(captured_request[0].url)
+    for expected_field in ("id", "name", "content"):
+        assert expected_field in url_params, (
+            f"Expected {expected_field!r} in URL params, got: {url_params!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_list_include_content_passes_through_binary(server: FastMCP) -> None:
+    """Binary content (base64 string + image/png contentType) must pass through verbatim."""
+    b64_payload = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    api_response = {
+        "result": [
+            {
+                "id": 77,
+                "type": "documentation",
+                "name": "Logo",
+                "status": None,
+                "contentType": "image/png",
+                "content": b64_payload,
+            }
+        ],
+        "total": 1,
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODES_URL).mock(return_value=httpx.Response(200, json=api_response))
+        result = await _call(server, "divoid_list", {"include_content": True})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    rows = result.get("result", [])
+    assert len(rows) == 1
+    assert rows[0].get("content") == b64_payload, (
+        f"Binary content must pass through verbatim (no decoding), got: {rows[0].get('content')!r}"
+    )
+    assert rows[0].get("contentType") == "image/png", (
+        f"Expected contentType=image/png, got: {rows[0].get('contentType')!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# divoid_search — include_content tests (DiVoid #1181)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_default_no_content(server: FastMCP) -> None:
+    """Default divoid_search must not include content in the result rows."""
+    api_response = {
+        "result": [
+            {
+                "id": 55,
+                "name": "Auth bug",
+                "type": "bug",
+                "status": "open",
+                "similarity": 0.85,
+            }
+        ],
+        "total": 1,
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODES_URL).mock(return_value=httpx.Response(200, json=api_response))
+        result = await _call(server, "divoid_search", {"query": "auth bug"})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    rows = result.get("results", [])
+    assert len(rows) == 1
+    assert "content" not in rows[0], (
+        f"Default search must not return 'content' in rows, got: {rows[0]!r}"
+    )
+    assert "contentType" not in rows[0], (
+        f"Default search must not return 'contentType' in rows, got: {rows[0]!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_include_content_passes_through_text(server: FastMCP) -> None:
+    """include_content=True → fields param sent, text content passes through."""
+    api_response = {
+        "result": [
+            {
+                "id": 190,
+                "name": "Hivemind Protocol",
+                "type": "documentation",
+                "status": None,
+                "similarity": 0.93,
+                "contentType": "text/markdown",
+                "content": "# Hivemind Protocol\n\nStore everything in DiVoid.",
+            }
+        ],
+        "total": 1,
+    }
+
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_search", {"query": "hivemind", "include_content": True})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url_params = str(captured_request[0].url)
+    assert "content" in url_params, (
+        f"include_content=True must add 'content' to fields, URL: {url_params!r}"
+    )
+    rows = result.get("results", [])
+    assert len(rows) == 1
+    assert rows[0].get("content") == "# Hivemind Protocol\n\nStore everything in DiVoid.", (
+        f"Text content must pass through, got: {rows[0].get('content')!r}"
+    )
+    assert rows[0].get("contentType") == "text/markdown", (
+        f"contentType must pass through, got: {rows[0].get('contentType')!r}"
+    )
+    assert rows[0].get("similarity") == 0.93, (
+        f"similarity must still be present, got: {rows[0].get('similarity')!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_include_content_passes_through_binary(server: FastMCP) -> None:
+    """include_content=True with binary content → base64 string passes through verbatim."""
+    b64_payload = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    api_response = {
+        "result": [
+            {
+                "id": 200,
+                "name": "Diagram",
+                "type": "documentation",
+                "status": None,
+                "similarity": 0.71,
+                "contentType": "image/png",
+                "content": b64_payload,
+            }
+        ],
+        "total": 1,
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODES_URL).mock(return_value=httpx.Response(200, json=api_response))
+        result = await _call(server, "divoid_search", {"query": "diagram", "include_content": True})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    rows = result.get("results", [])
+    assert len(rows) == 1
+    assert rows[0].get("content") == b64_payload, (
+        f"Binary content must pass through verbatim, got: {rows[0].get('content')!r}"
+    )
+    assert rows[0].get("contentType") == "image/png", (
+        f"Expected contentType=image/png, got: {rows[0].get('contentType')!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_default_response_shape_unchanged(server: FastMCP) -> None:
+    """Regression: default search shape must be exactly id/type/name/status/similarity.
+
+    A future refactor must not accidentally pass through extra backend fields.
+    If the backend returns contentType in the default projection, it should still
+    be absent from the result when include_content=False and the backend didn't
+    send it (which is the default backend behaviour).
+    """
+    api_response = {
+        "result": [
+            {
+                "id": 314,
+                "name": "Tasks",
+                "type": None,
+                "status": None,
+                "similarity": 0.65,
+                # No contentType or content — backend default projection omits them.
+            }
+        ],
+        "total": 1,
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODES_URL).mock(return_value=httpx.Response(200, json=api_response))
+        result = await _call(server, "divoid_search", {"query": "tasks group"})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    rows = result.get("results", [])
+    assert len(rows) == 1
+    item = rows[0]
+    # These five keys must always be present (null values are fine).
+    for key in ("id", "type", "name", "status", "similarity"):
+        assert key in item, f"Expected key {key!r} in result item, got: {item!r}"
+    # These keys must NOT be present unless the backend sent them.
+    for key in ("content", "contentType"):
+        assert key not in item, (
+            f"Key {key!r} must not appear in default-shape result, got: {item!r}"
+        )

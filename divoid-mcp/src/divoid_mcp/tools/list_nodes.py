@@ -78,7 +78,10 @@ PAGINATION: supply the `continue` value from a previous response to fetch the ne
   20 and is capped at 500.
 
 FIELDS: default projection is [id, type, name, status, contentType]. Add x or y to
-  get canvas positions. Omit fields to reduce token footprint on large result sets.\
+  get canvas positions. Omit fields to reduce token footprint on large result sets.
+  Set include_content=True to fetch the body inline on each row — opt-in for research /
+  lookup flows; costs bandwidth proportional to the total body size of the page; for many
+  small documentation nodes this saves N follow-up divoid_get_content calls.\
 """
 
 
@@ -129,6 +132,10 @@ def _check_invariants(
         )
 
 
+_DEFAULT_FIELDS = ["id", "type", "name", "status", "contentType"]
+_DEFAULT_FIELDS_WITH_CONTENT = ["id", "type", "name", "status", "contentType", "content"]
+
+
 async def _execute(
     config: "DivoidConfig",
     id: list[int] | None = None,
@@ -144,6 +151,7 @@ async def _execute(
     sort: str | None = None,
     descending: bool = False,
     fields: list[str] | None = None,
+    include_content: bool = False,
 ) -> dict[str, Any]:
     """
     Core implementation of divoid_list.
@@ -156,6 +164,13 @@ async def _execute(
     """
     # Silently clamp count to [1, 500].
     count = max(1, min(500, count))
+
+    # Resolve the effective fields list when include_content is requested.
+    if include_content:
+        if fields is None:
+            fields = _DEFAULT_FIELDS_WITH_CONTENT
+        elif "content" not in fields:
+            fields = list(fields) + ["content"]
 
     params: dict[str, Any] = {"count": count}
 
@@ -237,6 +252,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         sort: str | None = None,
         descending: bool = False,
         fields: list[str] | None = None,
+        include_content: bool = False,
     ) -> dict[str, Any]:
         """
         List DiVoid nodes with structural filters, pagination, and optional path-query.
@@ -266,6 +282,11 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             descending: If true, sort descending. Default false (ascending).
             fields: Fields to include in each result node. Default: id, type, name, status,
                     contentType. Also available: x, y.
+            include_content: If true, fetch the body inline on each row. Appends 'content' to
+                             the fields projection (and uses the full default projection if
+                             fields was not specified). Text content arrives as a UTF-8 string;
+                             binary content arrives as a base64 string. Nodes with no content
+                             omit the field entirely. Opt-in; costs bandwidth.
         """
         # --- Invariant guard (before any HTTP call) ---
         try:
@@ -297,4 +318,5 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             sort=sort,
             descending=descending,
             fields=fields,
+            include_content=include_content,
         )

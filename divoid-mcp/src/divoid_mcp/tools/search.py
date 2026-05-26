@@ -35,7 +35,9 @@ Return shape: each result has id, name, similarity, and optionally type, \
 status, and contentType. type is null for structural group nodes (Tasks, Docs \
 containers); status is null for nodes whose type does not carry a lifecycle \
 (most types other than task / bug). Use n.get() rather than direct key access \
-when consuming results.\
+when consuming results. Set include_content=True to fetch the body inline on \
+each row — opt-in for research / lookup flows that need to read the bodies of \
+the top hits; costs bandwidth.\
 """
 
 
@@ -49,6 +51,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         linkedto: list[int] | None = None,
         status: list[str] | None = None,
         count: int = 10,
+        include_content: bool = False,
     ) -> dict[str, Any]:
         """
         Semantic search over the DiVoid graph.
@@ -67,6 +70,9 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                    Default 10. Capped lower than the DiVoid API cap (500)
                    because semantic results past the top-50 are almost
                    never useful and inflate context.
+            include_content: If true, fetch the body inline on each row. Text content arrives
+                             as a UTF-8 string; binary content arrives as a base64 string.
+                             Nodes with no content omit the field. Opt-in; costs bandwidth.
         """
         if not query or not query.strip():
             return {
@@ -96,6 +102,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             params["linkedto"] = linkedto
         if status:
             params["status"] = status
+        if include_content:
+            params["fields"] = ["id", "type", "name", "status", "contentType", "similarity", "content"]
 
         logger.info(
             "divoid_search query=%r type=%s linkedto=%s status=%s count=%d",
@@ -122,16 +130,20 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         raw_results = data.get("result", [])
         total = data.get("total", len(raw_results))
 
-        nodes = [
-            {
+        nodes = []
+        for n in raw_results:
+            row: dict[str, Any] = {
                 "id": n.get("id"),
                 "type": n.get("type"),
                 "name": n.get("name"),
                 "status": n.get("status"),
                 "similarity": n.get("similarity"),
             }
-            for n in raw_results
-        ]
+            if "contentType" in n:
+                row["contentType"] = n["contentType"]
+            if "content" in n:
+                row["content"] = n["content"]
+            nodes.append(row)
 
         logger.info("divoid_search ok total=%d returned=%d", total, len(nodes))
         return {"results": nodes, "total": total}
