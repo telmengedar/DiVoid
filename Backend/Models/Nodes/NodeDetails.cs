@@ -1,3 +1,5 @@
+using System.Runtime.Serialization;
+
 namespace Backend.Models.Nodes;
 
 /// <summary>
@@ -30,6 +32,38 @@ public class NodeDetails
     /// Absent when the node has no content.
     /// </summary>
     public string ContentType { get; set; }
+
+    /// <summary>
+    /// encoded content body for this node, present only when <c>content</c> is included in
+    /// <c>?fields=</c>.  text content (per <see cref="Backend.Services.Embeddings.TextContentTypePredicate.IsText"/>)
+    /// is returned as a UTF-8 JSON string; binary content is returned as a base64 string.
+    /// absent when the node has no content or when <c>content</c> was not requested.
+    /// when the original body exceeded 64 KiB, the value is truncated and
+    /// <see cref="ContentTruncated"/> is set to <c>true</c>.
+    /// </summary>
+    public string Content { get; set; }
+
+    /// <summary>
+    /// true when <see cref="Content"/> was truncated to 64 KiB because the original body
+    /// exceeded the per-row cap.  absent (null) when no truncation occurred.
+    /// </summary>
+    public bool? ContentTruncated { get; set; }
+
+    /// <summary>
+    /// original byte length of the node's full content body, returned only when
+    /// <see cref="ContentTruncated"/> is true so the caller knows the size to fetch
+    /// via <c>GET /api/nodes/{id}/content</c>.  absent otherwise.
+    /// </summary>
+    public long? ContentLength { get; set; }
+
+    /// <summary>
+    /// transient raw bytes populated by the <c>content</c> field-mapping in
+    /// <see cref="NodeMapper"/>.  never serialised to JSON.
+    /// the post-process callback in <see cref="NodeMapper"/> uses this alongside
+    /// <see cref="ContentType"/> to encode the inline content into <see cref="Content"/>.
+    /// </summary>
+    [IgnoreDataMember]
+    public byte[] RawContent { get; set; }
 
     /// <summary>
     /// cosine similarity score in the range [0, 1] (1.0 = identical direction).

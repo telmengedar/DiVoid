@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using Backend.Services.Embeddings;
 using Pooshit.Ocelot.Clients;
 using Pooshit.Ocelot.Entities;
@@ -28,13 +31,34 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
     /// </summary>
     /// <param name="filter">the inbound node filter; null is treated as standard list mode</param>
     public NodeMapper(NodeFilter filter)
-    : base(Mappings(filter))
+    : base(Mappings(filter).ToArray(), null, PostProcess)
     {
         this.filter = filter;
     }
 
     /// <inheritdoc />
     public override string[] DefaultListFields => ["id", "type", "name", "status", "contentType"];
+
+    /// <summary>
+    /// post-process callback invoked by <see cref="FieldMapper{TModel}"/> after all field
+    /// setters have run for a single row.  encodes <see cref="NodeDetails.RawContent"/> into
+    /// <see cref="NodeDetails.Content"/> (and sets truncation metadata) when the <c>content</c>
+    /// field was requested.
+    /// </summary>
+    static void PostProcess(NodeDetails node, string[] fields)
+    {
+        if (!fields.Contains("content"))
+            return;
+        EncodeResult result = InlineContentEncoder.Encode(node.RawContent, node.ContentType);
+        if (result.Encoded == null)
+            return;
+        node.Content = result.Encoded;
+        if (result.Truncated)
+        {
+            node.ContentTruncated = true;
+            node.ContentLength = result.OriginalLength;
+        }
+    }
 
     static IEnumerable<FieldMapping<NodeDetails>> Mappings(NodeFilter filter = null)
     {
@@ -59,6 +83,9 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
         yield return new FieldMapping<NodeDetails, double>("y",
                                                         DB.Property<Node>(n => n.Y, "node"),
                                                         (n, v) => n.Y = v);
+        yield return new FieldMapping<NodeDetails, byte[]>("content",
+                                                        DB.Property<Node>(n => n.Content, "node"),
+                                                        (n, v) => n.RawContent = v);
 
         if (!string.IsNullOrWhiteSpace(filter?.Query)) {
             // similarity = 1.0 - cosineDistance(queryEmbedding, nodeEmbedding)
