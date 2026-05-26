@@ -42,22 +42,13 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
     /// <summary>
     /// post-process callback invoked by <see cref="FieldMapper{TModel}"/> after all field
     /// setters have run for a single row.  encodes <see cref="NodeDetails.RawContent"/> into
-    /// <see cref="NodeDetails.Content"/> (and sets truncation metadata) when the <c>content</c>
-    /// field was requested.
+    /// <see cref="NodeDetails.Content"/> when the <c>content</c> field was requested.
     /// </summary>
     static void PostProcess(NodeDetails node, string[] fields)
     {
         if (!fields.Contains("content"))
             return;
-        EncodeResult result = InlineContentEncoder.Encode(node.RawContent, node.ContentType);
-        if (result.Encoded == null)
-            return;
-        node.Content = result.Encoded;
-        if (result.Truncated)
-        {
-            node.ContentTruncated = true;
-            node.ContentLength = result.OriginalLength;
-        }
+        node.Content = InlineContentEncoder.Encode(node.RawContent, node.ContentType);
     }
 
     static IEnumerable<FieldMapping<NodeDetails>> Mappings(NodeFilter filter = null)

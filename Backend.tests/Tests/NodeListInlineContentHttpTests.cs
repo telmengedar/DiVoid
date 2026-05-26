@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
@@ -16,22 +15,18 @@ namespace Backend.tests.Tests;
 
 /// <summary>
 /// HTTP-layer integration tests for the opt-in inline <c>content</c> field on <c>GET /api/nodes</c>
-/// (task #1180, architecture doc #1182).
+/// (DiVoid task #1180).
 ///
-/// Covers the full acceptance matrix from arch doc §14 step 7:
-///   - Default listing has no content/contentTruncated/contentLength fields.
+/// Covers the acceptance matrix:
+///   - Default listing has no content field on any row.
 ///   - Text content (text/* and application/json) returned as UTF-8 string.
 ///   - Binary content (image/png, application/octet-stream) returned as base64.
-///   - Empty-content rows omit content, contentTruncated, contentLength entirely.
-///   - Truncation at 64 KiB with flags for text and binary paths.
-///   - UTF-8 multi-byte boundary: truncation backs up to last complete code-point.
-///   - Invalid UTF-8 in text-typed content silently demoted to base64.
+///   - Empty-content rows omit the content field entirely.
 ///   - Mixed page (text + binary + empty) rendered correctly.
 ///   - sort=content rejected with 400.
 ///   - Path-query parity: ?path=...&amp;fields=content works identically.
 ///   - contentType auto-included when content is requested without it.
 ///   - Load-bearing negative test: bytes column not fetched by default.
-///   - Load-bearing substitution probe (documented in PR body).
 /// </summary>
 [TestFixture]
 public class NodeListInlineContentHttpTests
@@ -91,7 +86,7 @@ public class NodeListInlineContentHttpTests
     }
 
     [Test, Parallelizable]
-    [Description("guards the default-unchanged invariant: plain GET must not carry content/contentTruncated/contentLength on any row (task #1180 acceptance criterion 1)")]
+    [Description("guards the default-unchanged invariant: plain GET must not carry content on any row (task #1180 acceptance criterion 1)")]
     public async Task List_DefaultFields_NoContentInAnyRow()
     {
         long id = await CreateNodeAsync(name: "DefaultFieldsNode");
@@ -103,8 +98,6 @@ public class NodeListInlineContentHttpTests
         NodeDetails node = items.FirstOrDefault(n => n.Id == id)!;
         Assert.That(node, Is.Not.Null, "seeded node must appear in listing");
         Assert.That(node.Content, Is.Null, "Content must be null when not in ?fields=");
-        Assert.That(node.ContentTruncated, Is.Null, "ContentTruncated must be null when not in ?fields=");
-        Assert.That(node.ContentLength, Is.Null, "ContentLength must be null when not in ?fields=");
         Assert.That(rawJson.Contains("\"contentTruncated\""), Is.False, "contentTruncated key must be absent from JSON");
         Assert.That(rawJson.Contains("\"contentLength\""), Is.False, "contentLength key must be absent from JSON");
     }
@@ -122,8 +115,7 @@ public class NodeListInlineContentHttpTests
         NodeDetails node = items.FirstOrDefault(n => n.Id == id)!;
         Assert.That(node, Is.Not.Null);
         Assert.That(node.Content, Is.EqualTo(body), "text content must be returned as UTF-8 string");
-        Assert.That(node.ContentTruncated, Is.Null, "no truncation for a small body");
-        Assert.That(rawJson.Contains("\"contentTruncated\""), Is.False, "contentTruncated key must be absent when not truncated");
+        Assert.That(rawJson.Contains("\"contentTruncated\""), Is.False, "contentTruncated key must be absent from JSON");
     }
 
     [Test, Parallelizable]
@@ -159,7 +151,7 @@ public class NodeListInlineContentHttpTests
     }
 
     [Test, Parallelizable]
-    public async Task List_WithContentField_EmptyContentNode_OmitsContentFields()
+    public async Task List_WithContentField_EmptyContentNode_OmitsContentField()
     {
         long id = await CreateNodeAsync(name: "EmptyContentNode");
 
@@ -171,102 +163,6 @@ public class NodeListInlineContentHttpTests
         Assert.That(node.Content, Is.Null, "content must be absent for node with no content");
         Assert.That(rawJson.Contains("\"contentTruncated\""), Is.False, "contentTruncated key must be absent");
         Assert.That(rawJson.Contains("\"contentLength\""), Is.False, "contentLength key must be absent");
-    }
-
-    [Test, Parallelizable]
-    public async Task List_WithContentField_OversizeTextNode_TruncatesAtUtf8Boundary()
-    {
-        long id = await CreateNodeAsync(name: "OversizeTextNode");
-        int cap = Backend.Models.Nodes.InlineContentEncoder.MaxInlineBytes;
-        byte[] bytes = Encoding.ASCII.GetBytes(new string('A', cap + 1024));
-        await UploadBytesAsync(id, "text/plain", bytes);
-
-        HttpResponseMessage resp = await ListRawAsync($"?id={id}&fields=id,content");
-        List<NodeDetails> items = await ReadPageAsync(resp);
-
-        NodeDetails node = items.FirstOrDefault(n => n.Id == id)!;
-        Assert.That(node, Is.Not.Null);
-        Assert.That(node.Content, Is.Not.Null);
-        Assert.That(Encoding.UTF8.GetByteCount(node.Content!), Is.LessThanOrEqualTo(cap),
-            "encoded text must not exceed cap bytes");
-        Assert.That(node.ContentTruncated, Is.True, "ContentTruncated must be true");
-        Assert.That(node.ContentLength, Is.EqualTo(bytes.Length), "ContentLength must reflect original byte count");
-    }
-
-    [Test, Parallelizable]
-    public async Task List_WithContentField_OversizeBinaryNode_TruncatesBytesBeforeBase64()
-    {
-        long id = await CreateNodeAsync(name: "OversizeBinaryNode");
-        int cap = Backend.Models.Nodes.InlineContentEncoder.MaxInlineBytes;
-        byte[] bytes = new byte[cap + 1024];
-        new Random(42).NextBytes(bytes);
-        await UploadBytesAsync(id, "application/octet-stream", bytes);
-
-        HttpResponseMessage resp = await ListRawAsync($"?id={id}&fields=id,content");
-        List<NodeDetails> items = await ReadPageAsync(resp);
-
-        NodeDetails node = items.FirstOrDefault(n => n.Id == id)!;
-        Assert.That(node, Is.Not.Null);
-        Assert.That(node.Content, Is.Not.Null);
-        byte[] decoded = Convert.FromBase64String(node.Content!);
-        Assert.That(decoded.Length, Is.EqualTo(cap),
-            "base64 must decode to exactly MaxInlineBytes of the original byte stream");
-        Assert.That(decoded, Is.EqualTo(bytes[..cap]),
-            "decoded bytes must be the leading MaxInlineBytes of the original");
-        Assert.That(node.ContentTruncated, Is.True, "ContentTruncated must be true");
-        Assert.That(node.ContentLength, Is.EqualTo(bytes.Length), "ContentLength must reflect original byte count");
-    }
-
-    [Test, Parallelizable]
-    [Description("guards the UTF-8 boundary back-up rule: truncating at MaxInlineBytes must not split a multi-byte code-point")]
-    public async Task List_WithContentField_MultibyteBoundary_TruncatesAtCompleteCodepoint()
-    {
-        long id = await CreateNodeAsync(name: "MultibyteBoundaryNode");
-        int cap = Backend.Models.Nodes.InlineContentEncoder.MaxInlineBytes;
-
-        // fill cap-2 bytes with ASCII, then append a 3-byte UTF-8 character (U+4E2D, '中')
-        // so the character straddles the cap boundary (1 byte before, 2 bytes after)
-        byte[] prefix = Encoding.ASCII.GetBytes(new string('A', cap - 1));
-        byte[] cjk = Encoding.UTF8.GetBytes("中");
-        byte[] bytes = new byte[prefix.Length + cjk.Length];
-        Buffer.BlockCopy(prefix, 0, bytes, 0, prefix.Length);
-        Buffer.BlockCopy(cjk, 0, bytes, prefix.Length, cjk.Length);
-        await UploadBytesAsync(id, "text/plain", bytes);
-
-        HttpResponseMessage resp = await ListRawAsync($"?id={id}&fields=id,content");
-        List<NodeDetails> items = await ReadPageAsync(resp);
-
-        NodeDetails node = items.FirstOrDefault(n => n.Id == id)!;
-        Assert.That(node, Is.Not.Null);
-        Assert.That(node.Content, Is.Not.Null);
-        Assert.That(() => Encoding.UTF8.GetBytes(node.Content!), Throws.Nothing,
-            "decoded text must be valid UTF-8 — no replacement characters or exceptions");
-        Assert.That(Encoding.UTF8.GetByteCount(node.Content!), Is.LessThanOrEqualTo(cap),
-            "encoded bytes must not exceed cap");
-        Assert.That(node.ContentTruncated, Is.True, "node exceeds cap — must be truncated");
-    }
-
-    [Test, Parallelizable]
-    [Description("guards the silent-demotion rule: a text/plain node with invalid UTF-8 bytes must return base64 without throwing")]
-    public async Task List_WithContentField_InvalidUtf8InTextTyped_ReturnsBase64()
-    {
-        long id = await CreateNodeAsync(name: "InvalidUtf8Node");
-        // lone 0xFF byte is invalid in UTF-8
-        byte[] asciiPart = Encoding.ASCII.GetBytes("valid prefix ");
-        byte[] bytes = new byte[asciiPart.Length + 1];
-        Buffer.BlockCopy(asciiPart, 0, bytes, 0, asciiPart.Length);
-        bytes[asciiPart.Length] = 0xFF;
-        await UploadBytesAsync(id, "text/plain", bytes);
-
-        HttpResponseMessage resp = await ListRawAsync($"?id={id}&fields=id,content");
-        Assert.That((int) resp.StatusCode, Is.EqualTo(200), "request must succeed even with invalid UTF-8 content");
-
-        List<NodeDetails> items = await ReadPageAsync(resp);
-        NodeDetails node = items.FirstOrDefault(n => n.Id == id)!;
-        Assert.That(node, Is.Not.Null);
-        Assert.That(node.Content, Is.Not.Null, "content must be present");
-        byte[] decoded = Convert.FromBase64String(node.Content!);
-        Assert.That(decoded, Is.EqualTo(bytes), "silently-demoted content must round-trip as base64");
     }
 
     [Test, Parallelizable]
@@ -300,7 +196,7 @@ public class NodeListInlineContentHttpTests
     }
 
     [Test, Parallelizable]
-    [Description("load-bearing: sort=content must be rejected (arch doc §10/Q6); commenting out the sort guard must break this test")]
+    [Description("load-bearing: sort=content must be rejected (DiVoid #1180 §Q6); commenting out the sort guard must break this test")]
     public async Task List_SortByContent_Returns400()
     {
         HttpResponseMessage resp = await ListRawAsync("?sort=content&count=1");
@@ -308,7 +204,7 @@ public class NodeListInlineContentHttpTests
     }
 
     [Test, Parallelizable]
-    [Description("path-query parity: ?path=...&fields=content must return inline content on terminal-hop rows (arch doc §10/Q7)")]
+    [Description("path-query parity: ?path=...&fields=content must return inline content on terminal-hop rows (DiVoid #1180)")]
     public async Task ListByPath_WithContentField_TerminalHopHasInlineContent()
     {
         long projId = await CreateNodeAsync("project", "PathTestProject");
@@ -334,7 +230,7 @@ public class NodeListInlineContentHttpTests
     }
 
     [Test, Parallelizable]
-    [Description("service must auto-include contentType when content is in ?fields= even if not explicitly requested (arch doc §8)")]
+    [Description("service must auto-include contentType when content is in ?fields= even if not explicitly requested (DiVoid #1180)")]
     public async Task List_ContentWithoutExplicitContentType_AutoIncludesContentType()
     {
         long id = await CreateNodeAsync(name: "AutoIncludeContentTypeNode");
