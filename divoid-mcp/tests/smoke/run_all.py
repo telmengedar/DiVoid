@@ -1795,6 +1795,123 @@ async def smoke_list_sort_invalid_invariant(config: Any) -> None:
     )
 
 
+async def smoke_list_include_content_text(config: Any) -> None:
+    """
+    divoid_list: include_content=True returns inline body + contentType on each row.
+
+    Calls _execute_list with fields=['content'] (which the tool translates to
+    ?fields=content on the wire) to trigger inline content. Documentation nodes
+    are all text/markdown, so content should be a non-empty string starting with
+    real markdown. Both 'content' and 'contentType' must be present and
+    non-empty on every row — asserting on value, not just key presence, per
+    DiVoid #275 (load-bearing test discipline).
+    """
+    print("\n--- divoid_list (include_content=True) ---")
+
+    result = await _execute_list(
+        config=config,
+        type=["documentation"],
+        count=3,
+        include_content=True,
+    )
+
+    _assert(
+        "_execute returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    nodes = result.get("result", [])
+    _assert(
+        "at least one documentation node returned",
+        len(nodes) >= 1,
+        f"count={len(nodes)}",
+    )
+
+    for i, row in enumerate(nodes):
+        label = f"row[{i}] id={row.get('id')}"
+        _assert(
+            f"{label}: 'content' key present",
+            "content" in row,
+            f"keys={list(row.keys())}",
+        )
+        _assert(
+            f"{label}: content is non-empty string",
+            isinstance(row.get("content"), str) and len(row.get("content", "")) > 0,
+            f"content type={type(row.get('content')).__name__!r} len={len(row.get('content', '')) if isinstance(row.get('content'), str) else 'n/a'}",
+        )
+        _assert(
+            f"{label}: 'contentType' key present",
+            "contentType" in row,
+            f"keys={list(row.keys())}",
+        )
+        _assert(
+            f"{label}: contentType is non-empty string",
+            isinstance(row.get("contentType"), str) and len(row.get("contentType", "")) > 0,
+            f"contentType={row.get('contentType')!r}",
+        )
+
+
+async def smoke_search_include_content(config: Any) -> None:
+    """
+    divoid_search: include_content=True returns inline body on each search result.
+
+    The query "agent onboarding" reliably surfaces node #9 ("Agents") as a
+    top hit, which is text/markdown. Asserts that the top result has both
+    'content' (non-empty string) and 'contentType' (non-empty string) — value
+    assertions, not mere key-presence checks, per DiVoid #275.
+    """
+    print("\n--- divoid_search (include_content=True) ---")
+
+    result = await http_client.get(
+        "nodes",
+        params={
+            "query": "agent onboarding",
+            "count": 3,
+            "fields": ["id", "type", "name", "status", "contentType", "similarity", "content"],
+        },
+    )
+
+    _assert("HTTP 200", result.ok, f"status={result.status}")
+    if not result.ok:
+        return
+
+    data = result.json()
+    nodes = data.get("result", [])
+    _assert(
+        "at least one result returned",
+        len(nodes) >= 1,
+        f"count={len(nodes)}",
+    )
+    if not nodes:
+        return
+
+    top = nodes[0]
+    label = f"top result id={top.get('id')}"
+    _assert(
+        f"{label}: 'content' key present",
+        "content" in top,
+        f"keys={list(top.keys())}",
+    )
+    _assert(
+        f"{label}: content is non-empty string",
+        isinstance(top.get("content"), str) and len(top.get("content", "")) > 0,
+        f"content type={type(top.get('content')).__name__!r} len={len(top.get('content', '')) if isinstance(top.get('content'), str) else 'n/a'}",
+    )
+    _assert(
+        f"{label}: 'contentType' key present",
+        "contentType" in top,
+        f"keys={list(top.keys())}",
+    )
+    _assert(
+        f"{label}: contentType is non-empty string",
+        isinstance(top.get("contentType"), str) and len(top.get("contentType", "")) > 0,
+        f"contentType={top.get('contentType')!r}",
+    )
+
+
 ### -----------------------------------------------------------------------
 ### Phase 2 polish: patch_node, set_status, set_content, get_links
 ### -----------------------------------------------------------------------
@@ -2465,6 +2582,8 @@ async def _run_all(config: Any) -> None:
         smoke_list_fields_sparse,
         smoke_list_pagination,
         smoke_list_sort_invalid_invariant,
+        smoke_list_include_content_text,
+        smoke_search_include_content,
         # Phase 2 polish: patch_node, set_status, set_content, get_links primitives
         smoke_patch_node_invariant_no_fields,
         smoke_patch_node_not_found,
