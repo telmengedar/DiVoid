@@ -49,6 +49,7 @@ from divoid_mcp.tools.resolve_user import _execute as _execute_resolve_user
 from divoid_mcp.tools.send_message import _check_invariants as _check_send_message_invariants
 from divoid_mcp.tools.send_message import _execute as _execute_send_message
 from divoid_mcp.tools.list_messages import _execute as _execute_list_messages
+from divoid_mcp.tools.delete_message import _execute as _execute_delete_message
 from divoid_mcp.tools.list_nodes import _check_invariants as _check_list_invariants
 from divoid_mcp.tools.list_nodes import _execute as _execute_list
 from divoid_mcp.tools.patch_node import _check_invariants as _check_patch_node_invariants
@@ -1266,6 +1267,124 @@ async def smoke_list_messages_happy_path(config: Any) -> None:
                 field in msg,
                 f"keys={list(msg.keys())}",
             )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 PR4: divoid_delete_message
+# ---------------------------------------------------------------------------
+
+async def smoke_delete_message_lifecycle(config: Any) -> None:
+    """
+    divoid_delete_message: full lifecycle — send -> list (find) -> delete -> list (gone).
+
+    Uses _execute directly (load-bearing: deleting _execute from delete_message.py
+    causes an ImportError that aborts the entire runner).
+
+    Per DiVoid #435 protocol: the inbox must look identical before and after
+    (modulo unrelated concurrent activity). The smoke is wrapped in try/finally
+    so that even if delete fails mid-way, we attempt cleanup and the inbox is
+    not left polluted with orphan smoke-test messages.
+    """
+    import datetime
+
+    print("\n--- divoid_delete_message (full lifecycle: send -> list -> delete -> list) ---")
+
+    timestamp = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    subject = f"[DiVoid] smoke-test ephemeral delete-me {timestamp}"
+    body = "Smoke test message for divoid_delete_message. Delete me."
+
+    # Step 1: Send a self-message (Selene -> Selene, the canonical pattern per #435).
+    send_result = await _execute_send_message(
+        subject=subject,
+        body=body,
+        config=config,
+        recipient_node_id=_SELENE_NODE_ID,
+    )
+
+    _assert(
+        "send_message returns no isError",
+        not send_result.get("isError", False),
+        str(send_result.get("content", "")),
+    )
+    if send_result.get("isError"):
+        return
+
+    message_id = send_result.get("message_id") or send_result.get("id")
+    _assert(
+        "send_result has a message id",
+        isinstance(message_id, int) and message_id > 0,
+        f"send_result={send_result!r}",
+    )
+    if not (isinstance(message_id, int) and message_id > 0):
+        return
+
+    _assert("sent message has integer id", isinstance(message_id, int), f"id={message_id!r}")
+
+    try:
+        # Step 2: List inbox; assert the new message id is present.
+        inbox_before = await _execute_list_messages(count=50, continue_offset=0, config=config)
+        _assert(
+            "list_messages (before delete) returns no isError",
+            not inbox_before.get("isError", False),
+            str(inbox_before.get("content", "")),
+        )
+        if not inbox_before.get("isError", False):
+            ids_before = [m.get("id") for m in inbox_before.get("result", [])]
+            _assert(
+                f"sent message #{message_id} appears in inbox before delete",
+                message_id in ids_before,
+                f"inbox_ids_before={ids_before}",
+            )
+
+        # Step 3: Delete the message via _execute.
+        delete_result = await _execute_delete_message(id=message_id, config=config)
+        _assert(
+            "_execute_delete_message returns no isError",
+            not delete_result.get("isError", False),
+            str(delete_result.get("content", "")),
+        )
+        _assert(
+            "_execute_delete_message returns success=True",
+            delete_result.get("success") is True,
+            f"delete_result={delete_result!r}",
+        )
+        _assert(
+            "_execute_delete_message echoes back the id",
+            delete_result.get("id") == message_id,
+            f"expected id={message_id}, got={delete_result.get('id')!r}",
+        )
+
+        # Step 4: Re-list inbox; assert the message id is absent.
+        inbox_after = await _execute_list_messages(count=50, continue_offset=0, config=config)
+        _assert(
+            "list_messages (after delete) returns no isError",
+            not inbox_after.get("isError", False),
+            str(inbox_after.get("content", "")),
+        )
+        if not inbox_after.get("isError", False):
+            ids_after = [m.get("id") for m in inbox_after.get("result", [])]
+            _assert(
+                f"deleted message #{message_id} is gone from inbox after delete",
+                message_id not in ids_after,
+                f"ids_after={ids_after}",
+            )
+
+    finally:
+        # Safety net: if delete failed or was skipped, try to clean up anyway.
+        # This makes the smoke re-runnable even if it crashed mid-lifecycle.
+        verify = await http_client.get("messages", params={"count": 50})
+        if verify.ok:
+            try:
+                data = verify.json()
+                orphan_ids = [
+                    m["id"]
+                    for m in data.get("result", [])
+                    if m.get("subject", "").startswith("[DiVoid] smoke-test ephemeral delete-me")
+                ]
+                for oid in orphan_ids:
+                    await http_client.delete(f"messages/{oid}")
+            except Exception:
+                pass  # best-effort cleanup; do not mask the real failure
 
 
 # ---------------------------------------------------------------------------
@@ -2566,6 +2685,7 @@ async def _run_all(config: Any) -> None:
         smoke_send_message_invariant_violations,
         smoke_send_message_happy_path,
         smoke_list_messages_happy_path,
+        smoke_delete_message_lifecycle,
         # Phase 2 PR3: divoid_list
         smoke_list_bare,
         smoke_list_type_filter,

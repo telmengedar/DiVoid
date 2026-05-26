@@ -26,6 +26,7 @@ from mcp.server.fastmcp import FastMCP
 
 from divoid_mcp import http_client
 from divoid_mcp.config import DivoidConfig
+from divoid_mcp.tools.delete_message import register as register_delete_message
 from divoid_mcp.tools.get_content import register as register_get_content
 from divoid_mcp.tools.list_nodes import register as register_list_nodes
 from divoid_mcp.tools.search import register as register_search
@@ -42,6 +43,7 @@ _DUMMY_KEY = "dummy-key-for-unit-tests"
 # URL templates matching what http_client.get() constructs at runtime.
 _CONTENT_URL = f"{_DUMMY_BASE}/nodes/{{id}}/content"
 _NODES_URL = f"{_DUMMY_BASE}/nodes"
+_MESSAGES_URL = f"{_DUMMY_BASE}/messages/{{id}}"
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +69,7 @@ def server() -> FastMCP:
     register_get_content(mcp_server)
     register_list_nodes(mcp_server)
     register_search(mcp_server)
+    register_delete_message(mcp_server)
 
     return mcp_server
 
@@ -600,3 +603,97 @@ async def test_search_default_response_shape_unchanged(server: FastMCP) -> None:
         assert key not in item, (
             f"Key {key!r} must not appear in default-shape result, got: {item!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# divoid_delete_message — 3 hermetic branches
+#
+# The server returns:
+#   204 No Content on success (ok=True, empty body)
+#   404 JSON {code, text} when the message does not exist
+#   403 JSON {code, text} when the caller is not the recipient and not admin
+#
+# DiVoid #426 §4: senders cannot recall; only recipient or admin can DELETE.
+# The 403 branch is the no-recall guarantee — it is structural, not just policy.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_message_success(server: FastMCP) -> None:
+    """204 No Content → tool returns {success: True, id: N} and the DELETE was issued."""
+    msg_id = 42
+    captured_requests: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_requests.append(request)
+            return httpx.Response(204, content=b"")
+
+        mock.delete(_MESSAGES_URL.format(id=msg_id)).mock(side_effect=capture)
+        result = await _call(server, "divoid_delete_message", {"id": msg_id})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert result.get("success") is True, f"Expected success=True, got: {result.get('success')!r}"
+    assert result.get("id") == msg_id, f"Expected id={msg_id}, got: {result.get('id')!r}"
+    # Load-bearing: assert the HTTP DELETE was actually issued.
+    assert len(captured_requests) >= 1, (
+        "Expected at least one DELETE request to be issued, got 0. "
+        "Substitution probe: if this fails after removing the http_client.delete call, "
+        "that is the expected failure — the test correctly guards the HTTP behaviour."
+    )
+    assert captured_requests[0].method == "DELETE", (
+        f"Expected DELETE method, got: {captured_requests[0].method!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_message_not_found(server: FastMCP) -> None:
+    """404 → tool returns isError with node_not_found code mapped through shared helper."""
+    msg_id = 999_999
+    body = json.dumps({
+        "code": "data_entitynotfound",
+        "text": f"'Message' with id '{msg_id}' not found",
+    }).encode()
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.delete(_MESSAGES_URL.format(id=msg_id)).mock(
+            return_value=httpx.Response(404, content=body)
+        )
+        result = await _call(server, "divoid_delete_message", {"id": msg_id})
+
+    assert result.get("isError") is True, f"Expected isError=True for missing message, got: {result}"
+    content_text: str = result["content"][0]["text"]
+    assert "node_not_found" in content_text, (
+        f"Expected 'node_not_found' in error text, got: {content_text!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_message_forbidden(server: FastMCP) -> None:
+    """
+    403 → tool returns isError with divoid_bad_request code (4xx fallback).
+
+    Why this branch exists: DiVoid #426 §4 specifies that only the recipient or
+    an admin can delete a message. Senders cannot recall — this is the no-recall
+    guarantee. The server returns 403 (not 404) for a non-recipient caller so
+    that message existence is not leaked to the sender. This test asserts that
+    the tool surfaces the 403 as an error rather than masking it as success.
+    """
+    msg_id = 77
+    body = json.dumps({
+        "code": "forbidden",
+        "text": "only the recipient or an admin can delete this message",
+    }).encode()
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.delete(_MESSAGES_URL.format(id=msg_id)).mock(
+            return_value=httpx.Response(403, content=body)
+        )
+        result = await _call(server, "divoid_delete_message", {"id": msg_id})
+
+    assert result.get("isError") is True, f"Expected isError=True for forbidden, got: {result}"
+    content_text: str = result["content"][0]["text"]
+    # 403 routes through the 4xx fallback in map_http_error → divoid_bad_request.
+    assert "divoid_bad_request" in content_text or "403" in content_text, (
+        f"Expected 403-mapped error code in text, got: {content_text!r}"
+    )
