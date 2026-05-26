@@ -554,7 +554,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                 "Semantic search requires Postgres; this deployment does not support the embedding function.");
 
         if (string.Equals(filter.Sort, "content", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("sort=content is not supported");
+            throw new NotSupportedException("sort=content is not supported");
 
         NodeMapper mapper = new(filter);
         filter.Fields ??= isSemantic
@@ -614,7 +614,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                 "Semantic search requires Postgres; this deployment does not support the embedding function.");
 
         if (string.Equals(filter.Sort, "content", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("sort=content is not supported");
+            throw new NotSupportedException("sort=content is not supported");
 
         NodeMapper mapper = new(filter);
         filter.Fields ??= isSemantic

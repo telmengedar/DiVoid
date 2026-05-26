@@ -31,6 +31,12 @@ internal static class InlineContentEncoder
     internal const int MaxInlineBytes = 64 * 1024;
 
     /// <summary>
+    /// strict UTF-8 decoder that throws <see cref="DecoderFallbackException"/> on invalid bytes,
+    /// enabling the silent-demotion path for text-typed nodes with non-UTF-8 content.
+    /// </summary>
+    static readonly Encoding StrictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+    /// <summary>
     /// encodes raw content bytes for inline listing inclusion.
     /// </summary>
     /// <param name="content">raw content bytes from <c>Node.Content</c>; null or empty yields <see cref="EncodeResult.Empty"/>.</param>
@@ -78,7 +84,7 @@ internal static class InlineContentEncoder
         {
             try
             {
-                return Encoding.UTF8.GetString(source);
+                return StrictUtf8.GetString(source);
             }
             catch (DecoderFallbackException)
             {
@@ -86,14 +92,13 @@ internal static class InlineContentEncoder
             }
         }
 
-        // back up to the last complete UTF-8 code-point boundary within the cap
         int boundary = FindUtf8Boundary(original, cap);
         if (boundary < source.Length)
             actualSource = original[..boundary];
 
         try
         {
-            return Encoding.UTF8.GetString(actualSource);
+            return StrictUtf8.GetString(actualSource);
         }
         catch (DecoderFallbackException)
         {
@@ -113,10 +118,10 @@ internal static class InlineContentEncoder
         while (pos > 0)
         {
             byte b = bytes[pos - 1];
-            // single-byte or start of multi-byte sequence: we are at a clean boundary
-            if (b < 0x80 || b >= 0xC0)
+            if (b < 0x80)
                 return pos;
-            // continuation byte (0x80–0xBF): step back
+            if (b >= 0xC2)
+                return pos - 1;
             --pos;
         }
         return 0;

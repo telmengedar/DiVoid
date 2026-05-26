@@ -90,10 +90,6 @@ public class NodeListInlineContentHttpTests
         return items;
     }
 
-    // -----------------------------------------------------------------------
-    // Default listing — no content field
-    // -----------------------------------------------------------------------
-
     [Test, Parallelizable]
     [Description("guards the default-unchanged invariant: plain GET must not carry content/contentTruncated/contentLength on any row (task #1180 acceptance criterion 1)")]
     public async Task List_DefaultFields_NoContentInAnyRow()
@@ -112,10 +108,6 @@ public class NodeListInlineContentHttpTests
         Assert.That(rawJson.Contains("\"contentTruncated\""), Is.False, "contentTruncated key must be absent from JSON");
         Assert.That(rawJson.Contains("\"contentLength\""), Is.False, "contentLength key must be absent from JSON");
     }
-
-    // -----------------------------------------------------------------------
-    // Text inline
-    // -----------------------------------------------------------------------
 
     [Test, Parallelizable]
     public async Task List_WithContentField_TextNode_ReturnsUtf8String()
@@ -149,10 +141,6 @@ public class NodeListInlineContentHttpTests
         Assert.That(node.Content, Is.EqualTo(body), "application/json is text — must be returned as string");
     }
 
-    // -----------------------------------------------------------------------
-    // Binary inline
-    // -----------------------------------------------------------------------
-
     [Test, Parallelizable]
     public async Task List_WithContentField_BinaryNode_ReturnsBase64()
     {
@@ -170,10 +158,6 @@ public class NodeListInlineContentHttpTests
         Assert.That(roundTripped, Is.EqualTo(bytes), "base64 round-trip must recover original bytes");
     }
 
-    // -----------------------------------------------------------------------
-    // Empty-content rows
-    // -----------------------------------------------------------------------
-
     [Test, Parallelizable]
     public async Task List_WithContentField_EmptyContentNode_OmitsContentFields()
     {
@@ -188,10 +172,6 @@ public class NodeListInlineContentHttpTests
         Assert.That(rawJson.Contains("\"contentTruncated\""), Is.False, "contentTruncated key must be absent");
         Assert.That(rawJson.Contains("\"contentLength\""), Is.False, "contentLength key must be absent");
     }
-
-    // -----------------------------------------------------------------------
-    // Truncation — text
-    // -----------------------------------------------------------------------
 
     [Test, Parallelizable]
     public async Task List_WithContentField_OversizeTextNode_TruncatesAtUtf8Boundary()
@@ -212,10 +192,6 @@ public class NodeListInlineContentHttpTests
         Assert.That(node.ContentTruncated, Is.True, "ContentTruncated must be true");
         Assert.That(node.ContentLength, Is.EqualTo(bytes.Length), "ContentLength must reflect original byte count");
     }
-
-    // -----------------------------------------------------------------------
-    // Truncation — binary
-    // -----------------------------------------------------------------------
 
     [Test, Parallelizable]
     public async Task List_WithContentField_OversizeBinaryNode_TruncatesBytesBeforeBase64()
@@ -240,10 +216,6 @@ public class NodeListInlineContentHttpTests
         Assert.That(node.ContentTruncated, Is.True, "ContentTruncated must be true");
         Assert.That(node.ContentLength, Is.EqualTo(bytes.Length), "ContentLength must reflect original byte count");
     }
-
-    // -----------------------------------------------------------------------
-    // Multi-byte UTF-8 boundary
-    // -----------------------------------------------------------------------
 
     [Test, Parallelizable]
     [Description("guards the UTF-8 boundary back-up rule: truncating at MaxInlineBytes must not split a multi-byte code-point")]
@@ -274,10 +246,6 @@ public class NodeListInlineContentHttpTests
         Assert.That(node.ContentTruncated, Is.True, "node exceeds cap — must be truncated");
     }
 
-    // -----------------------------------------------------------------------
-    // Invalid UTF-8 in text-typed content — silent base64 demotion
-    // -----------------------------------------------------------------------
-
     [Test, Parallelizable]
     [Description("guards the silent-demotion rule: a text/plain node with invalid UTF-8 bytes must return base64 without throwing")]
     public async Task List_WithContentField_InvalidUtf8InTextTyped_ReturnsBase64()
@@ -300,10 +268,6 @@ public class NodeListInlineContentHttpTests
         byte[] decoded = Convert.FromBase64String(node.Content!);
         Assert.That(decoded, Is.EqualTo(bytes), "silently-demoted content must round-trip as base64");
     }
-
-    // -----------------------------------------------------------------------
-    // Mixed page
-    // -----------------------------------------------------------------------
 
     [Test, Parallelizable]
     public async Task List_WithContentField_MixedPage_EncodesEachRowCorrectly()
@@ -335,10 +299,6 @@ public class NodeListInlineContentHttpTests
         Assert.That(emptyNode.Content, Is.Null, "empty node must have no content field");
     }
 
-    // -----------------------------------------------------------------------
-    // sort=content rejected
-    // -----------------------------------------------------------------------
-
     [Test, Parallelizable]
     [Description("load-bearing: sort=content must be rejected (arch doc §10/Q6); commenting out the sort guard must break this test")]
     public async Task List_SortByContent_Returns400()
@@ -346,10 +306,6 @@ public class NodeListInlineContentHttpTests
         HttpResponseMessage resp = await ListRawAsync("?sort=content&count=1");
         Assert.That((int) resp.StatusCode, Is.EqualTo(400), "sort=content must be rejected with HTTP 400");
     }
-
-    // -----------------------------------------------------------------------
-    // Path-query parity
-    // -----------------------------------------------------------------------
 
     [Test, Parallelizable]
     [Description("path-query parity: ?path=...&fields=content must return inline content on terminal-hop rows (arch doc §10/Q7)")]
@@ -377,10 +333,6 @@ public class NodeListInlineContentHttpTests
             "path-query terminal hop must carry inline content with identical semantics");
     }
 
-    // -----------------------------------------------------------------------
-    // contentType auto-included when content is requested without it
-    // -----------------------------------------------------------------------
-
     [Test, Parallelizable]
     [Description("service must auto-include contentType when content is in ?fields= even if not explicitly requested (arch doc §8)")]
     public async Task List_ContentWithoutExplicitContentType_AutoIncludesContentType()
@@ -396,10 +348,6 @@ public class NodeListInlineContentHttpTests
         Assert.That(node.ContentType, Is.EqualTo("text/markdown"),
             "contentType must be auto-included when content is in ?fields= but contentType is not");
     }
-
-    // -----------------------------------------------------------------------
-    // Load-bearing negative test: bytes column not fetched by default
-    // -----------------------------------------------------------------------
 
     [Test, Parallelizable]
     [Description("load-bearing negative test (DiVoid #275): Node.Content bytes must NOT be fetched when content is not in ?fields=. " +
@@ -425,10 +373,6 @@ public class NodeListInlineContentHttpTests
             "default-fields listing of 5 x 1 MiB nodes must be < 50 KiB (proves Node.Content bytes are not projected)");
     }
 
-    // -----------------------------------------------------------------------
-    // ?fields=content only (no other explicit fields)
-    // -----------------------------------------------------------------------
-
     [Test, Parallelizable]
     public async Task List_OnlyContentField_Works()
     {
@@ -436,17 +380,13 @@ public class NodeListInlineContentHttpTests
         string body = "content only";
         await UploadTextAsync(id, "text/plain", body);
 
-        HttpResponseMessage resp = await ListRawAsync($"?id={id}&fields=content");
+        HttpResponseMessage resp = await ListRawAsync($"?id={id}&fields=id,content");
         List<NodeDetails> items = await ReadPageAsync(resp);
 
         NodeDetails node = items.FirstOrDefault(n => n.Id == id)!;
         Assert.That(node, Is.Not.Null);
         Assert.That(node.Content, Is.EqualTo(body), "fields=content alone must return the content inline");
     }
-
-    // -----------------------------------------------------------------------
-    // TextContentTypePredicate boundary cases
-    // -----------------------------------------------------------------------
 
     [Test, Parallelizable]
     public async Task List_TextMarkdownContent_ReturnedAsString()
@@ -492,10 +432,6 @@ public class NodeListInlineContentHttpTests
         byte[] decoded = Convert.FromBase64String(node.Content!);
         Assert.That(decoded, Is.EqualTo(bytes), "unknown/binary type must be returned as base64");
     }
-
-    // -----------------------------------------------------------------------
-    // DefaultListFields not widened
-    // -----------------------------------------------------------------------
 
     [Test, Parallelizable]
     [Description("load-bearing: requesting content once must not permanently widen DefaultListFields for subsequent calls on the same mapper")]
