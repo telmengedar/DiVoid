@@ -31,6 +31,7 @@ def register_tools(mcp_server: fastmcp.FastMCP) -> None:
     from .set_status import register as register_set_status
     from .set_content import register as register_set_content
     from .get_links import register as register_get_links
+    from .delete_message import register as register_delete_message
 
     register_search(mcp_server)
     register_get_node(mcp_server)
@@ -42,10 +43,11 @@ def register_tools(mcp_server: fastmcp.FastMCP) -> None:
     register_resolve_user(mcp_server)
     register_send_message(mcp_server)
     register_list_messages(mcp_server)
+    register_delete_message(mcp_server)
     register_list_nodes(mcp_server)
     register_patch_node(mcp_server)
     register_set_status(mcp_server)
     register_set_content(mcp_server)
     register_get_links(mcp_server)
 
-    logger.info("Registered 15 MCP tools (Phase 1 + Phase 2: read-side + link + composite writes + messaging + list + primitives).")
+    logger.info("Registered 16 MCP tools (Phase 1 + Phase 2: read-side + link + composite writes + messaging (send/list/delete) + list + primitives).")
