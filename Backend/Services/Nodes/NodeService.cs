@@ -553,10 +553,16 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             throw new SemanticSearchUnavailableException(
                 "Semantic search requires Postgres; this deployment does not support the embedding function.");
 
+        if (string.Equals(filter.Sort, "content", StringComparison.OrdinalIgnoreCase))
+            throw new NotSupportedException("sort=content is not supported");
+
         NodeMapper mapper = new(filter);
         filter.Fields ??= isSemantic
             ? [.. mapper.DefaultListFields, "similarity"]
             : mapper.DefaultListFields;
+
+        if (filter.Fields.Contains("content") && !filter.Fields.Contains("contentType"))
+            filter.Fields = [.. filter.Fields, "contentType"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(database, filter.Fields);
         operation.ApplyFilter(filter, mapper);
@@ -607,10 +613,16 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             throw new SemanticSearchUnavailableException(
                 "Semantic search requires Postgres; this deployment does not support the embedding function.");
 
+        if (string.Equals(filter.Sort, "content", StringComparison.OrdinalIgnoreCase))
+            throw new NotSupportedException("sort=content is not supported");
+
         NodeMapper mapper = new(filter);
         filter.Fields ??= isSemantic
             ? [.. mapper.DefaultListFields, "similarity"]
             : mapper.DefaultListFields;
+
+        if (filter.Fields.Contains("content") && !filter.Fields.Contains("contentType"))
+            filter.Fields = [.. filter.Fields, "contentType"];
 
         // Parse throws PathQueryParseException on syntax/constraint violations (→ HTTP 400)
         PathQuery query = PathQueryParser.Parse(filter.Path);
