@@ -15,5 +15,5 @@ See docs/drift-policy.md for the full procedure.
 
 __version__ = "0.1.0"
 
-# SHA-256 of node #8 content as of 2026-05-22; nototal row removed (PR #93).
-PINNED_API_REF_HASH = "3cc7335ab2d41067fd4c293c4a73b8fb8bc735607cd10ad508de4fb23e70c66e"
+# SHA-256 of node #8 content as of 2026-05-26; fields=content documented (PR #119 / DiVoid #1181).
+PINNED_API_REF_HASH = "0c0ea79ad07c226f69d0efca0f5c364177155f5c0c1cc00e56754dd3d4fdc602"
