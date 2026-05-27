@@ -596,18 +596,6 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         return rows;
     }
 
-    /// <summary>
-    /// yields each element in <paramref name="rows"/> as an <see cref="IAsyncEnumerable{T}"/>.
-    /// used to adapt a materialized list back to the streaming contract expected by
-    /// <see cref="AsyncPageResponseWriter{T}"/>.
-    /// </summary>
-    static async IAsyncEnumerable<NodeDetails> AsAsyncEnumerable(List<NodeDetails> rows)
-    {
-        foreach (NodeDetails row in rows)
-            yield return row;
-        await Task.CompletedTask;
-    }
-
     /// <inheritdoc />
     public async Task<AsyncPageResponseWriter<NodeDetails>> ListPaged(NodeFilter filter = null, CancellationToken ct = default)
     {
@@ -673,7 +661,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             // in one round-trip — not N+1
             List<NodeDetails> rows = await MaterializeWithLinks(windowed.Items, ct);
             return new AsyncPageResponseWriter<NodeDetails>(
-                AsAsyncEnumerable(rows),
+                rows.ToAsyncEnumerable(),
                 () => windowed.WindowValue,
                 filter.Continue
             );
@@ -744,7 +732,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             // in one round-trip — not N+1
             List<NodeDetails> rows = await MaterializeWithLinks(windowed.Items, ct);
             return new AsyncPageResponseWriter<NodeDetails>(
-                AsAsyncEnumerable(rows),
+                rows.ToAsyncEnumerable(),
                 () => windowed.WindowValue,
                 filter.Continue
             );
