@@ -2031,6 +2031,114 @@ async def smoke_search_include_content(config: Any) -> None:
     )
 
 
+async def smoke_list_include_links(config: Any) -> None:
+    """
+    divoid_list: include_links=True returns inline neighbor ids on each row.
+
+    Fetches documentation nodes with include_links=True. Every returned row must
+    have a 'links' key whose value is a list — value assertion, not mere key-presence,
+    per DiVoid #275. At least one row must have a non-empty list (documentation nodes
+    in the DiVoid project are all linked to the Docs group #7).
+    """
+    print("\n--- divoid_list (include_links=True) ---")
+
+    result = await _execute_list(
+        config=config,
+        type=["documentation"],
+        count=3,
+        include_links=True,
+    )
+
+    _assert(
+        "_execute returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+
+    nodes = result.get("result", [])
+    _assert(
+        "at least one documentation node returned",
+        len(nodes) >= 1,
+        f"count={len(nodes)}",
+    )
+
+    has_non_empty = False
+    for i, row in enumerate(nodes):
+        label = f"row[{i}] id={row.get('id')}"
+        _assert(
+            f"{label}: 'links' key present",
+            "links" in row,
+            f"keys={list(row.keys())}",
+        )
+        _assert(
+            f"{label}: links is a list",
+            isinstance(row.get("links"), list),
+            f"links type={type(row.get('links')).__name__!r}",
+        )
+        if isinstance(row.get("links"), list) and len(row.get("links", [])) > 0:
+            has_non_empty = True
+
+    _assert(
+        "at least one row has non-empty links (docs are linked to Docs group #7)",
+        has_non_empty,
+        "all rows returned links=[] — backend may not be returning adjacency",
+    )
+
+
+async def smoke_search_include_links(config: Any) -> None:
+    """
+    divoid_search: include_links=True returns inline neighbor ids on each search result.
+
+    The query "agent onboarding" reliably surfaces node #9 as a top hit. Node #9
+    is linked to other nodes (DiVoid project #3, etc). Asserts 'links' is a list
+    on the top result — value assertion per DiVoid #275.
+    """
+    print("\n--- divoid_search (include_links=True) ---")
+
+    result = await http_client.get(
+        "nodes",
+        params={
+            "query": "agent onboarding",
+            "count": 3,
+            "fields": ["id", "type", "name", "status", "contentType", "similarity", "links"],
+        },
+    )
+
+    _assert("HTTP 200", result.ok, f"status={result.status}")
+    if not result.ok:
+        return
+
+    data = result.json()
+    nodes = data.get("result", [])
+    _assert(
+        "at least one result returned",
+        len(nodes) >= 1,
+        f"count={len(nodes)}",
+    )
+    if not nodes:
+        return
+
+    top = nodes[0]
+    label = f"top result id={top.get('id')}"
+    _assert(
+        f"{label}: 'links' key present",
+        "links" in top,
+        f"keys={list(top.keys())}",
+    )
+    _assert(
+        f"{label}: links is a list",
+        isinstance(top.get("links"), list),
+        f"links type={type(top.get('links')).__name__!r}",
+    )
+    _assert(
+        f"{label}: links is non-empty (node #9 has known neighbors)",
+        isinstance(top.get("links"), list) and len(top.get("links", [])) > 0,
+        f"links={top.get('links')!r}",
+    )
+
+
 ### -----------------------------------------------------------------------
 ### Phase 2 polish: patch_node, set_status, set_content, get_links
 ### -----------------------------------------------------------------------
@@ -2704,6 +2812,8 @@ async def _run_all(config: Any) -> None:
         smoke_list_sort_invalid_invariant,
         smoke_list_include_content_text,
         smoke_search_include_content,
+        smoke_list_include_links,
+        smoke_search_include_links,
         # Phase 2 polish: patch_node, set_status, set_content, get_links primitives
         smoke_patch_node_invariant_no_fields,
         smoke_patch_node_not_found,
