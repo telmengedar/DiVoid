@@ -535,6 +535,54 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     }
 
 
+    /// <summary>Single batched secondary query — never call per-row.</summary>
+    async Task<Dictionary<long, long[]>> FetchAdjacentIds(long[] ids, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        Dictionary<long, List<long>> adjacency = [];
+        foreach (long id in ids)
+            adjacency[id] = [];
+
+        await foreach (NodeLink link in database.Load<NodeLink>(l => l.SourceId, l => l.TargetId)
+                                                .Where(l => l.SourceId.In(ids) || l.TargetId.In(ids))
+                                                .ExecuteEntitiesAsync())
+        {
+            if (link.SourceId == link.TargetId)
+                continue;
+
+            if (adjacency.TryGetValue(link.SourceId, out List<long> srcList))
+                srcList.Add(link.TargetId);
+            if (adjacency.TryGetValue(link.TargetId, out List<long> tgtList))
+                tgtList.Add(link.SourceId);
+        }
+
+        Dictionary<long, long[]> result = [];
+        foreach ((long id, List<long> neighbors) in adjacency)
+            result[id] = [.. neighbors];
+        return result;
+    }
+
+    /// <summary>Rows with no incident links receive an empty array, not null.</summary>
+    async Task<List<NodeDetails>> MaterializeWithLinks(IAsyncEnumerable<NodeDetails> items, CancellationToken ct)
+    {
+        List<NodeDetails> rows = [];
+        await foreach (NodeDetails node in items)
+            rows.Add(node);
+
+        if (rows.Count == 0)
+            return rows;
+
+        long[] ids = new long[rows.Count];
+        for (int i = 0; i < rows.Count; i++)
+            ids[i] = rows[i].Id;
+
+        Dictionary<long, long[]> adjacency = await FetchAdjacentIds(ids, ct);
+        foreach (NodeDetails node in rows)
+            node.Links = adjacency.TryGetValue(node.Id, out long[] neighbors) ? neighbors : [];
+
+        return rows;
+    }
+
     /// <inheritdoc />
     public async Task<AsyncPageResponseWriter<NodeDetails>> ListPaged(NodeFilter filter = null, CancellationToken ct = default)
     {
@@ -555,6 +603,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         if (string.Equals(filter.Sort, "content", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("sort=content is not supported");
+        if (string.Equals(filter.Sort, "links", StringComparison.OrdinalIgnoreCase))
+            throw new NotSupportedException("sort=links is not supported");
 
         NodeMapper mapper = new(filter);
         filter.Fields ??= isSemantic
@@ -563,6 +613,11 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         if (filter.Fields.Contains("content") && !filter.Fields.Contains("contentType"))
             filter.Fields = [.. filter.Fields, "contentType"];
+
+        // links is derived; not in mapper vocab.
+        bool includeLinks = filter.Fields.Contains("links");
+        if (includeLinks)
+            filter.Fields = filter.Fields.Where(f => !string.Equals(f, "links", StringComparison.OrdinalIgnoreCase)).ToArray();
 
         LoadOperation<Node> operation = mapper.CreateOperation(database, filter.Fields);
         operation.ApplyFilter(filter, mapper);
@@ -585,6 +640,16 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         // and applies limit/offset; WindowedFromOperation decorates with the window column.
         WindowResult<NodeDetails, long> windowed =
             await mapper.WindowedFromOperation<long, Node>(operation, DB.CountOver(), ct, filter.Fields);
+
+        if (includeLinks)
+        {
+            List<NodeDetails> rows = await MaterializeWithLinks(windowed.Items, ct);
+            return new AsyncPageResponseWriter<NodeDetails>(
+                rows.ToAsyncEnumerable(),
+                () => windowed.WindowValue,
+                filter.Continue
+            );
+        }
 
         return new AsyncPageResponseWriter<NodeDetails>(
             windowed.Items,
@@ -615,6 +680,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         if (string.Equals(filter.Sort, "content", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("sort=content is not supported");
+        if (string.Equals(filter.Sort, "links", StringComparison.OrdinalIgnoreCase))
+            throw new NotSupportedException("sort=links is not supported");
 
         NodeMapper mapper = new(filter);
         filter.Fields ??= isSemantic
@@ -623,6 +690,11 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         if (filter.Fields.Contains("content") && !filter.Fields.Contains("contentType"))
             filter.Fields = [.. filter.Fields, "contentType"];
+
+        // links is derived; not in mapper vocab.
+        bool includeLinks = filter.Fields.Contains("links");
+        if (includeLinks)
+            filter.Fields = filter.Fields.Where(f => !string.Equals(f, "links", StringComparison.OrdinalIgnoreCase)).ToArray();
 
         // Parse throws PathQueryParseException on syntax/constraint violations (→ HTTP 400)
         PathQuery query = PathQueryParser.Parse(filter.Path);
@@ -637,6 +709,16 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         // clamps count ≤500 and applies limit/offset; WindowedFromOperation decorates with the window column.
         WindowResult<NodeDetails, long> windowed =
             await mapper.WindowedFromOperation<long, Node>(composed.Terminal, DB.CountOver(), ct, filter.Fields);
+
+        if (includeLinks)
+        {
+            List<NodeDetails> rows = await MaterializeWithLinks(windowed.Items, ct);
+            return new AsyncPageResponseWriter<NodeDetails>(
+                rows.ToAsyncEnumerable(),
+                () => windowed.WindowValue,
+                filter.Continue
+            );
+        }
 
         return new AsyncPageResponseWriter<NodeDetails>(
             windowed.Items,
