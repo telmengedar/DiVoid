@@ -71,6 +71,7 @@ import {
 } from './WorkspaceFilterPopover';
 import { NodeCardRenderer, type NodeCardData, type WorkspaceNode } from './NodeCardRenderer';
 import { FloatingEdge } from './FloatingEdge';
+import { reconcileNodes, reconcileEdges } from './reconcile';
 import { CreateNodeDialog } from '@/features/nodes/CreateNodeDialog';
 import { useCreateNode, useLinkNodes, useUnlinkNodes } from '@/features/nodes/mutations';
 import {
@@ -346,15 +347,10 @@ export function WorkspaceCanvas({ onPeek }: WorkspaceCanvasProps) {
     [visibleDetails, onPeek],
   );
 
-  const visibleIdSet = useMemo(
-    () => new Set(visibleDetails.map((n) => String(n.id))),
-    [visibleDetails],
-  );
-
-  const xyEdges = useMemo(
-    () => buildEdgesFromInlineLinks(visibleDetails, visibleIdSet),
-    [visibleDetails, visibleIdSet],
-  );
+  const xyEdges = useMemo(() => {
+    const visibleIdSet = new Set(visibleDetails.map((n) => String(n.id)));
+    return buildEdgesFromInlineLinks(visibleDetails, visibleIdSet);
+  }, [visibleDetails]);
 
   // ── Controlled xyflow state ───────────────────────────────────────────────
   // We use controlled state so xyflow's local drag deltas apply immediately
@@ -363,35 +359,19 @@ export function WorkspaceCanvas({ onPeek }: WorkspaceCanvasProps) {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(xyEdges);
 
   // Sync server data into xyflow state whenever query results change.
-  // Only replace positions for nodes NOT currently being dragged to avoid
-  // snapping under the cursor.
-  //
-  // win #6: prev.find inside xyNodes.map was O(n²). Build prevMap once (O(n))
-  // so each lookup is O(1) — measurable at the 250-node cap.
+  // reconcileNodes reuses prev references for unchanged nodes so xyflow's
+  // internal store sees no updates and skips re-processing. When the entire
+  // array is unchanged, reconcileNodes returns the exact prev reference and
+  // React's setState functional-updater bails out — no re-render. (#1261)
   useEffect(() => {
     setNodes((prev) => {
-      const dragging = new Set(prev.filter((n) => n.dragging).map((n) => n.id));
-      // Build Map<id, prev> once — O(n) instead of O(n) per map iteration.
-      const prevMap  = new Map(prev.map((p) => [p.id, p]));
-      const incoming = new Map(xyNodes.map((n) => [n.id, n]));
-
-      // Remove nodes that left the viewport; add new ones; update non-dragging ones.
-      return xyNodes.map((incomingNode) => {
-        const existing = prevMap.get(incomingNode.id);
-        if (existing && dragging.has(existing.id)) {
-          // Preserve local drag position; update data (name/status) only.
-          return { ...existing, data: incomingNode.data };
-        }
-        return incomingNode;
-      }).concat(
-        // Keep dragging nodes that scrolled out of viewport bounds temporarily.
-        prev.filter((p) => dragging.has(p.id) && !incoming.has(p.id)),
-      );
+      const draggingIds = new Set(prev.filter((n) => n.dragging).map((n) => n.id));
+      return reconcileNodes(prev, xyNodes, draggingIds);
     });
   }, [xyNodes, setNodes]);
 
   useEffect(() => {
-    setEdges(xyEdges);
+    setEdges((prev) => reconcileEdges(prev, xyEdges));
   }, [xyEdges, setEdges]);
 
   // ── Drag-end handler ──────────────────────────────────────────────────────
@@ -646,6 +626,8 @@ export function WorkspaceCanvas({ onPeek }: WorkspaceCanvasProps) {
         connectionMode={ConnectionMode.Loose}
         deleteKeyCode="Delete"
         onlyRenderVisibleElements
+        elevateNodesOnSelect={false}
+        elevateEdgesOnSelect={false}
       >
         <Background />
         <Controls />

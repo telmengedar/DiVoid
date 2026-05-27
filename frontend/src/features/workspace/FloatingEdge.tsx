@@ -19,6 +19,7 @@
  * Task: DiVoid node #352
  */
 
+import { memo } from 'react';
 import { useInternalNode, BaseEdge, getStraightPath, type EdgeProps } from '@xyflow/react';
 
 // ─── Geometry helpers ─────────────────────────────────────────────────────────
@@ -113,8 +114,13 @@ export function getEdgeParams(source: NodeRect, target: NodeRect): EdgeParams {
  *
  * The component is registered as `edgeTypes.floating` in WorkspaceCanvas.
  * Edges must be created with `type: 'floating'` to use this renderer.
+ *
+ * Wrapped with memo (shallow comparison) — id, source, target, markerEnd, and
+ * style are primitives or stable references for unchanged edges after #1261
+ * reference-preserving reconciliation lands. Prevents edge body re-execution
+ * when the reconciler returns the same edge reference.
  */
-export function FloatingEdge({ id, source, target, markerEnd, style }: EdgeProps) {
+export const FloatingEdge = memo(function FloatingEdge({ id, source, target, markerEnd, style }: EdgeProps) {
   const sourceNode = useInternalNode(source);
   const targetNode = useInternalNode(target);
 
@@ -153,4 +159,4 @@ export function FloatingEdge({ id, source, target, markerEnd, style }: EdgeProps
       style={style}
     />
   );
-}
+});
