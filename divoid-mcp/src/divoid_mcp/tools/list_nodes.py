@@ -137,9 +137,6 @@ def _check_invariants(
 
 
 _DEFAULT_FIELDS = ["id", "type", "name", "status", "contentType"]
-_DEFAULT_FIELDS_WITH_CONTENT = ["id", "type", "name", "status", "contentType", "content"]
-_DEFAULT_FIELDS_WITH_LINKS = ["id", "type", "name", "status", "contentType", "links"]
-_DEFAULT_FIELDS_WITH_CONTENT_AND_LINKS = ["id", "type", "name", "status", "contentType", "content", "links"]
 
 
 async def _execute(
@@ -173,25 +170,13 @@ async def _execute(
     count = max(1, min(500, count))
 
     # Resolve the effective fields list when include_content and/or include_links requested.
-    if include_content and include_links:
-        if fields is None:
-            fields = _DEFAULT_FIELDS_WITH_CONTENT_AND_LINKS
-        else:
-            fields = list(fields)
-            if "content" not in fields:
-                fields.append("content")
-            if "links" not in fields:
-                fields.append("links")
-    elif include_content:
-        if fields is None:
-            fields = _DEFAULT_FIELDS_WITH_CONTENT
-        elif "content" not in fields:
-            fields = list(fields) + ["content"]
-    elif include_links:
-        if fields is None:
-            fields = _DEFAULT_FIELDS_WITH_LINKS
-        elif "links" not in fields:
-            fields = list(fields) + ["links"]
+    if include_content or include_links:
+        base_fields = list(fields) if fields is not None else list(_DEFAULT_FIELDS)
+        if include_content and "content" not in base_fields:
+            base_fields.append("content")
+        if include_links and "links" not in base_fields:
+            base_fields.append("links")
+        fields = base_fields
 
     params: dict[str, Any] = {"count": count}
 
