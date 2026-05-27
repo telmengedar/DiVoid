@@ -114,6 +114,9 @@ export function usePatchNode(id: number) {
       queryClient.invalidateQueries({ queryKey: ['nodes', 'list'] });
       queryClient.invalidateQueries({ queryKey: ['nodes', 'linkedto'] });
       queryClient.invalidateQueries({ queryKey: ['nodes', 'semantic'] });
+      // Invalidate viewport so canvas cards reflect the updated name/status
+      // without re-mount (design §6.5, PR #124 precedent).
+      queryClient.invalidateQueries({ queryKey: ['nodes', 'viewport'] });
     },
     onError: (error) => toastError(error),
   });
@@ -141,6 +144,9 @@ export function useDeleteNode(id: number) {
       queryClient.invalidateQueries({ queryKey: ['nodes', 'list'] });
       queryClient.invalidateQueries({ queryKey: ['nodes', 'linkedto'] });
       queryClient.invalidateQueries({ queryKey: ['nodes', 'semantic'] });
+      // Invalidate viewport so the deleted card disappears from the canvas
+      // without re-mount (design §6.5, PR #124 precedent).
+      queryClient.invalidateQueries({ queryKey: ['nodes', 'viewport'] });
     },
     onError: (error) => toastError(error),
   });
