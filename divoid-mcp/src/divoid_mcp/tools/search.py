@@ -37,7 +37,9 @@ containers); status is null for nodes whose type does not carry a lifecycle \
 (most types other than task / bug). Use n.get() rather than direct key access \
 when consuming results. Set include_content=True to fetch the body inline on \
 each row — opt-in for research / lookup flows that need to read the bodies of \
-the top hits; costs bandwidth.\
+the top hits; costs bandwidth. Set include_links=True to fetch direct neighbor \
+ids inline on each row — opt-in for graph-walking / fan-out-avoidance flows; \
+costs bandwidth proportional to adjacency density.\
 """
 
 
@@ -52,6 +54,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         status: list[str] | None = None,
         count: int = 10,
         include_content: bool = False,
+        include_links: bool = False,
     ) -> dict[str, Any]:
         """
         Semantic search over the DiVoid graph.
@@ -73,6 +76,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             include_content: If true, fetch the body inline on each row. Text content arrives
                              as a UTF-8 string; binary content arrives as a base64 string.
                              Nodes with no content omit the field. Opt-in; costs bandwidth.
+            include_links: If true, fetch direct neighbor ids inline on each row. Returns
+                           links: [id, ...] (or [] for isolated nodes). Use for graph-walking /
+                           fan-out-avoidance flows. Opt-in; costs bandwidth proportional to
+                           adjacency density.
         """
         if not query or not query.strip():
             return {
@@ -102,8 +109,13 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             params["linkedto"] = linkedto
         if status:
             params["status"] = status
-        if include_content:
-            params["fields"] = ["id", "type", "name", "status", "contentType", "similarity", "content"]
+        if include_content or include_links:
+            base_fields = ["id", "type", "name", "status", "contentType", "similarity"]
+            if include_content:
+                base_fields.append("content")
+            if include_links:
+                base_fields.append("links")
+            params["fields"] = base_fields
 
         logger.info(
             "divoid_search query=%r type=%s linkedto=%s status=%s count=%d",
@@ -143,6 +155,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                 row["contentType"] = n["contentType"]
             if "content" in n:
                 row["content"] = n["content"]
+            if "links" in n:
+                row["links"] = n["links"]
             nodes.append(row)
 
         logger.info("divoid_search ok total=%d returned=%d", total, len(nodes))

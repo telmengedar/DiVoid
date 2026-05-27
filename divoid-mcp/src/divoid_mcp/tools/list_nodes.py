@@ -81,7 +81,11 @@ FIELDS: default projection is [id, type, name, status, contentType]. Add x or y 
   get canvas positions. Omit fields to reduce token footprint on large result sets.
   Set include_content=True to fetch the body inline on each row — opt-in for research /
   lookup flows; costs bandwidth proportional to the total body size of the page; for many
-  small documentation nodes this saves N follow-up divoid_get_content calls.\
+  small documentation nodes this saves N follow-up divoid_get_content calls.
+  Set include_links=True to fetch the direct neighbor ids inline on each row — opt-in for
+  graph-walking / fan-out-avoidance flows; costs bandwidth proportional to adjacency
+  density; saves N follow-up divoid_get_links calls when you need the full adjacency of a
+  page of nodes.\
 """
 
 
@@ -134,6 +138,8 @@ def _check_invariants(
 
 _DEFAULT_FIELDS = ["id", "type", "name", "status", "contentType"]
 _DEFAULT_FIELDS_WITH_CONTENT = ["id", "type", "name", "status", "contentType", "content"]
+_DEFAULT_FIELDS_WITH_LINKS = ["id", "type", "name", "status", "contentType", "links"]
+_DEFAULT_FIELDS_WITH_CONTENT_AND_LINKS = ["id", "type", "name", "status", "contentType", "content", "links"]
 
 
 async def _execute(
@@ -152,6 +158,7 @@ async def _execute(
     descending: bool = False,
     fields: list[str] | None = None,
     include_content: bool = False,
+    include_links: bool = False,
 ) -> dict[str, Any]:
     """
     Core implementation of divoid_list.
@@ -165,12 +172,26 @@ async def _execute(
     # Silently clamp count to [1, 500].
     count = max(1, min(500, count))
 
-    # Resolve the effective fields list when include_content is requested.
-    if include_content:
+    # Resolve the effective fields list when include_content and/or include_links requested.
+    if include_content and include_links:
+        if fields is None:
+            fields = _DEFAULT_FIELDS_WITH_CONTENT_AND_LINKS
+        else:
+            fields = list(fields)
+            if "content" not in fields:
+                fields.append("content")
+            if "links" not in fields:
+                fields.append("links")
+    elif include_content:
         if fields is None:
             fields = _DEFAULT_FIELDS_WITH_CONTENT
         elif "content" not in fields:
             fields = list(fields) + ["content"]
+    elif include_links:
+        if fields is None:
+            fields = _DEFAULT_FIELDS_WITH_LINKS
+        elif "links" not in fields:
+            fields = list(fields) + ["links"]
 
     params: dict[str, Any] = {"count": count}
 
@@ -253,6 +274,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         descending: bool = False,
         fields: list[str] | None = None,
         include_content: bool = False,
+        include_links: bool = False,
     ) -> dict[str, Any]:
         """
         List DiVoid nodes with structural filters, pagination, and optional path-query.
@@ -287,6 +309,11 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                              fields was not specified). Text content arrives as a UTF-8 string;
                              binary content arrives as a base64 string. Nodes with no content
                              omit the field entirely. Opt-in; costs bandwidth.
+            include_links: If true, fetch direct neighbor ids inline on each row. Appends
+                           'links' to the fields projection. Returns links: [id, ...] (or []
+                           for isolated nodes). Use for graph-walking / fan-out-avoidance flows
+                           that would otherwise issue N divoid_get_links calls. Opt-in; costs
+                           bandwidth proportional to adjacency density.
         """
         # --- Invariant guard (before any HTTP call) ---
         try:
@@ -319,4 +346,5 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             descending=descending,
             fields=fields,
             include_content=include_content,
+            include_links=include_links,
         )

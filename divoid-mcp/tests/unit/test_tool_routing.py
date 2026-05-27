@@ -606,6 +606,294 @@ async def test_search_default_response_shape_unchanged(server: FastMCP) -> None:
 
 
 # ---------------------------------------------------------------------------
+# divoid_list — include_links tests (DiVoid #1214)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_default_no_links_in_fields(server: FastMCP) -> None:
+    """Default divoid_list call must NOT send fields=links and must NOT return links."""
+    api_response = {
+        "result": [{"id": 1, "type": "documentation", "name": "Onboarding", "status": None}],
+        "total": 1,
+    }
+
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_list", {})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url_params = str(captured_request[0].url)
+    assert "links" not in url_params, (
+        f"Default call must not include 'links' in fields, URL: {url_params!r}"
+    )
+    rows = result.get("result", [])
+    assert len(rows) == 1
+    assert "links" not in rows[0], (
+        f"Default call must not return 'links' in rows, got: {rows[0]!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_include_links_appends_to_default_fields(server: FastMCP) -> None:
+    """include_links=True with no explicit fields → fields contains links + defaults."""
+    api_response = {
+        "result": [
+            {
+                "id": 9,
+                "type": "documentation",
+                "name": "Onboarding",
+                "status": None,
+                "contentType": "text/markdown",
+                "links": [3, 7, 190],
+            }
+        ],
+        "total": 1,
+    }
+
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_list", {"include_links": True})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url_params = str(captured_request[0].url)
+    assert "links" in url_params, (
+        f"include_links=True must add 'links' to fields, URL: {url_params!r}"
+    )
+    for expected_field in ("id", "type", "name", "status", "contentType"):
+        assert expected_field in url_params, (
+            f"Expected default field {expected_field!r} in URL, got: {url_params!r}"
+        )
+    rows = result.get("result", [])
+    assert len(rows) == 1
+    assert rows[0].get("links") == [3, 7, 190], (
+        f"Expected links to be passed through, got: {rows[0].get('links')!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_include_links_appends_to_explicit_fields(server: FastMCP) -> None:
+    """include_links=True with explicit fields → 'links' appended; original fields kept."""
+    api_response = {
+        "result": [{"id": 42, "name": "My Node", "links": [1, 2]}],
+        "total": 1,
+    }
+
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_list", {"fields": ["id", "name"], "include_links": True})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url_params = str(captured_request[0].url)
+    for expected_field in ("id", "name", "links"):
+        assert expected_field in url_params, (
+            f"Expected {expected_field!r} in URL params, got: {url_params!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_list_include_links_empty_neighbors(server: FastMCP) -> None:
+    """include_links=True with an isolated node (links=[]) passes through unchanged."""
+    api_response = {
+        "result": [
+            {
+                "id": 77,
+                "type": "documentation",
+                "name": "Orphan",
+                "status": None,
+                "contentType": "text/markdown",
+                "links": [],
+            }
+        ],
+        "total": 1,
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODES_URL).mock(return_value=httpx.Response(200, json=api_response))
+        result = await _call(server, "divoid_list", {"include_links": True})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    rows = result.get("result", [])
+    assert len(rows) == 1
+    assert rows[0].get("links") == [], (
+        f"Empty links array must pass through verbatim, got: {rows[0].get('links')!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_include_content_and_links_together(server: FastMCP) -> None:
+    """include_content=True and include_links=True together plumb both into fields."""
+    api_response = {
+        "result": [
+            {
+                "id": 190,
+                "type": "documentation",
+                "name": "Hivemind Protocol",
+                "status": None,
+                "contentType": "text/markdown",
+                "content": "# Hivemind",
+                "links": [9, 314],
+            }
+        ],
+        "total": 1,
+    }
+
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_list", {"include_content": True, "include_links": True})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url_params = str(captured_request[0].url)
+    assert "content" in url_params, (
+        f"include_content=True must add 'content' to fields, URL: {url_params!r}"
+    )
+    assert "links" in url_params, (
+        f"include_links=True must add 'links' to fields, URL: {url_params!r}"
+    )
+    rows = result.get("result", [])
+    assert len(rows) == 1
+    assert rows[0].get("content") == "# Hivemind", (
+        f"content must pass through, got: {rows[0].get('content')!r}"
+    )
+    assert rows[0].get("links") == [9, 314], (
+        f"links must pass through, got: {rows[0].get('links')!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# divoid_search — include_links tests (DiVoid #1214)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_default_no_links(server: FastMCP) -> None:
+    """Default divoid_search must not include links in the result rows."""
+    api_response = {
+        "result": [
+            {
+                "id": 55,
+                "name": "Auth bug",
+                "type": "bug",
+                "status": "open",
+                "similarity": 0.85,
+            }
+        ],
+        "total": 1,
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODES_URL).mock(return_value=httpx.Response(200, json=api_response))
+        result = await _call(server, "divoid_search", {"query": "auth bug"})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    rows = result.get("results", [])
+    assert len(rows) == 1
+    assert "links" not in rows[0], (
+        f"Default search must not return 'links' in rows, got: {rows[0]!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_include_links_passes_through(server: FastMCP) -> None:
+    """include_links=True → fields param sent, links array passes through."""
+    api_response = {
+        "result": [
+            {
+                "id": 190,
+                "name": "Hivemind Protocol",
+                "type": "documentation",
+                "status": None,
+                "similarity": 0.93,
+                "links": [9, 314, 695],
+            }
+        ],
+        "total": 1,
+    }
+
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_search", {"query": "hivemind", "include_links": True})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url_params = str(captured_request[0].url)
+    assert "links" in url_params, (
+        f"include_links=True must add 'links' to fields, URL: {url_params!r}"
+    )
+    rows = result.get("results", [])
+    assert len(rows) == 1
+    assert rows[0].get("links") == [9, 314, 695], (
+        f"links must pass through verbatim, got: {rows[0].get('links')!r}"
+    )
+    assert rows[0].get("similarity") == 0.93, (
+        f"similarity must still be present, got: {rows[0].get('similarity')!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_include_links_empty_neighbors(server: FastMCP) -> None:
+    """include_links=True with isolated node (links=[]) passes through unchanged."""
+    api_response = {
+        "result": [
+            {
+                "id": 99,
+                "name": "Orphan node",
+                "type": "documentation",
+                "status": None,
+                "similarity": 0.60,
+                "links": [],
+            }
+        ],
+        "total": 1,
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODES_URL).mock(return_value=httpx.Response(200, json=api_response))
+        result = await _call(server, "divoid_search", {"query": "orphan", "include_links": True})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    rows = result.get("results", [])
+    assert len(rows) == 1
+    assert rows[0].get("links") == [], (
+        f"Empty links array must pass through verbatim, got: {rows[0].get('links')!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # divoid_delete_message — 3 hermetic branches
 #
 # The server returns:
