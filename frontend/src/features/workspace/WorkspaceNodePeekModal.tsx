@@ -6,9 +6,6 @@
  * NodeDetailView is not mounted — no queries fire.
  *
  * Accessibility:
- *  - Dialog.Title shows the node id (changes to node name once loaded — handled
- *    by NodeDetailView's own heading; the dialog title is sr-only supplemental).
- *  - Dialog.Description is sr-only: "Detail view for node N".
  *  - Focus trap and return-focus are Radix defaults.
  *  - ESC is intercepted by Radix and does not reach xyflow's deleteKeyCode.
  *
@@ -19,6 +16,7 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { NodeDetailView } from '@/features/nodes/NodeDetailView';
+import { useNode } from '@/features/nodes/useNode';
 
 interface WorkspaceNodePeekModalProps {
   /** Which node to peek. null means the dialog is closed. */
@@ -45,6 +43,9 @@ export function WorkspaceNodePeekModal({
   onClose,
   onPeekChange,
 }: WorkspaceNodePeekModalProps) {
+  const { data: node } = useNode(peekId ?? 0);
+  const title = node?.name || (peekId !== null ? `Node ${peekId}` : 'Node detail');
+
   return (
     <Dialog.Root open={peekId !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
       <Dialog.Portal>
@@ -57,7 +58,7 @@ export function WorkspaceNodePeekModal({
           {/* Modal header — close button + sr-only title */}
           <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-border bg-background">
             <Dialog.Title className="text-base font-semibold">
-              {peekId !== null ? `Node ${peekId}` : 'Node detail'}
+              {title}
             </Dialog.Title>
             <Dialog.Close asChild>
               <button
@@ -70,7 +71,7 @@ export function WorkspaceNodePeekModal({
           </div>
 
           <Dialog.Description id="peek-modal-description" className="sr-only">
-            {peekId !== null ? `Detail view for node ${peekId}` : ''}
+            {peekId !== null ? `Detail view for ${title}` : ''}
           </Dialog.Description>
 
           {/* Body — NodeDetailView mounts only when peekId is set */}
