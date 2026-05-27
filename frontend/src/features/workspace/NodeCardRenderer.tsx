@@ -11,17 +11,22 @@
  * function so canvas re-renders (from viewport changes) do not cascade into
  * every node's render.
  *
- * Click handler: navigate to /nodes/{id} (existing detail page). Rationale for
- * this choice over a side-panel preview is filed in DiVoid documentation node
- * (see WorkspacePage.tsx for the node reference). Double-click is reserved.
+ * Click handler: calls data.onPeek(data.id) to open the workspace peek modal
+ * for the clicked node. Previously navigated to /nodes/{id}; changed in DiVoid
+ * #1253 (workspace in-canvas modal preview). onPeek is a stable callback
+ * provided by WorkspacePage via usePeekState.
  *
- * Design: docs/architecture/workspace-mode.md §5.12
- * Task: DiVoid node #230
+ * propsAreEqual does NOT compare data.onPeek — the reference is stable across
+ * renders and adding the comparison would be unnecessary overhead. See design
+ * §5.6 for the reasoning.
+ *
+ * Design: docs/architecture/workspace-mode.md §5.12 /
+ *         docs/architecture/workspace-modal-preview.md §5.6
+ * Task: DiVoid node #230 / #1253
  */
 
 import { memo } from 'react';
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
-import { useNavigate } from 'react-router-dom';
 import { ROUTES } from '@/lib/constants';
 import type { PositionedNodeDetails } from '@/types/divoid';
 import { cn } from '@/lib/cn';
@@ -32,8 +37,13 @@ import { cn } from '@/lib/cn';
  * React Flow requires `TData extends Record<string, unknown>` — the intersection
  * with `Record<string, unknown>` satisfies that constraint while keeping full
  * type safety on the known fields.
+ *
+ * onPeek: stable callback from WorkspacePage (via usePeekState) that opens the
+ * peek modal for the given node id. Added in DiVoid #1253.
  */
-export type NodeCardData = PositionedNodeDetails & Record<string, unknown>;
+export type NodeCardData = PositionedNodeDetails & {
+  onPeek: (id: number) => void;
+} & Record<string, unknown>;
 
 /**
  * Full xyflow Node type for workspace nodes.
@@ -46,7 +56,6 @@ export type WorkspaceNode = Node<NodeCardData>;
 
 /** Minimal set of props compared for re-render equality. */
 function propsAreEqual(prev: NodeProps<WorkspaceNode>, next: NodeProps<WorkspaceNode>) {
-  // Re-render only when the data content or selection state changes.
   return (
     prev.data.id === next.data.id &&
     prev.data.name === next.data.name &&
@@ -80,11 +89,11 @@ function statusColour(status: string): string {
   }
 }
 
-function NodeCardRendererInner({ data, selected }: NodeProps<WorkspaceNode>) {
-  const navigate = useNavigate();
+void ROUTES;
 
+function NodeCardRendererInner({ data, selected }: NodeProps<WorkspaceNode>) {
   const handleClick = () => {
-    navigate(ROUTES.NODE_DETAIL(data.id));
+    data.onPeek(data.id);
   };
 
   return (

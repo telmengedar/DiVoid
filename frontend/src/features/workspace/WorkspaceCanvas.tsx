@@ -19,8 +19,9 @@
  *  - nodeTypes / edgeTypes objects are declared outside the component (stable refs).
  *  - The bounds debounce prevents thrashing the query on every pan tick.
  *
- * Design: docs/architecture/workspace-mode.md §5.7
- * Task: DiVoid node #230 / #318 / #352
+ * Design: docs/architecture/workspace-mode.md §5.7 /
+ *         docs/architecture/workspace-modal-preview.md §5.5 / §5.6
+ * Task: DiVoid node #230 / #318 / #352 / #1253
  */
 
 import {
@@ -151,12 +152,12 @@ function computePaddedBounds(
 }
 
 /** Convert a PositionedNodeDetails into an xyflow WorkspaceNode. */
-function toXyflowNode(n: PositionedNodeDetails): WorkspaceNode {
+function toXyflowNode(n: PositionedNodeDetails, onPeek: (id: number) => void): WorkspaceNode {
   return {
     id:       String(n.id),
     type:     'nodeCard',
     position: { x: n.x, y: n.y },
-    data:     n as NodeCardData,
+    data:     { ...n, onPeek } as NodeCardData,
   };
 }
 
@@ -227,7 +228,18 @@ function saveViewport(vp: Viewport): void {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function WorkspaceCanvas() {
+interface WorkspaceCanvasProps {
+  /**
+   * Stable callback provided by WorkspacePage (via usePeekState). Called when
+   * the user clicks a node card — opens the peek modal for that node id.
+   * Stable reference (useCallback with [setSearchParams] deps) so it does not
+   * churn the xyNodes memo or cause the canvas to re-render on peek-state
+   * changes. See design §5.5 / §9.
+   */
+  onPeek: (id: number) => void;
+}
+
+export function WorkspaceCanvas({ onPeek }: WorkspaceCanvasProps) {
   const { resolvedTheme } = useTheme();
   const navigate          = useNavigate();
   const client            = useApiClient();
@@ -324,9 +336,14 @@ export function WorkspaceCanvas() {
   }, [nodesPage, untypedPage, includesUntyped]);
 
   // ── Build xyflow nodes / edges (memoised) ─────────────────────────────────
+  // onPeek is stable (useCallback with [setSearchParams] in usePeekState) so
+  // including it here does not churn the memo when peekId changes. The memo
+  // only re-runs when visibleDetails or onPeek identity changes; onPeek never
+  // changes, so the memo is effectively keyed solely on visibleDetails.
+  // See design §9 render-stability table.
   const xyNodes = useMemo(
-    () => visibleDetails.map(toXyflowNode),
-    [visibleDetails],
+    () => visibleDetails.map((n) => toXyflowNode(n, onPeek)),
+    [visibleDetails, onPeek],
   );
 
   const visibleIdSet = useMemo(
