@@ -228,7 +228,11 @@ describe('WorkspacePeekModal — open on click', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('Test Document')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Test Document' })).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 2, name: 'Test Document' })).toBeInTheDocument();
     });
   });
 });
@@ -291,7 +295,7 @@ describe('WorkspacePeekModal — neighbour peek swap', () => {
     renderWorkspace('/workspace?peek=42');
 
     await waitFor(() => {
-      expect(screen.getByText('Test Document')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Test Document' })).toBeInTheDocument();
     });
 
     await waitFor(() => {
@@ -301,7 +305,7 @@ describe('WorkspacePeekModal — neighbour peek swap', () => {
     await user.click(screen.getByRole('button', { name: /open peek for node 7/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'Task Seven' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Task Seven' })).toBeInTheDocument();
     });
 
     expect(screen.getByTestId('workspace-peek-modal')).toBeInTheDocument();
