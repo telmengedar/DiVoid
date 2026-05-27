@@ -2,8 +2,11 @@
  * useNodesInViewport — fetch nodes whose canvas position falls inside the
  * given viewport rectangle, optionally filtered by type and status.
  *
- * Calls GET /api/nodes?bounds=xMin,yMin,xMax,yMax&fields=id,type,name,status,x,y
+ * Calls GET /api/nodes?bounds=xMin,yMin,xMax,yMax&fields=id,type,name,status,x,y,links
  * with optional ?type=task,bug,...&status=open,in-progress,...&nostatus=true
+ *
+ * Each row carries links: number[] (neighbor ids), so WorkspaceCanvas can render
+ * edges without a second round-trip. Design: DiVoid #310 / #1213.
  *
  * ## Type-null handling (DiVoid #318)
  *
@@ -115,7 +118,7 @@ export function useNodesInViewport(
         API.NODES.LIST,
         {
           bounds: bounds ?? undefined,
-          fields: ['id', 'type', 'name', 'status', 'x', 'y'],
+          fields: ['id', 'type', 'name', 'status', 'x', 'y', 'links'],
           count: MAX_VIEWPORT_NODES,
           nototal: true,
           ...(typeParam   !== undefined && { type:     typeParam }),
@@ -150,7 +153,7 @@ export function useUntypedNodesInViewport(
         API.NODES.LIST,
         {
           bounds: bounds ?? undefined,
-          fields: ['id', 'type', 'name', 'status', 'x', 'y'],
+          fields: ['id', 'type', 'name', 'status', 'x', 'y', 'links'],
           count: MAX_VIEWPORT_NODES,
           nototal: true,
           // No type param → fetches all types, we filter client-side to null type

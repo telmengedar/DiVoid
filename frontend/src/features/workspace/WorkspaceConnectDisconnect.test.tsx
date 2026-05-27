@@ -60,7 +60,6 @@ const server = setupServer(
     }),
   ),
   http.get(`${BASE_URL}/nodes`, () => HttpResponse.json({ result: [], total: 0 })),
-  http.get(`${BASE_URL}/nodes/links`, () => HttpResponse.json({ result: [], total: 0 })),
   http.get(`${BASE_URL}/types`, () => HttpResponse.json({ result: [{ id: 6, type: 'task', count: 1 }], total: 1 })),
   http.post(`${BASE_URL}/nodes/:id/links`, () => new HttpResponse(null, { status: 204 })),
   http.delete(`${BASE_URL}/nodes/:sourceId/links/:targetId`, () => new HttpResponse(null, { status: 204 })),

@@ -10,7 +10,7 @@
  */
 
 import { http, HttpResponse } from 'msw';
-import type { Page, NodeDetails, NodeLink, PositionedNodeDetails } from '@/types/divoid';
+import type { Page, NodeDetails, PositionedNodeDetails } from '@/types/divoid';
 
 export const BASE_URL = 'http://localhost:5007/api';
 
@@ -54,12 +54,12 @@ export const semanticPage: Page<NodeDetails> = {
   total: 2,
 };
 
-/** Fixture: positioned nodes for workspace viewport queries. */
+/** Fixture: positioned nodes for workspace viewport queries (includes inline links). */
 export const viewportPage: Page<PositionedNodeDetails> = {
   result: [
-    { id: 1, type: 'task', name: 'First task', status: 'open', x: 100, y: 200 },
-    { id: 2, type: 'documentation', name: 'Some doc', status: null, x: -50, y: 80 },
-    { id: 3, type: 'project', name: 'DiVoid', status: null, x: 300, y: 150 },
+    { id: 1, type: 'task',          name: 'First task', status: 'open', x: 100, y: 200, links: [2] },
+    { id: 2, type: 'documentation', name: 'Some doc',   status: null,   x: -50, y: 80,  links: [1, 3] },
+    { id: 3, type: 'project',       name: 'DiVoid',     status: null,   x: 300, y: 150, links: [2] },
   ],
   total: 3,
 };
@@ -73,11 +73,11 @@ export const viewportPage: Page<PositionedNodeDetails> = {
  */
 export const viewportPageWithFilterFixtures: Page<PositionedNodeDetails> = {
   result: [
-    { id: 1, type: 'task',          name: 'First task',   status: 'open',   x: 100, y: 200 },
-    { id: 2, type: 'documentation', name: 'Some doc',     status: null,     x: -50, y: 80  },
-    { id: 3, type: 'project',       name: 'DiVoid',       status: null,     x: 300, y: 150 },
-    { id: 4, type: 'task',          name: 'Closed task',  status: 'closed', x: 400, y: 200 },
-    { id: 5, type: null as unknown as string, name: 'Group node', status: null, x: 500, y: 300 },
+    { id: 1, type: 'task',          name: 'First task',   status: 'open',   x: 100, y: 200, links: [2] },
+    { id: 2, type: 'documentation', name: 'Some doc',     status: null,     x: -50, y: 80,  links: [1, 3] },
+    { id: 3, type: 'project',       name: 'DiVoid',       status: null,     x: 300, y: 150, links: [2] },
+    { id: 4, type: 'task',          name: 'Closed task',  status: 'closed', x: 400, y: 200, links: [] },
+    { id: 5, type: null as unknown as string, name: 'Group node', status: null, x: 500, y: 300, links: [] },
   ],
   total: 5,
 };
@@ -103,14 +103,6 @@ export const typeCatalogPage = {
   total: 6,
 };
 
-/** Fixture: link adjacency rows for workspace edge queries. */
-export const adjacencyPage: Page<NodeLink> = {
-  result: [
-    { sourceId: 1, targetId: 2 },
-    { sourceId: 2, targetId: 3 },
-  ],
-  total: 2,
-};
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
@@ -130,9 +122,6 @@ export const handlers = [
     if (bounds)  return HttpResponse.json(viewportPage);
     return HttpResponse.json(samplePage);
   }),
-
-  // Node adjacency (workspace edges)
-  http.get(`${BASE_URL}/nodes/links`, () => HttpResponse.json(adjacencyPage)),
 
   // Node detail
   http.get(`${BASE_URL}/nodes/:id`, ({ params }) => {

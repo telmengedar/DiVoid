@@ -51,7 +51,7 @@ import { setupServer } from 'msw/node';
 import { useNodesState, type Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { BASE_URL, viewportPage, adjacencyPage } from '@/test/msw/handlers';
+import { BASE_URL, viewportPage } from '@/test/msw/handlers';
 
 // ─── MSW server ───────────────────────────────────────────────────────────────
 
@@ -67,7 +67,6 @@ const server = setupServer(
     if (url.searchParams.get('bounds')) return HttpResponse.json(viewportPage);
     return HttpResponse.json({ result: [], total: 0 });
   }),
-  http.get(`${BASE_URL}/nodes/links`, () => HttpResponse.json(adjacencyPage)),
   http.get(`${BASE_URL}/types`, () => HttpResponse.json({ result: [{ id: 6, type: 'task', count: 1 }], total: 1 })),
 );
 
