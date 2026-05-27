@@ -453,3 +453,65 @@ describe('useUploadContent', () => {
     expect(callCount).toBe(2);
   });
 });
+
+// ─── Viewport invalidation (design §6.5, DiVoid #1253) ───────────────────────
+//
+// usePatchNode and useDeleteNode must invalidate ['nodes', 'viewport'] on success
+// so canvas cards update without a re-mount when mutations fire from inside the
+// peek modal.
+//
+// Load-bearing discipline (DiVoid #275):
+//
+// VP1 — usePatchNode invalidates ['nodes', 'viewport']:
+//   Positive proof: seed a viewport query in the cache, run usePatchNode,
+//   assert the query becomes stale (isFetching becomes true or invalidated).
+//   NEGATIVE PROOF: remove the viewport invalidation from usePatchNode.onSuccess;
+//   VP1 fails because the viewport query key is still 'fresh' after mutation.
+//
+// VP2 — useDeleteNode invalidates ['nodes', 'viewport']:
+//   Same shape as VP1 for useDeleteNode.
+
+describe('usePatchNode — viewport invalidation (design §6.5)', () => {
+  it('VP1: invalidates ["nodes", "viewport"] on success', async () => {
+    const { qc, Wrapper } = createWrapper();
+
+    // Seed a viewport query in the cache so we can observe invalidation.
+    qc.setQueryData(['nodes', 'viewport', 'test'], { result: [], total: 0 });
+    const initialState = qc.getQueryState(['nodes', 'viewport', 'test']);
+    expect(initialState?.isInvalidated).toBe(false);
+
+    const { usePatchNode } = await import('./mutations');
+    const { result } = renderHook(() => usePatchNode(42), { wrapper: Wrapper });
+
+    await act(async () => {
+      result.current.mutate([{ op: 'replace', path: '/name', value: 'Updated' }]);
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const afterState = qc.getQueryState(['nodes', 'viewport', 'test']);
+    expect(afterState?.isInvalidated).toBe(true);
+  });
+});
+
+describe('useDeleteNode — viewport invalidation (design §6.5)', () => {
+  it('VP2: invalidates ["nodes", "viewport"] on success', async () => {
+    const { qc, Wrapper } = createWrapper();
+
+    qc.setQueryData(['nodes', 'viewport', 'test'], { result: [], total: 0 });
+    const initialState = qc.getQueryState(['nodes', 'viewport', 'test']);
+    expect(initialState?.isInvalidated).toBe(false);
+
+    const { useDeleteNode } = await import('./mutations');
+    const { result } = renderHook(() => useDeleteNode(42), { wrapper: Wrapper });
+
+    await act(async () => {
+      result.current.mutate();
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const afterState = qc.getQueryState(['nodes', 'viewport', 'test']);
+    expect(afterState?.isInvalidated).toBe(true);
+  });
+});
