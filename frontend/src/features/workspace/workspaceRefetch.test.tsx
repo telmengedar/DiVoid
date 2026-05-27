@@ -1,21 +1,19 @@
 /**
- * End-to-end render-count test for the viewport-refetch perf fix (#1261).
+ * End-to-end reference-stability test for the viewport-refetch perf fix (#1261).
  *
- * Pins the invariant: NodeCardRenderer does NOT re-render when a viewport
- * refetch returns identical node data (the "scroll-blink" regression).
+ * Pins the invariant: the `nodes` and `edges` props passed to the mocked
+ * <ReactFlow> are reference-equal across two refetches that return identical
+ * data. This directly exercises the reconcileNodes / reconcileEdges bail-out
+ * path inside the setNodes / setEdges functional updaters in WorkspaceCanvas.
  *
- * Pattern: vi.hoisted() + React.memo counter on NodeCardRenderer stub,
- * same as WorkspacePeekModal.test.tsx T6, but applied to the refetch surface.
- * The real WorkspaceCanvas is rendered (not mocked) so the reconcileNodes
- * path is exercised end-to-end.
+ * Why reference-equality on ReactFlow props (not NodeCardRenderer render count):
+ * The xyflow mock ignores `nodeTypes`, so NodeCardRenderer is never instantiated
+ * by it — the render counter stays at 0 regardless of what reconcileNodes does.
+ * That made the original render-count assertion tautological (DiVoid #1262 /
+ * Jenny W1 on PR #127). Capturing the prop reference is the correct observable.
  *
- * Mental-deletion check: revert the reconciliation in the setNodes sync effect
- * (replace `reconcileNodes(prev, xyNodes, draggingIds)` with the old
- * wholesale-replace logic that returns a new array every time) → React sees
- * new xyflow-node objects → xyflow updates its store → NodeCardRenderer
- * receives new props → propsAreEqual is called but returns true (same values);
- * however xyflow's own internal processing still causes a re-render pass →
- * render count climbs → assertion `toBe(countAfterMount)` fails.
+ * Mental-deletion check: revert reconcileNodes body to `return incoming.slice()`
+ * → each refetch produces a fresh array → reference inequality → this test fails.
  *
  * DiVoid task: #1261 / DiVoid rule: #275
  */
@@ -28,12 +26,14 @@ import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { BASE_URL } from '@/test/msw/handlers';
 
-// ─── Hoisted render-count ref ─────────────────────────────────────────────────
-// vi.hoisted runs before vi.mock factory calls, so the ref is available inside
-// the mock factory that wraps NodeCardRenderer.
+// ─── Hoisted prop-capture refs ────────────────────────────────────────────────
+// vi.hoisted runs before vi.mock factory calls so the refs are available inside
+// the xyflow mock factory. On each ReactFlow render the mock writes the current
+// nodes/edges props; the test body reads them after each refetch settles.
 
-const { nodeCardRenderCountRef } = vi.hoisted(() => ({
-  nodeCardRenderCountRef: { current: 0 },
+const { lastNodesRef, lastEdgesRef } = vi.hoisted(() => ({
+  lastNodesRef: { current: null as readonly unknown[] | null },
+  lastEdgesRef: { current: null as readonly unknown[] | null },
 }));
 
 // ─── MSW server ───────────────────────────────────────────────────────────────
@@ -121,23 +121,30 @@ vi.mock('sonner', () => ({
   Toaster: () => null,
 }));
 
-// Mock xyflow — the real @xyflow/react requires a DOM environment that
-// jsdom does not fully provide (ResizeObserver, SVG layout). We stub
-// ReactFlow to render its children by node id so the test can still assert
-// on NodeCardRenderer render counts without a full canvas environment.
+// Mock xyflow — captures the nodes/edges props on every render so the test can
+// assert reference-equality across refetches. Does NOT depend on nodeTypes.
 vi.mock('@xyflow/react', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@xyflow/react')>();
   const { useState } = await import('react');
   return {
     ...actual,
-    ReactFlow: ({ nodes, children }: { nodes: { id: string }[]; children?: React.ReactNode }) => (
-      <div data-testid="mock-reactflow">
-        {nodes.map((n) => (
-          <div key={n.id} data-node-id={n.id} />
-        ))}
-        {children}
-      </div>
-    ),
+    ReactFlow: ({
+      nodes,
+      edges,
+      children,
+    }: {
+      nodes: readonly unknown[];
+      edges?: readonly unknown[];
+      children?: React.ReactNode;
+    }) => {
+      lastNodesRef.current = nodes;
+      lastEdgesRef.current = edges ?? null;
+      return (
+        <div data-testid="mock-reactflow">
+          {children}
+        </div>
+      );
+    },
     Background: () => null,
     Controls: () => null,
     MiniMap: () => null,
@@ -154,25 +161,13 @@ vi.mock('@xyflow/react', async (importOriginal) => {
   };
 });
 
-/**
- * NodeCardRenderer stub — wrapped in React.memo so re-renders only happen
- * when propsAreEqual would return false (same contract as the real component).
- * The render counter lets us assert that no extra renders occurred on a
- * no-data-change refetch.
- */
 vi.mock('./NodeCardRenderer', async () => {
   const { memo } = await import('react');
   return {
     NodeCardRenderer: memo(
-      ({ data }: { data: { id: number; name: string; type: string; status: string | null } }) => {
-        nodeCardRenderCountRef.current += 1;
-        return <div data-testid={`node-card-${data.id}`}>{data.name}</div>;
-      },
-      (prev, next) =>
-        prev.data.id === next.data.id &&
-        prev.data.name === next.data.name &&
-        prev.data.type === next.data.type &&
-        prev.data.status === next.data.status,
+      ({ data }: { data: { id: number; name: string; type: string; status: string | null } }) => (
+        <div data-testid={`node-card-${data.id}`}>{data.name}</div>
+      ),
     ),
   };
 });
@@ -192,13 +187,19 @@ vi.mock('./WorkspaceFilterPopover', () => ({
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
-  nodeCardRenderCountRef.current = 0;
+  lastNodesRef.current = null;
+  lastEdgesRef.current = null;
 });
 
 function makeQC() {
   return new QueryClient({
     defaultOptions: {
-      queries: { retry: false, staleTime: 0 },
+      // structuralSharing disabled so that each refetch produces a fresh data
+      // reference even when the JSON is identical. Without this, TanStack Query's
+      // default deep-equality check returns the same object, visibleDetails stays
+      // reference-equal, xyNodes never changes, and setNodes is never called —
+      // making the test insensitive to whether reconcileNodes is wired or not.
+      queries: { retry: false, staleTime: 0, structuralSharing: false },
       mutations: { retry: false },
     },
   });
@@ -231,36 +232,38 @@ function renderCanvas() {
 
 describe('Viewport refetch render-stability (DiVoid #1261)', () => {
   /**
-   * R5-E2E: NodeCardRenderer does NOT re-render on identical-data viewport
-   * refetches after reconcileNodes is wired into the setNodes sync effect.
+   * R5-E2E: the `nodes` and `edges` props passed to ReactFlow are reference-equal
+   * across two refetches that return identical data.
    *
    * Flow:
    * 1. Mount WorkspaceCanvas — viewport query fires, returns SAMPLE_VIEWPORT_NODES.
-   * 2. NodeCardRenderer mounts for each node (render count = N).
-   * 3. Force a refetch with identical data via invalidateQueries.
-   * 4. reconcileNodes returns `prev` (exact reference) → React bails out of
-   *    setNodes update → NodeCardRenderer receives no new props → memo never
-   *    even evaluates propsAreEqual → render count stays at N.
+   * 2. Wait for ReactFlow to receive the initial nodes/edges props.
+   * 3. Capture the props references: nodesAfterFirstRefetch / edgesAfterFirstRefetch.
+   * 4. Invalidate the query to trigger a second fetch (identical data returned).
+   * 5. reconcileNodes returns prev (exact reference) → setNodes bails → ReactFlow
+   *    receives the same nodes prop → lastNodesRef.current === nodesAfterFirstRefetch.
    *
-   * Mental-deletion: change `reconcileNodes(prev, xyNodes, draggingIds)` in
-   * WorkspaceCanvas back to the old array-rebuild path → incoming is always a
-   * new array → xyflow updates its store → NodeCardRenderer renders again →
-   * count > N → this test fails.
+   * Mental-deletion: revert reconcileNodes to `return incoming.slice()` → fresh
+   * array each time → ReactFlow receives new prop reference → toBe fails.
    */
-  it('R5-E2E: NodeCardRenderer does not re-render on identical-data viewport refetch', async () => {
+  it('R5-E2E: ReactFlow receives reference-equal nodes and edges props on identical-data refetch', async () => {
     const { qc } = renderCanvas();
 
-    // Wait for initial data to load and NodeCardRenderer to mount.
+    // Wait for initial data to load.
     await waitFor(() => expect(viewportRequestCount).toBeGreaterThanOrEqual(1));
 
-    // Allow all state updates to settle.
+    // Allow reconciliation + React to settle so lastNodesRef is populated.
     await act(async () => {
       await new Promise((r) => setTimeout(r, 50));
     });
 
-    const countAfterMount = nodeCardRenderCountRef.current;
+    const nodesAfterFirstRefetch = lastNodesRef.current;
+    const edgesAfterFirstRefetch = lastEdgesRef.current;
 
-    // Trigger a refetch that returns identical data.
+    // nodesAfterFirstRefetch must be non-null (ReactFlow was rendered).
+    expect(nodesAfterFirstRefetch).not.toBeNull();
+
+    // Trigger a refetch with identical data.
     await act(async () => {
       await qc.invalidateQueries({ queryKey: ['nodes', 'viewport'] });
       await new Promise((r) => setTimeout(r, 50));
@@ -273,7 +276,8 @@ describe('Viewport refetch render-stability (DiVoid #1261)', () => {
       await new Promise((r) => setTimeout(r, 50));
     });
 
-    // NodeCardRenderer must NOT have re-rendered — reconcileNodes returned prev.
-    expect(nodeCardRenderCountRef.current).toBe(countAfterMount);
+    // reconcileNodes returned prev → same array reference → ReactFlow prop unchanged.
+    expect(lastNodesRef.current).toBe(nodesAfterFirstRefetch);
+    expect(lastEdgesRef.current).toBe(edgesAfterFirstRefetch);
   });
 });
