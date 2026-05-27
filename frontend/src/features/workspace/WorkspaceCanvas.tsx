@@ -6,7 +6,7 @@
  *  - Compute padded bounds from the current viewport and pass to hooks.
  *  - Apply type and status filters via useNodesInViewport / useUntypedNodesInViewport.
  *  - Merge typed + untyped node sets when "untyped" is selected.
- *  - Convert NodeDetails[] + NodeLink[] → xyflow Node[] / Edge[].
+ *  - Convert NodeDetails[] (with inline links[]) → xyflow Node[] / Edge[] (DiVoid #310 / #1213).
  *  - Dispatch useMoveNode on drag-end.
  *  - Dispatch useLinkNodes on xyflow onConnect (drag-to-connect, #287).
  *  - Dispatch useUnlinkNodes on Delete key via onEdgesDelete, with undo toast (#266).
@@ -56,7 +56,6 @@ import {
   useUntypedNodesInViewport,
   type ViewportBounds,
 } from './useNodesInViewport';
-import { useNodeAdjacency } from './useNodeAdjacency';
 import { useMoveNode } from './useMoveNode';
 import {
   useWorkspaceFilters,
@@ -80,7 +79,7 @@ import {
   DEFAULT_ZOOM,
   DEFAULT_PAN,
 } from './constants';
-import type { PositionedNodeDetails, NodeLink } from '@/types/divoid';
+import type { PositionedNodeDetails } from '@/types/divoid';
 import { API } from '@/lib/constants';
 import { useApiClient } from '@/lib/useApiClient';
 
@@ -161,18 +160,41 @@ function toXyflowNode(n: PositionedNodeDetails): WorkspaceNode {
   };
 }
 
-/** Convert a NodeLink into an xyflow Edge. */
-function toXyflowEdge(link: NodeLink, visibleIds: Set<string>): Edge | null {
-  const src = String(link.sourceId);
-  const tgt = String(link.targetId);
-  // Only render edges where both endpoints are in the current visible set.
-  if (!visibleIds.has(src) || !visibleIds.has(tgt)) return null;
-  return {
-    id:     `${src}-${tgt}`,
-    source: src,
-    target: tgt,
-    type:   'floating',
-  };
+/**
+ * Reconstruct visible edges from the inline links on each node row.
+ *
+ * Each row's links[] is a flat array of neighbor ids (DiVoid #1213: undirected,
+ * ids only). An edge {A, B} appears in both row A's links and row B's links, so
+ * we deduplicate using canonical key `${min}-${max}`.
+ *
+ * Only edges where BOTH endpoints are in the visible set are emitted — the
+ * same "both endpoints visible" rule the previous two-call shape enforced.
+ *
+ * Exported for unit testing (see workspaceFold.test.tsx).
+ */
+export function buildEdgesFromInlineLinks(
+  nodes: PositionedNodeDetails[],
+  visibleIds: Set<string>,
+): Edge[] {
+  const seen = new Set<string>();
+  const edges: Edge[] = [];
+
+  for (const node of nodes) {
+    if (!node.links) continue;
+    const srcStr = String(node.id);
+    for (const neighborId of node.links) {
+      const tgtStr = String(neighborId);
+      if (!visibleIds.has(tgtStr)) continue;
+      const lo  = Math.min(node.id, neighborId);
+      const hi  = Math.max(node.id, neighborId);
+      const key = `${lo}-${hi}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      edges.push({ id: key, source: srcStr, target: tgtStr, type: 'floating' });
+    }
+  }
+
+  return edges;
 }
 
 /** Infer a DiVoid node type from a dropped file's MIME type. */
@@ -301,13 +323,6 @@ export function WorkspaceCanvas() {
     return merged;
   }, [nodesPage, untypedPage, includesUntyped]);
 
-  const visibleNodeIds = useMemo(
-    () => visibleDetails.map((n) => n.id),
-    [visibleDetails],
-  );
-
-  const { data: linksPage } = useNodeAdjacency(visibleNodeIds);
-
   // ── Build xyflow nodes / edges (memoised) ─────────────────────────────────
   const xyNodes = useMemo(
     () => visibleDetails.map(toXyflowNode),
@@ -320,11 +335,8 @@ export function WorkspaceCanvas() {
   );
 
   const xyEdges = useMemo(
-    () =>
-      (linksPage?.result ?? [])
-        .map((link) => toXyflowEdge(link, visibleIdSet))
-        .filter((e): e is Edge => e !== null),
-    [linksPage, visibleIdSet],
+    () => buildEdgesFromInlineLinks(visibleDetails, visibleIdSet),
+    [visibleDetails, visibleIdSet],
   );
 
   // ── Controlled xyflow state ───────────────────────────────────────────────

@@ -123,4 +123,10 @@ export interface NodeTypeEntry {
 export interface PositionedNodeDetails extends NodeDetails {
   x: number;
   y: number;
+  /**
+   * Inline neighbor ids — present when the viewport query includes fields=links.
+   * An empty array means the node has no incident links (backend contract: DiVoid #1213).
+   * Absent when the query did not opt into fields=links.
+   */
+  links?: number[];
 }

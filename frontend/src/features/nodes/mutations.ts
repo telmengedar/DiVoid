@@ -29,7 +29,6 @@ import { nodeQueryKey } from './useNode';
 import { nodeContentQueryKey } from './useNodeContent';
 import { nodeListQueryKey } from './useNodeList';
 import { nodeLinkedToQueryKey } from './useNodeListLinkedTo';
-import { nodeAdjacencyQueryKey } from '@/features/workspace/useNodeAdjacency';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -170,14 +169,15 @@ function invalidateLinkCaches(
   queryClient.invalidateQueries({ queryKey: nodeLinkedToQueryKey(sourceId) });
   queryClient.invalidateQueries({ queryKey: nodeLinkedToQueryKey(targetId) });
   queryClient.invalidateQueries({ queryKey: ['nodes', 'linkedto'] });
-  // Invalidate workspace adjacency so the new edge appears on the canvas.
-  queryClient.invalidateQueries({ queryKey: nodeAdjacencyQueryKey([]) });
+  // Invalidate viewport queries so inline links refresh on the canvas (DiVoid #310 / #1213).
+  queryClient.invalidateQueries({ queryKey: ['nodes', 'viewport'] });
 }
 
 /**
  * Links two nodes. Body: target id as a bare long (per API reference node #8).
  *
- * On success: linkedto and workspace adjacency queries are invalidated.
+ * On success: linkedto and viewport queries are invalidated (viewport carries
+ * inline links since DiVoid #310 / #1213).
  *
  * Bug #317 graceful handling: the backend returns 500 {"code":"unhandled",
  * "text":"Nodes already linked"} when the pair is already linked. We treat
@@ -221,7 +221,7 @@ export interface UnlinkNodesInput {
 /**
  * Removes a link between two nodes.
  *
- * On success: linkedto and workspace adjacency queries are invalidated.
+ * On success: linkedto and viewport queries are invalidated.
  * On error: a sonner toast shows the backend error.
  */
 export function useUnlinkNodes() {
@@ -235,8 +235,8 @@ export function useUnlinkNodes() {
       queryClient.invalidateQueries({ queryKey: nodeLinkedToQueryKey(sourceId) });
       queryClient.invalidateQueries({ queryKey: nodeLinkedToQueryKey(targetId) });
       queryClient.invalidateQueries({ queryKey: ['nodes', 'linkedto'] });
-      // Invalidate workspace adjacency so the removed edge disappears from the canvas.
-      queryClient.invalidateQueries({ queryKey: nodeAdjacencyQueryKey([]) });
+      // Invalidate viewport queries so inline links refresh on the canvas (DiVoid #310 / #1213).
+      queryClient.invalidateQueries({ queryKey: ['nodes', 'viewport'] });
     },
     onError: (error) => toastError(error),
   });

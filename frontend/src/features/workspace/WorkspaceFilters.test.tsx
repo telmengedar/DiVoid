@@ -65,7 +65,6 @@ import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import {
   BASE_URL,
-  adjacencyPage,
   viewportPageWithFilterFixtures,
   typeCatalogPage,
 } from '@/test/msw/handlers';
@@ -119,7 +118,6 @@ const server = setupServer(
     }
     return HttpResponse.json({ result: [], total: 0 });
   }),
-  http.get(`${BASE_URL}/nodes/links`, () => HttpResponse.json(adjacencyPage)),
   // Type catalog — fixture includes `task` and `product` (DiVoid #486 load-bearing tests).
   http.get(`${BASE_URL}/types`, () => HttpResponse.json(typeCatalogPage)),
   http.patch(`${BASE_URL}/nodes/:id`, () => new HttpResponse(null, { status: 204 })),

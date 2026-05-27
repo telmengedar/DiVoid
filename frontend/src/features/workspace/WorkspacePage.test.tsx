@@ -32,7 +32,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { BASE_URL, viewportPage, adjacencyPage } from '@/test/msw/handlers';
+import { BASE_URL, viewportPage } from '@/test/msw/handlers';
 
 // ─── MSW server ───────────────────────────────────────────────────────────────
 
@@ -49,8 +49,6 @@ const server = setupServer(
     if (url.searchParams.get('bounds')) return HttpResponse.json(viewportPage);
     return HttpResponse.json({ result: [], total: 0 });
   }),
-  // Adjacency
-  http.get(`${BASE_URL}/nodes/links`, () => HttpResponse.json(adjacencyPage)),
   // Type catalog (DiVoid task #486)
   http.get(`${BASE_URL}/types`, () =>
     HttpResponse.json({ result: [
