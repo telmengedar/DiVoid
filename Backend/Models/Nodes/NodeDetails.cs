@@ -70,11 +70,11 @@ public class NodeDetails
     public double? Y { get; set; }
 
     /// <summary>
-    /// ids of nodes to link to this node at creation time.
-    /// write-only — not returned by GET.
-    /// used by <c>POST /api/nodes</c> to create links atomically with the node.
-    /// also drives auto-positioning: when X and Y are unset (both 0), the first
-    /// linked target with a non-zero position is used as the placement anchor.
+    /// ids of nodes adjacent to this node.
+    /// on write (<c>POST /api/nodes</c>): ids of nodes to link at creation time, also
+    /// drives auto-positioning when X and Y are unset.
+    /// on read (<c>GET /api/nodes?fields=links</c>): opt-in inline neighbor ids.
+    /// absent from the response when <c>links</c> is not in <c>?fields=</c>.
     /// </summary>
     public long[] Links { get; set; }
 }
