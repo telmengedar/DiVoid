@@ -70,11 +70,8 @@ public class NodeDetails
     public double? Y { get; set; }
 
     /// <summary>
-    /// ids of nodes adjacent to this node.
-    /// on write (<c>POST /api/nodes</c>): ids of nodes to link at creation time, also
-    /// drives auto-positioning when X and Y are unset.
-    /// on read (<c>GET /api/nodes?fields=links</c>): opt-in inline neighbor ids.
-    /// absent from the response when <c>links</c> is not in <c>?fields=</c>.
+    /// Opt-in inline neighbor ids (<c>?fields=links</c>). Absent from the response when not requested.
+    /// On <c>POST /api/nodes</c>: ids of nodes to link at creation time; drives auto-positioning.
     /// </summary>
     public long[] Links { get; set; }
 }

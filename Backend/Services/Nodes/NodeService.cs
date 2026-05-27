@@ -535,13 +535,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     }
 
 
-    /// <summary>
-    /// fetches all <see cref="NodeLink"/> rows where either endpoint is in <paramref name="ids"/>
-    /// and returns a dictionary mapping each node id to the array of its neighbor ids.
-    /// self-loops (SourceId == TargetId) are excluded.
-    /// this is the single batched secondary query used by <see cref="ListPaged"/> and
-    /// <see cref="ListPagedByPath"/> when <c>fields=links</c> is requested.
-    /// </summary>
+    /// <summary>Single batched secondary query — never call per-row.</summary>
     async Task<Dictionary<long, long[]>> FetchAdjacentIds(long[] ids, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
@@ -553,7 +547,6 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                                                 .Where(l => l.SourceId.In(ids) || l.TargetId.In(ids))
                                                 .ExecuteEntitiesAsync())
         {
-            // exclude self-loops
             if (link.SourceId == link.TargetId)
                 continue;
 
@@ -569,13 +562,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         return result;
     }
 
-    /// <summary>
-    /// materializes <paramref name="items"/> into a list, fetches all incident links for the
-    /// collected node ids in a single batched query, and attaches neighbor ids to each row's
-    /// <see cref="NodeDetails.Links"/> property.
-    /// rows with no incident links receive an empty array (not null), consistent with
-    /// "the caller asked for this field" semantics.
-    /// </summary>
+    /// <summary>Rows with no incident links receive an empty array, not null.</summary>
     async Task<List<NodeDetails>> MaterializeWithLinks(IAsyncEnumerable<NodeDetails> items, CancellationToken ct)
     {
         List<NodeDetails> rows = [];
@@ -627,8 +614,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (filter.Fields.Contains("content") && !filter.Fields.Contains("contentType"))
             filter.Fields = [.. filter.Fields, "contentType"];
 
-        // links is a derived field — not a DB column — strip it before passing to the mapper
-        // so Ocelot does not try to SELECT it; track the intent separately.
+        // links is derived; not in mapper vocab.
         bool includeLinks = filter.Fields.Contains("links");
         if (includeLinks)
             filter.Fields = filter.Fields.Where(f => !string.Equals(f, "links", StringComparison.OrdinalIgnoreCase)).ToArray();
@@ -657,8 +643,6 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         if (includeLinks)
         {
-            // secondary batched query: materialize the page then fetch all incident links
-            // in one round-trip — not N+1
             List<NodeDetails> rows = await MaterializeWithLinks(windowed.Items, ct);
             return new AsyncPageResponseWriter<NodeDetails>(
                 rows.ToAsyncEnumerable(),
@@ -707,7 +691,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (filter.Fields.Contains("content") && !filter.Fields.Contains("contentType"))
             filter.Fields = [.. filter.Fields, "contentType"];
 
-        // links is a derived field — strip it before passing to the mapper
+        // links is derived; not in mapper vocab.
         bool includeLinks = filter.Fields.Contains("links");
         if (includeLinks)
             filter.Fields = filter.Fields.Where(f => !string.Equals(f, "links", StringComparison.OrdinalIgnoreCase)).ToArray();
@@ -728,8 +712,6 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         if (includeLinks)
         {
-            // secondary batched query: materialize the page then fetch all incident links
-            // in one round-trip — not N+1
             List<NodeDetails> rows = await MaterializeWithLinks(windowed.Items, ct);
             return new AsyncPageResponseWriter<NodeDetails>(
                 rows.ToAsyncEnumerable(),
