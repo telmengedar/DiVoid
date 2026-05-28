@@ -492,7 +492,7 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
         await Create(svc, name: "A");
 
-        Assert.ThrowsAsync<System.Collections.Generic.KeyNotFoundException>(
+        Assert.ThrowsAsync<Pooshit.Ocelot.Errors.UnknownFieldException>(
             () => svc.ListPaged(new NodeFilter { Count = 10, Sort = "node.name" }));
     }
 
