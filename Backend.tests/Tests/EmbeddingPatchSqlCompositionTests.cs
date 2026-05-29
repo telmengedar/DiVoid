@@ -50,16 +50,16 @@ public class EmbeddingPatchSqlCompositionTests
 
     static async Task<NodeDetails> SeedNode(NodeService svc, string name, byte[]? content = null, string? contentType = null)
     {
-        NodeDetails created = await svc.CreateNode(new NodeDetails { Type = "documentation", Name = name });
+        NodeDetails created = await svc.CreateNode(new NodeDetails { Type = "documentation", Name = name }, callerId: 0);
         if (content != null)
-            await svc.UploadContent(created.Id, contentType, new MemoryStream(content));
+            await svc.UploadContent(created.Id, contentType, new MemoryStream(content), callerId: 0, isAdmin: true);
         return created;
     }
 
     static async Task<NodeDetails> PatchName(NodeService svc, long nodeId, string newName)
         => await svc.Patch(nodeId,
             [new PatchOperation { Op = "replace", Path = "/name", Value = newName }],
-            CancellationToken.None);
+            callerId: 0, isAdmin: true, CancellationToken.None);
 
 
     /// <summary>R1: name + text/markdown content → F1 branch; no crash, embedding null on SQLite.</summary>

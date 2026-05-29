@@ -51,7 +51,7 @@ public class LinkedToLateralJoinTests
     static NodeService MakeService(IEntityManager em) => new(em, DisabledCapability);
 
     static async Task<NodeDetails> Create(NodeService svc, string name)
-        => await svc.CreateNode(new NodeDetails { Type = "task", Name = name });
+        => await svc.CreateNode(new NodeDetails { Type = "task", Name = name }, callerId: 0);
 
     static async Task<List<NodeDetails>> CollectPage(AsyncPageResponseWriter<NodeDetails> writer)
     {
@@ -91,10 +91,10 @@ public class LinkedToLateralJoinTests
         NodeDetails b = await Create(svc, "NodeB");
         NodeDetails c = await Create(svc, "NodeC");
 
-        await svc.LinkNodes(a.Id, b.Id);
+        await svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true);
 
         AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(
-            new NodeFilter { LinkedTo = [a.Id], Count = 100 });
+            new NodeFilter { LinkedTo = [a.Id], Count = 100 }, callerId: 0, isAdmin: true);
         List<NodeDetails> results = await CollectPage(writer);
 
         long[] ids = results.Select(n => n.Id).ToArray();
@@ -127,13 +127,13 @@ public class LinkedToLateralJoinTests
         NodeDetails b = await Create(pgSvc, "NodeB");
         NodeDetails c = await Create(pgSvc, "NodeC");
 
-        await pgSvc.LinkNodes(a.Id, b.Id);
+        await pgSvc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true);
 
         IEntityManager fallbackEm = LateralCapabilityForcedFalseProxy.Wrap(pgEm);
         NodeService fallbackSvc = MakeService(fallbackEm);
 
         AsyncPageResponseWriter<NodeDetails> writer = await fallbackSvc.ListPaged(
-            new NodeFilter { LinkedTo = [a.Id], Count = 100 });
+            new NodeFilter { LinkedTo = [a.Id], Count = 100 }, callerId: 0, isAdmin: true);
         List<NodeDetails> results = await CollectPage(writer);
 
         long[] ids = results.Select(n => n.Id).ToArray();

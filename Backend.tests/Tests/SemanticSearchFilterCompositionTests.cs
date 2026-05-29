@@ -117,7 +117,7 @@ public class SemanticSearchFilterCompositionTests
         operation.ApplyFilter(filter, mapper);
 
         // build filter predicate exactly as ListPaged does (via production GenerateFilter)
-        Expression<Func<Node, bool>>? generated = service.GenerateFilter(filter);
+        Expression<Func<Node, bool>>? generated = service.GenerateFilter(filter, callerId: 0, isAdmin: true);
         PredicateExpression<Node>? predicate = generated != null
             ? new PredicateExpression<Node>(generated)
             : null;
@@ -163,7 +163,7 @@ public class SemanticSearchFilterCompositionTests
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
         operation.ApplyFilter(filter, mapper);
 
-        Expression<Func<Node, bool>>? generated = service.GenerateFilter(filter);
+        Expression<Func<Node, bool>>? generated = service.GenerateFilter(filter, callerId: 0, isAdmin: true);
         PredicateExpression<Node>? predicate = generated != null
             ? new PredicateExpression<Node>(generated)
             : null;
@@ -254,7 +254,7 @@ public class SemanticSearchFilterCompositionTests
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
         operation.ApplyFilter(filter, mapper);
 
-        Expression<Func<Node, bool>>? generated = service.GenerateFilter(filter);
+        Expression<Func<Node, bool>>? generated = service.GenerateFilter(filter, callerId: 0, isAdmin: true);
         PredicateExpression<Node>? predicate = generated != null
             ? new PredicateExpression<Node>(generated)
             : null;
@@ -298,7 +298,7 @@ public class SemanticSearchFilterCompositionTests
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
         operation.ApplyFilter(filter, mapper);
 
-        Expression<Func<Node, bool>>? generated = service.GenerateFilter(filter);
+        Expression<Func<Node, bool>>? generated = service.GenerateFilter(filter, callerId: 0, isAdmin: true);
         PredicateExpression<Node>? predicate = generated != null
             ? new PredicateExpression<Node>(generated)
             : null;
@@ -386,7 +386,7 @@ public class SemanticSearchFilterCompositionTests
         NodeService svc = new(fixture.EntityManager, DisabledCapability);
 
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
-            () => svc.ListPaged(new NodeFilter { Query = "hivemind", Type = ["task"], Count = 10 }),
+            () => svc.ListPaged(new NodeFilter { Query = "hivemind", Type = ["task"], Count = 10 }, callerId: 0, isAdmin: true),
             "ListPaged with query + type filter on SQLite must throw SemanticSearchUnavailableException " +
             "(capability guard), not NullReferenceException or any other crash from predicate composition");
     }
@@ -398,7 +398,7 @@ public class SemanticSearchFilterCompositionTests
         NodeService svc = new(fixture.EntityManager, DisabledCapability);
 
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
-            () => svc.ListPaged(new NodeFilter { Query = "open work", Status = ["open"], Count = 10 }),
+            () => svc.ListPaged(new NodeFilter { Query = "open work", Status = ["open"], Count = 10 }, callerId: 0, isAdmin: true),
             "ListPaged with query + status filter on SQLite must throw SemanticSearchUnavailableException");
     }
 
@@ -409,7 +409,7 @@ public class SemanticSearchFilterCompositionTests
         NodeService svc = new(fixture.EntityManager, DisabledCapability);
 
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
-            () => svc.ListPaged(new NodeFilter { Query = "linked", LinkedTo = [42L], Count = 10 }),
+            () => svc.ListPaged(new NodeFilter { Query = "linked", LinkedTo = [42L], Count = 10 }, callerId: 0, isAdmin: true),
             "ListPaged with query + linkedto filter on SQLite must throw SemanticSearchUnavailableException");
     }
 
@@ -422,7 +422,7 @@ public class SemanticSearchFilterCompositionTests
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPagedByPath(
                 new NodePathFilter { Path = "[type:task]", Query = "semantic tasks", Count = 10 },
-                CancellationToken.None),
+                callerId: 0, isAdmin: true, CancellationToken.None),
             "ListPagedByPath with path + query on SQLite must throw SemanticSearchUnavailableException");
     }
 }

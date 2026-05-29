@@ -37,7 +37,7 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
     }
 
     /// <inheritdoc />
-    public override string[] DefaultListFields => ["id", "type", "name", "status", "contentType"];
+    public override string[] DefaultListFields => ["id", "type", "name", "status", "contentType", "ownerId", "access"];
 
     /// <summary>
     /// post-process callback invoked by <see cref="FieldMapper{TModel}"/> after all field
@@ -77,6 +77,12 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
         yield return new FieldMapping<NodeDetails, byte[]>("content",
                                                         DB.Property<Node>(n => n.Content, "node"),
                                                         (n, v) => n.RawContent = v);
+        yield return new FieldMapping<NodeDetails, long>("ownerId",
+                                                        DB.Property<Node>(n => n.OwnerId, "node"),
+                                                        (n, v) => n.OwnerId = v);
+        yield return new FieldMapping<NodeDetails, NodeAccess>("access",
+                                                        DB.Property<Node>(n => n.Access, "node"),
+                                                        (n, v) => n.Access = v);
 
         if (!string.IsNullOrWhiteSpace(filter?.Query)) {
             // similarity = 1.0 - cosineDistance(queryEmbedding, nodeEmbedding)

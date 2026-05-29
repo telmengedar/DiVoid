@@ -71,4 +71,22 @@ public class Node
     [Index("position")]
     [DefaultValue(0.0)]
     public double Y { get; set; }
+
+    /// <summary>
+    /// DiVoid user-id of the node's creator. set once on insert from the authenticated caller.
+    /// sentinel 0 for rows that pre-date this feature. admin override applies regardless.
+    /// </summary>
+    [AllowPatch]
+    [Index("owner")]
+    [DefaultValue(0L)]
+    public long OwnerId { get; set; }
+
+    /// <summary>
+    /// access flags controlling what non-owner non-admin callers may do with this node.
+    /// owner and admin always override. defaults to <see cref="NodeAccess.None"/> (private).
+    /// </summary>
+    [AllowPatch]
+    [Index("access")]
+    [DefaultValue((int)NodeAccess.None)]
+    public NodeAccess Access { get; set; }
 }

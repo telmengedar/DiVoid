@@ -39,9 +39,9 @@ public class EmbeddingBackfillTests
         EmbeddingBackfillService backfill = MakeBackfill(fixture, DisabledCapability);
 
         // Seed one text-content node — its Embedding must remain null after the backfill no-op.
-        NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "doc", Name = "ShouldNotBeEmbedded" });
+        NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "doc", Name = "ShouldNotBeEmbedded" }, callerId: 0);
         byte[] content = Encoding.UTF8.GetBytes("some markdown text");
-        await nodeSvc.UploadContent(node.Id, "text/markdown", new MemoryStream(content));
+        await nodeSvc.UploadContent(node.Id, "text/markdown", new MemoryStream(content), callerId: 0, isAdmin: true);
 
         // Run backfill with capability disabled.
         await backfill.RunAsync();
@@ -76,9 +76,9 @@ public class EmbeddingBackfillTests
         using DatabaseFixture fixture = new();
         NodeService nodeSvc = MakeNodeService(fixture);
 
-        NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "asset", Name = "" });
+        NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "asset", Name = "" }, callerId: 0);
         byte[] content = [0x89, 0x50, 0x4E, 0x47]; // PNG magic bytes
-        await nodeSvc.UploadContent(node.Id, "image/png", new MemoryStream(content));
+        await nodeSvc.UploadContent(node.Id, "image/png", new MemoryStream(content), callerId: 0, isAdmin: true);
 
         EmbeddingBackfillService backfill = MakeBackfill(fixture, EnabledCapability);
 
@@ -98,9 +98,9 @@ public class EmbeddingBackfillTests
         using DatabaseFixture fixture = new();
         NodeService nodeSvc = MakeNodeService(fixture);
 
-        NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "asset", Name = "PngWithName" });
+        NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "asset", Name = "PngWithName" }, callerId: 0);
         byte[] content = [0x89, 0x50, 0x4E, 0x47]; // PNG magic bytes
-        await nodeSvc.UploadContent(node.Id, "image/png", new MemoryStream(content));
+        await nodeSvc.UploadContent(node.Id, "image/png", new MemoryStream(content), callerId: 0, isAdmin: true);
 
         EmbeddingBackfillService backfill = MakeBackfill(fixture, EnabledCapability);
 
@@ -146,7 +146,7 @@ public class EmbeddingBackfillTests
         using DatabaseFixture fixture = new();
         NodeService nodeSvc = MakeNodeService(fixture);
 
-        NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "doc", Name = "NameNoContent" });
+        NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "doc", Name = "NameNoContent" }, callerId: 0);
 
         EmbeddingBackfillService backfill = MakeBackfill(fixture, EnabledCapability);
 

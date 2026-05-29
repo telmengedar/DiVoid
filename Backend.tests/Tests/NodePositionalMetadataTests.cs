@@ -428,11 +428,11 @@ public class LayoutNodesCliTests
         LayoutNodesService layoutSvc = new(fixture.EntityManager, Microsoft.Extensions.Logging.Abstractions.NullLogger<LayoutNodesService>.Instance);
 
         // Create three unpositioned nodes and link them
-        NodeDetails a = await svc.CreateNode(new NodeDetails { Type = "task", Name = "LayoutA" });
-        NodeDetails b = await svc.CreateNode(new NodeDetails { Type = "task", Name = "LayoutB" });
-        NodeDetails c = await svc.CreateNode(new NodeDetails { Type = "task", Name = "LayoutC" });
-        await svc.LinkNodes(a.Id, b.Id);
-        await svc.LinkNodes(b.Id, c.Id);
+        NodeDetails a = await svc.CreateNode(new NodeDetails { Type = "task", Name = "LayoutA" }, callerId: 0);
+        NodeDetails b = await svc.CreateNode(new NodeDetails { Type = "task", Name = "LayoutB" }, callerId: 0);
+        NodeDetails c = await svc.CreateNode(new NodeDetails { Type = "task", Name = "LayoutC" }, callerId: 0);
+        await svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true);
+        await svc.LinkNodes(b.Id, c.Id, callerId: 0, isAdmin: true);
 
         await layoutSvc.RunAsync();
 
@@ -457,9 +457,9 @@ public class LayoutNodesCliTests
         NodeService svc = new(fixture.EntityManager, DisabledCapability);
         LayoutNodesService layoutSvc = new(fixture.EntityManager, Microsoft.Extensions.Logging.Abstractions.NullLogger<LayoutNodesService>.Instance);
 
-        NodeDetails a = await svc.CreateNode(new NodeDetails { Type = "task", Name = "IdempotentA" });
-        NodeDetails b = await svc.CreateNode(new NodeDetails { Type = "task", Name = "IdempotentB" });
-        await svc.LinkNodes(a.Id, b.Id);
+        NodeDetails a = await svc.CreateNode(new NodeDetails { Type = "task", Name = "IdempotentA" }, callerId: 0);
+        NodeDetails b = await svc.CreateNode(new NodeDetails { Type = "task", Name = "IdempotentB" }, callerId: 0);
+        await svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true);
 
         // First run — sets positions
         await layoutSvc.RunAsync();
@@ -499,10 +499,10 @@ public class LayoutNodesCliTests
         LayoutNodesService layoutSvc = new(fixture.EntityManager, Microsoft.Extensions.Logging.Abstractions.NullLogger<LayoutNodesService>.Instance);
 
         // Create a node and manually set its position to a known non-zero value
-        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "task", Name = "PrePositioned" });
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "task", Name = "PrePositioned" }, callerId: 0);
         await svc.Patch(node.Id,
             [new PatchOperation { Op = "replace", Path = "/X", Value = 123.45 }, new PatchOperation { Op = "replace", Path = "/Y", Value = 678.90 }],
-            CancellationToken.None);
+            callerId: 0, isAdmin: true, CancellationToken.None);
 
         // Run layout — this node must NOT be moved (it's not at 0,0)
         await layoutSvc.RunAsync();

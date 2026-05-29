@@ -451,3 +451,7 @@ For readers who saw the first version of this document:
 - **Migration plan** rewritten around the CLI-only bootstrap.
 - **Open questions** all resolved; section now points at decisions doc node 77.
 - **Implementation guidance** updated: bootstrap-service step folded into the CLI-dispatch step; pepper handling and startup warnings listed explicitly.
+
+## Per-node access
+
+Each `Node` row carries an `OwnerId` (creator's DiVoid user-id) and an `Access` flags field (`NodeAccess` enum: `None=0`, `Read=1`, `Write=2`). Owner and admin always override these flags. Introduced in `feature/node-access-layer-1370`. See `docs/architecture/node-access-layer.md` for the full design.

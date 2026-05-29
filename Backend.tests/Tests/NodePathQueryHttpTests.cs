@@ -543,7 +543,7 @@ public class NodePathQueryHttpTests
         };
 
         Assert.Throws<OperationCanceledException>(() =>
-            svc.ListPagedByPath(filter, cts.Token).GetAwaiter().GetResult());
+            svc.ListPagedByPath(filter, callerId: 0, isAdmin: true, cts.Token).GetAwaiter().GetResult());
     }
 
     // -----------------------------------------------------------------------

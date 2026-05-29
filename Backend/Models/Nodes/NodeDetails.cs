@@ -74,4 +74,14 @@ public class NodeDetails
     /// On <c>POST /api/nodes</c>: ids of nodes to link at creation time; drives auto-positioning.
     /// </summary>
     public long[] Links { get; set; }
+
+    /// <summary>
+    /// DiVoid user-id of the node's creator. 0 for rows that pre-date the access layer.
+    /// </summary>
+    public long OwnerId { get; set; }
+
+    /// <summary>
+    /// access flags controlling what non-owner non-admin callers may do with this node.
+    /// </summary>
+    public NodeAccess Access { get; set; }
 }

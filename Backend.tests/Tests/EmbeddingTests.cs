@@ -48,10 +48,10 @@ public class EmbeddingTests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "task", Name = "EmbedSkipTest" });
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "task", Name = "EmbedSkipTest" }, callerId: 0);
         byte[] content = Encoding.UTF8.GetBytes("# hello\nsome markdown content");
 
-        await svc.UploadContent(node.Id, "text/markdown", new MemoryStream(content));
+        await svc.UploadContent(node.Id, "text/markdown", new MemoryStream(content), callerId: 0, isAdmin: true);
 
         // Read Embedding directly from the entity, bypassing the DTO mapper
         // (NodeDetails does not expose Embedding — it is an internal storage field).
@@ -70,12 +70,12 @@ public class EmbeddingTests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "task", Name = "ContentStillStored" });
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "task", Name = "ContentStillStored" }, callerId: 0);
         byte[] content = Encoding.UTF8.GetBytes("stored content");
 
-        await svc.UploadContent(node.Id, "text/plain", new MemoryStream(content));
+        await svc.UploadContent(node.Id, "text/plain", new MemoryStream(content), callerId: 0, isAdmin: true);
 
-        (string ct, Stream stream) = await svc.GetNodeData(node.Id);
+        (string ct, Stream stream) = await svc.GetNodeData(node.Id, callerId: 0, isAdmin: true);
         byte[] stored = new byte[content.Length];
         await stream.ReadExactlyAsync(stored);
 
@@ -140,10 +140,10 @@ public class EmbeddingTests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "asset", Name = "ImageNode" });
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "asset", Name = "ImageNode" }, callerId: 0);
         byte[] content = [0x89, 0x50, 0x4E, 0x47]; // PNG magic bytes
 
-        await svc.UploadContent(node.Id, "image/png", new MemoryStream(content));
+        await svc.UploadContent(node.Id, "image/png", new MemoryStream(content), callerId: 0, isAdmin: true);
 
         Node raw = await fixture.EntityManager.Load<Node>()
                                               .Where(n => n.Id == node.Id)
@@ -163,15 +163,15 @@ public class EmbeddingTests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "asset", Name = "TextThenImage" });
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "asset", Name = "TextThenImage" }, callerId: 0);
 
         // first upload: text content (embedding step skipped on SQLite)
         byte[] textContent = Encoding.UTF8.GetBytes("some markdown content");
-        await svc.UploadContent(node.Id, "text/markdown", new MemoryStream(textContent));
+        await svc.UploadContent(node.Id, "text/markdown", new MemoryStream(textContent), callerId: 0, isAdmin: true);
 
         // second upload: non-text (clear step also skipped on SQLite)
         byte[] imageContent = [0x89, 0x50, 0x4E, 0x47]; // PNG magic bytes
-        await svc.UploadContent(node.Id, "image/png", new MemoryStream(imageContent));
+        await svc.UploadContent(node.Id, "image/png", new MemoryStream(imageContent), callerId: 0, isAdmin: true);
 
         Node raw = await fixture.EntityManager.Load<Node>()
                                               .Where(n => n.Id == node.Id)

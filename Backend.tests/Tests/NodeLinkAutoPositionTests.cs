@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
@@ -48,14 +49,14 @@ public class NodeLinkAutoPositionTests
 
     static async Task<NodeDetails> CreatePositionedNode(NodeService svc, string name, double x, double y)
     {
-        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "doc", Name = name });
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "doc", Name = name }, callerId: 0);
         await svc.Patch(node.Id,
             [
                 new PatchOperation { Op = "replace", Path = "/X", Value = x },
                 new PatchOperation { Op = "replace", Path = "/Y", Value = y }
             ],
-            CancellationToken.None);
-        return await svc.GetNodeById(node.Id);
+            callerId: 0, isAdmin: true, CancellationToken.None);
+        return await svc.GetNodeById(node.Id, callerId: 0, isAdmin: true);
     }
 
     /// <summary>
@@ -72,13 +73,13 @@ public class NodeLinkAutoPositionTests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        NodeDetails source = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "Source" });
+        NodeDetails source = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "Source" }, callerId: 0);
         NodeDetails target = await CreatePositionedNode(svc, "Target", 100.0, 200.0);
 
-        await svc.LinkNodes(source.Id, target.Id);
+        await svc.LinkNodes(source.Id, target.Id, callerId: 0, isAdmin: true);
 
-        NodeDetails fetchedSource = await svc.GetNodeById(source.Id);
-        NodeDetails fetchedTarget = await svc.GetNodeById(target.Id);
+        NodeDetails fetchedSource = await svc.GetNodeById(source.Id, callerId: 0, isAdmin: true);
+        NodeDetails fetchedTarget = await svc.GetNodeById(target.Id, callerId: 0, isAdmin: true);
 
         (double expectedX, double expectedY) = Expected(source.Id, 100.0, 200.0);
 
@@ -113,12 +114,12 @@ public class NodeLinkAutoPositionTests
         NodeService svc = MakeService(fixture);
 
         NodeDetails source = await CreatePositionedNode(svc, "Source", 100.0, 200.0);
-        NodeDetails target = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "Target" });
+        NodeDetails target = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "Target" }, callerId: 0);
 
-        await svc.LinkNodes(source.Id, target.Id);
+        await svc.LinkNodes(source.Id, target.Id, callerId: 0, isAdmin: true);
 
-        NodeDetails fetchedSource = await svc.GetNodeById(source.Id);
-        NodeDetails fetchedTarget = await svc.GetNodeById(target.Id);
+        NodeDetails fetchedSource = await svc.GetNodeById(source.Id, callerId: 0, isAdmin: true);
+        NodeDetails fetchedTarget = await svc.GetNodeById(target.Id, callerId: 0, isAdmin: true);
 
         (double expectedX, double expectedY) = Expected(target.Id, 100.0, 200.0);
 
@@ -150,10 +151,10 @@ public class NodeLinkAutoPositionTests
         NodeDetails source = await CreatePositionedNode(svc, "Source", 10.0, 20.0);
         NodeDetails target = await CreatePositionedNode(svc, "Target", 100.0, 200.0);
 
-        await svc.LinkNodes(source.Id, target.Id);
+        await svc.LinkNodes(source.Id, target.Id, callerId: 0, isAdmin: true);
 
-        NodeDetails fetchedSource = await svc.GetNodeById(source.Id);
-        NodeDetails fetchedTarget = await svc.GetNodeById(target.Id);
+        NodeDetails fetchedSource = await svc.GetNodeById(source.Id, callerId: 0, isAdmin: true);
+        NodeDetails fetchedTarget = await svc.GetNodeById(target.Id, callerId: 0, isAdmin: true);
 
         Assert.That(fetchedSource.X, Is.Not.Null, "source X must be present");
         Assert.That(fetchedSource.Y, Is.Not.Null, "source Y must be present");
@@ -179,13 +180,13 @@ public class NodeLinkAutoPositionTests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        NodeDetails source = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "Source" });
-        NodeDetails target = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "Target" });
+        NodeDetails source = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "Source" }, callerId: 0);
+        NodeDetails target = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "Target" }, callerId: 0);
 
-        await svc.LinkNodes(source.Id, target.Id);
+        await svc.LinkNodes(source.Id, target.Id, callerId: 0, isAdmin: true);
 
-        NodeDetails fetchedSource = await svc.GetNodeById(source.Id);
-        NodeDetails fetchedTarget = await svc.GetNodeById(target.Id);
+        NodeDetails fetchedSource = await svc.GetNodeById(source.Id, callerId: 0, isAdmin: true);
+        NodeDetails fetchedTarget = await svc.GetNodeById(target.Id, callerId: 0, isAdmin: true);
 
         double sourceX = fetchedSource.X ?? 0.0;
         double sourceY = fetchedSource.Y ?? 0.0;
@@ -215,12 +216,12 @@ public class NodeLinkAutoPositionTests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        NodeDetails source = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "Source" });
+        NodeDetails source = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "Source" }, callerId: 0);
         NodeDetails target = await CreatePositionedNode(svc, "Target", 300.0, 400.0);
 
-        await svc.LinkNodes(source.Id, target.Id);
+        await svc.LinkNodes(source.Id, target.Id, callerId: 0, isAdmin: true);
 
-        NodeDetails fetchedSource = await svc.GetNodeById(source.Id);
+        NodeDetails fetchedSource = await svc.GetNodeById(source.Id, callerId: 0, isAdmin: true);
 
         Assert.That(fetchedSource.X, Is.Not.Null, "source X must be set after linking to positioned target");
         Assert.That(fetchedSource.Y, Is.Not.Null, "source Y must be set after linking to positioned target");

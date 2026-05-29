@@ -80,7 +80,7 @@ public class EmbeddingPatchTransactionRollbackTests
         NodeService seedSvc = new(fixture.EntityManager, DisabledCapability);
         NodeService patchSvc = new(fixture.EntityManager, EnabledCapability);
 
-        NodeDetails node = await seedSvc.CreateNode(new NodeDetails { Type = "task", Name = "Original" });
+        NodeDetails node = await seedSvc.CreateNode(new NodeDetails { Type = "task", Name = "Original" }, callerId: 0);
 
         Exception? thrown = null;
         try
@@ -88,7 +88,7 @@ public class EmbeddingPatchTransactionRollbackTests
             await patchSvc.Patch(
                 node.Id,
                 [new PatchOperation { Op = "replace", Path = "/name", Value = "New" }],
-                CancellationToken.None);
+                callerId: 0, isAdmin: true, CancellationToken.None);
         }
         catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
         {
@@ -122,7 +122,7 @@ public class EmbeddingPatchTransactionRollbackTests
         NodeService seedSvc = new(fixture.EntityManager, DisabledCapability);
         NodeService patchSvc = new(fixture.EntityManager, EnabledCapability);
 
-        NodeDetails node = await seedSvc.CreateNode(new NodeDetails { Type = "documentation", Name = "OriginalDoc" });
+        NodeDetails node = await seedSvc.CreateNode(new NodeDetails { Type = "documentation", Name = "OriginalDoc" }, callerId: 0);
 
         Exception? thrown = null;
         try
@@ -130,7 +130,7 @@ public class EmbeddingPatchTransactionRollbackTests
             await patchSvc.Patch(
                 node.Id,
                 [new PatchOperation { Op = "replace", Path = "/name", Value = "NewDoc" }],
-                CancellationToken.None);
+                callerId: 0, isAdmin: true, CancellationToken.None);
         }
         catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
         {
@@ -157,12 +157,12 @@ public class EmbeddingPatchTransactionRollbackTests
         NodeService patchSvc = new(fixture.EntityManager, EnabledCapability);
 
         NodeDetails node = await seedSvc.CreateNode(
-            new NodeDetails { Type = "task", Name = "StableNode", Status = "open" });
+            new NodeDetails { Type = "task", Name = "StableNode", Status = "open" }, callerId: 0);
 
         NodeDetails patched = await patchSvc.Patch(
             node.Id,
             [new PatchOperation { Op = "replace", Path = "/status", Value = "closed" }],
-            CancellationToken.None);
+            callerId: 0, isAdmin: true, CancellationToken.None);
 
         Assert.That(patched.Status, Is.EqualTo("closed"),
             "non-name PATCH must succeed even with capability enabled — the embedding branch is only entered when the name is touched");
