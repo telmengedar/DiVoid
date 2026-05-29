@@ -72,7 +72,7 @@ Success looks like:
 
 - The user-id space is small (single-digit users today; tens at most in the foreseeable future). Indexing `OwnerId` is cheap and the filter `OwnerId = <caller>` is selective.
 - All existing nodes belong conceptually to Toni (admin). The sentinel `0` does not match Toni's actual `User.Id` (whatever that is — probably `1`), but admin override means Toni still sees and edits everything regardless. The user explicitly accepted this: *"may get 0 as ownerid, otherwise give it ownerid 1 (should be me, the admin)"*. We pick `0` because it is the natural `[DefaultValue]`.
-- `Access` defaults to `0 = None` for new nodes. New nodes are private to their owner by default. This matches the user's mental model (*"0 = nothing allowed (basically a private node)"*) and is the safe default — opt-in to publicity, not opt-out.
+- `Access` defaults to `3 = Read | Write` for new nodes (revised after PR #130 review — see §10). This preserves the pre-access-layer posture where all nodes were world-visible and world-mutable. Callers who want private nodes must set `Access = None` explicitly on create or via PATCH.
 
 ## 4. Architectural Overview
 
@@ -128,7 +128,7 @@ The check itself is fewer than two dozen lines; it appears in one helper called 
 | `Node.OwnerId` (entity column) | Who created the node. Set once on insert; mutable only by owner or admin via PATCH. | The fact that an owner is "valid" (no FK constraint). The convention that admin override holds even when `OwnerId == 0`. |
 | `Node.Access` (entity column) | What non-owner non-admin callers may do with this node. Defaults to `None` (private). Mutable only by owner or admin via PATCH. | Transition rules, history, group/role layering. |
 | `NodeAccess` (new `[Flags]` enum, single file) | The bit semantics: `None=0`, `Read=1`, `Write=2`. Composition `3 = Read | Write` is implicit. | Per-type defaults; vocabulary discovery in the graph (not asked). |
-| `NodeAuthorization` (new internal helper, see §8) | The single decision function `IsAuthorized(node, callerId, isAdmin, operation)` and the list-predicate equivalent `BuildVisibilityPredicate(callerId, isAdmin)`. Both backed by the same one-line truth table. | Identity extraction (`ClaimsExtensions` already does that). Policy registration (`Startup.cs` already does that). |
+| `NodeAuthorization` (new internal helper, see §8) | `BuildVisibilityPredicate(callerId, isAdmin, write)` — the single SQL predicate builder used by every node-touching op (list, get, content, patch, delete, link/unlink). Returns null for admin (no extra predicate). `BuildOwnerPredicate(callerId, isAdmin)` — owner-or-admin variant used for the `/access` PATCH gate. No `IsAuthorized` boolean; single-node ops compose the predicate into the operation's WHERE directly (revised after PR #130 — see §10). | Identity extraction (`ClaimsExtensions` already does that). Policy registration (`Startup.cs` already does that). |
 | `NodeService` (existing) | Calling the helper at every entry point. Composing the list predicate into `GenerateFilter`. Setting `OwnerId` on insert from the authenticated caller. Enforcing per-property PATCH authorization on `OwnerId` and `Access`. | Anything in §2 out-of-scope. |
 | `NodeController` (existing) | Forwarding the `ClaimsPrincipal` (or pre-extracted `callerId`+`isAdmin` tuple) into the service. (Auth-policy `[Authorize(Policy="...")]` attributes are unchanged.) | The actual per-node decision (lives in the service so it can compose into the SQL predicate). |
 
@@ -248,7 +248,7 @@ If the caller specifies `Access` in the create body, honour it — that lets a c
 | `id` | (existing) identity |
 | `type`, `name`, `contentType`, `content`, `embedding`, `status`, `x`, `y` | (existing) unchanged |
 | `ownerId` | NEW. Non-null `long`. The DiVoid user-id of the creator, captured on insert from the authenticated caller. Defaults to `0` (sentinel — exists only on the rows that pre-date this feature). Indexed so `OwnerId = <callerId>` is a cheap point-membership check. |
-| `access` | NEW. Non-null `int`-stored `[Flags]` enum (`NodeAccess`). Defaults to `0` (`None`, private). Indexed so the list visibility predicate `Access & 1 != 0` is index-eligible. |
+| `access` | NEW. Non-null `int`-stored `[Flags]` enum (`NodeAccess`). Defaults to `3` (`Read | Write`, fully public). Indexed so the list visibility predicate `Access & 1 != 0` is index-eligible. Revised after PR #130 — see §10. |
 
 ### NodeAccess (new enum, separate file per Code Contracts §1)
 
@@ -302,24 +302,24 @@ This visibility predicate composes with:
 | `/name` | owner OR admin OR (`Access` has `Write`) | (existing — gains the per-node gate) |
 | `/status` | owner OR admin OR (`Access` has `Write`) | (existing — gains the per-node gate) |
 | `/x`, `/y` | owner OR admin OR (`Access` has `Write`) | (existing — gains the per-node gate) |
-| `/access` | owner OR admin ONLY | Changing publicity is a privileged op. A `Write`-public node does NOT let strangers flip `Access` to `Write|Read` themselves or `None` to lock out the owner. |
-| `/ownerId` | admin ONLY | Ownership transfer is admin-only. An owner cannot "give away" a node to evade admin oversight; admins can reassign ownership when a user leaves. |
+| `/access` | owner OR admin ONLY | Changing publicity is a privileged op. A `Write`-public node does NOT let strangers flip `Access`. Failure: 404 (revised after PR #130 — see §10). |
+| `/ownerId` | admin ONLY | Ownership transfer is admin-only. Non-admin (including owner): 404 immediately, no DB query (admin is a request-scoped constant). |
 
-The decision-helper handles `/access` and `/ownerId` as special cases. All other patchable paths route through the standard per-node check.
+The service classifies the patch array once before issuing any UPDATE: if any op touches `/ownerId`, the admin gate fires first (non-admin → 404 with no DB query); if any op touches `/access`, the owner-or-admin WHERE predicate applies; otherwise the write-visibility predicate applies. One UPDATE, one WHERE variant per classification. 0 affected → 404.
 
-The check runs **per patch operation** in the array — a mixed array (`replace /name`, `replace /access` in one PATCH) by a non-owner non-admin write-public caller succeeds on `/name` and fails the whole operation on `/access`. The whole PATCH transaction rolls back (it is already wrapped in a single transaction at `NodeService.cs:746`).
+All failures across all three classifications return 404 (revised after PR #130 — see §10). There is no 403 surface in the per-node access layer.
 
 ### Single-node read / GET-content contract — extended
 
-`GET /api/nodes/{id}` and `GET /api/nodes/{id}/content`: load the row, then call the per-node helper with `operation = Read`. On failure, throw `NotFoundException<Node>(id)` — `404`, not `403`. Existence is not leaked.
+`GET /api/nodes/{id}` and `GET /api/nodes/{id}/content`: the read visibility predicate is composed into the mapper fetch / content SELECT WHERE clause. If no row matches (node absent OR caller cannot read it), `NotFoundException<Node>(id)` — `404`, not `403`. Existence is not leaked. One query, not two. (Revised after PR #130 — see §10.)
 
 ### Single-node write contract — extended
 
-`DELETE /api/nodes/{id}`, `POST /api/nodes/{id}/content`, the deprecated `embed` op via PATCH: load the existing row (or rely on the optimistic-delete affected-row count for `DELETE`), call the helper with `operation = Write`. On failure, `404` (same leak-avoidance reasoning).
+`DELETE /api/nodes/{id}`, `POST /api/nodes/{id}/content`, the deprecated `embed` op via PATCH: the access predicate is composed directly into the operation's WHERE clause. A 0-affected-rows result maps to `NotFoundException<Node>` (404) — same leak-avoidance reasoning, one fewer round-trip than the prior load-then-check pattern (revised after PR #130 — see §10).
 
-For `DELETE` specifically: the optimistic pattern (Code Contracts §6.3, §12) keeps working — but we need the existence check to run **before** the delete fires, because the delete's WHERE clause does not naturally express "and you are allowed to delete". The cleanest shape is a one-statement `Load<Node>(n => n.OwnerId, n => n.Access)` to fetch just the two columns, then the in-process check, then the optimistic delete. Loading two scalar columns for an existence-plus-fields check is justified per Code Contracts §6.3.1 (the entity fields are *consumed* — for the authorization decision).
+For `DELETE`: `DELETE FROM node WHERE id=? AND (isAdmin OR OwnerId=callerId OR (Access & Write)!=0)`. 0 affected → 404.
 
-`POST /api/nodes/{id}/content`: same shape — load `(OwnerId, Access)`, check, then proceed with the existing upsert+embedding pipeline.
+`POST /api/nodes/{id}/content`: `UPDATE ... SET content=? WHERE id=? AND visibility(write)`. 0 affected → 404; then embedding pipeline proceeds within the same transaction.
 
 ### Linking contract — relationship to per-node access
 
@@ -358,7 +358,7 @@ The DB can use either index — in practice it uses `OwnerId` for selective owne
 
 **Observability.** No specific logging required by this design. The existing PATCH controller already emits `LogInformation("Patching node '{nodeId}'", nodeId)`. If `/access` and `/ownerId` patches deserve a higher-signal log line later (security audit), that is a small additive change — not in scope.
 
-**Error handling.** Per-node gate failures throw `NotFoundException<Node>(id)` — already maps to `404` via `ErrorHandleMiddleware`. PATCH per-property gate failures (admin/owner-only paths) throw `AuthorizationFailedException` from `Backend.Errors.Exceptions` — that gives `403` with a clear message (the caller passed the policy gate, so the failure is at the per-property layer; this is not an existence-leak case because the caller already proved they could see the node by passing the per-node read check). No new exception types are introduced.
+**Error handling.** All per-node gate failures — including PATCH per-property gates — map to `404` via `NotFoundException<Node>(id)`. The prior distinction (per-property failures on `/access` and `/ownerId` gave `403`) is dropped in favour of 404 across the board (revised after PR #130 — see §10). No `AuthorizationFailedException` is thrown. No new exception types are introduced.
 
 **Consistency model.** A `PATCH` array containing a mix of allowed and disallowed paths fails atomically — the whole transaction rolls back. Same shape as the existing PATCH transaction at `NodeService.cs:746-761`.
 
@@ -520,7 +520,49 @@ The semantic-search and path-query paths inherit the predicate via `GenerateFilt
 - [ ] `[DefaultValue]` on both new value-type columns.
 - [ ] Tests `[TestFixture, Parallelizable]` + `[Test, Parallelizable]`.
 - [ ] No try/catch in controller paths.
-- [ ] No new exception types invented (using `NotFoundException<Node>` and existing `AuthorizationFailedException`).
+- [ ] No new exception types invented (using `NotFoundException<Node>`; `AuthorizationFailedException` is no longer used in the per-node layer after PR #130 revision).
+
+---
+
+## 10. Trade-offs revised by Toni (PR #130 bounce)
+
+### Revised after PR #130 review
+
+The following two design decisions were overridden by Toni's verbatim feedback after the first implementation round. The original design reasoning is preserved below each revision for traceability.
+
+**Revision 1 — Access default changed from `None` (0) to `Read | Write` (3)**
+
+Toni's verbatim words:
+
+> *"A nodeaccess default of None would lead to current nodes not being accessible by anyone but the admin - also if anyone from then on uses it without the tools being updated they would create private nodes by default. I want the current system to behave as is, so a default of 3 would be correct here"*
+
+**Original design:** §3 said `Access` defaults to `None = 0` because "opt-in to publicity, not opt-out" is the safe default for a new access layer. The reasoning was that unknown/unspecified callers should not accidentally expose private data.
+
+**Revised:** `[DefaultValue((int)(NodeAccess.Read | NodeAccess.Write))]` (value 3). This preserves the pre-access-layer posture where every node was world-visible and world-mutable. Existing rows backfill to `Read|Write` via the column default, remaining fully accessible to all authenticated callers. New nodes created without an explicit `Access` in the body default to `Read|Write`. Callers who want private nodes must set `Access = None` explicitly.
+
+---
+
+**Revision 2 — Single-node ops use query-level access checks (no load-then-check)**
+
+Toni's verbatim words:
+
+> *"Delete -> load node before deletion for access check is a smell - you can just add the accessibility criterias to the where of the delete, especially since you throw a notfound on fail anyways."*
+>
+> *"Same for basically all methods -> load then check is inefficient. You can check all of that right at query level."*
+
+**Original design:** §8 described a two-step pattern for single-node write ops: `Load<Node>(OwnerId, Access)` to fetch the two authorization columns, then an in-process `IsAuthorized(...)` call, then the actual operation. This was motivated by Code Contracts §6.3.1 reasoning ("entity fields are consumed for the authorization decision").
+
+**Revised:** Every single-node op composes `NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write)` (or `BuildOwnerPredicate` for the `/access` gate) directly into the operation's WHERE clause. A 0-affected-rows result maps to `NotFoundException<Node>` (404) — this is both the "node not found" and "you can't touch it" case, unified. One DB round-trip per op instead of two. The `IsAuthorized(...)` boolean method is removed. `BuildVisibilityPredicate` is the single source of truth for the truth table, shared by list and single-node ops.
+
+---
+
+**Revision 3 — 404 across the board for all access failures (no 403 from per-property gates)**
+
+Toni's verbatim words (on W1, as a principle):
+
+> *"for W1: i want for jenny to treat comment fencing (or such matters in general) more seriously. Its better to deliver it clean right away than to have to task it for cleanup later. Behavior like this leads to technical debts (even though here its just comments), but its the principle which matters, do it right immediately instead of having to invest time later."*
+
+The original design returned `403` for per-property PATCH gate failures (`/access` and `/ownerId`) on the reasoning that the caller had already proven they could see the node (read check passed) so the failure was at the per-property layer — not an existence-leak. With Revision 2's query-level approach, there is no longer a separate read pre-check before write ops — the read and write paths are independent. Returning `403` here would require a separate SELECT to confirm the node exists before returning the property-gate error, reintroducing the load-then-check smell. **404 across the board** is simpler: every node-touching op that fails (for any access reason) returns 404.
 
 ---
 

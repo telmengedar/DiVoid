@@ -83,10 +83,11 @@ public class Node
 
     /// <summary>
     /// access flags controlling what non-owner non-admin callers may do with this node.
-    /// owner and admin always override. defaults to <see cref="NodeAccess.None"/> (private).
+    /// owner and admin always override. defaults to <see cref="NodeAccess.Read"/> | <see cref="NodeAccess.Write"/>
+    /// (fully public) to preserve the pre-access-layer posture of existing rows.
     /// </summary>
     [AllowPatch]
     [Index("access")]
-    [DefaultValue((int)NodeAccess.None)]
+    [DefaultValue((int)(NodeAccess.Read | NodeAccess.Write))]
     public NodeAccess Access { get; set; }
 }

@@ -1,5 +1,4 @@
 using System.Linq.Expressions;
-using Backend.Errors.Exceptions;
 using Backend.Extensions;
 using Backend.Models.Nodes;
 using Backend.Models.Users;
@@ -167,15 +166,14 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <inheritdoc />
     public async Task Delete(long nodeId, long callerId, bool isAdmin)
     {
-        Node accessRow = await database.Load<Node>(n => n.OwnerId, n => n.Access)
-                                      .Where(n => n.Id == nodeId)
-                                      .ExecuteEntityAsync();
-        if (accessRow == null || !NodeAuthorization.IsAuthorized(accessRow.OwnerId, accessRow.Access, callerId, isAdmin, write: true))
-            throw new NotFoundException<Node>(nodeId);
+        PredicateExpression<Node> gate = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write: true);
+        PredicateExpression<Node> predicate = new PredicateExpression<Node>(n => n.Id == nodeId);
+        if (gate != null)
+            predicate &= gate;
 
         using Transaction transaction = database.Transaction();
         if (await database.Delete<Node>()
-                         .Where(n => n.Id == nodeId)
+                         .Where(predicate.Content)
                          .ExecuteAsync(transaction) == 0)
             throw new NotFoundException<Node>(nodeId);
         await database.Delete<NodeLink>().Where(l => l.SourceId == nodeId || l.TargetId == nodeId).ExecuteAsync(transaction);
@@ -185,10 +183,15 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <inheritdoc />
     public async Task<(string, Stream)> GetNodeData(long nodeId, long callerId, bool isAdmin)
     {
-        Node node = await database.Load<Node>(n => n.OwnerId, n => n.Access, n => n.ContentType, n => n.Content)
-                                .Where(n => n.Id == nodeId)
+        PredicateExpression<Node> gate = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write: false);
+        PredicateExpression<Node> predicate = new PredicateExpression<Node>(n => n.Id == nodeId);
+        if (gate != null)
+            predicate &= gate;
+
+        Node node = await database.Load<Node>(n => n.ContentType, n => n.Content)
+                                .Where(predicate.Content)
                                 .ExecuteEntityAsync();
-        if (node == null || !NodeAuthorization.IsAuthorized(node.OwnerId, node.Access, callerId, isAdmin, write: false))
+        if (node == null)
             throw new NotFoundException<Node>(nodeId);
 
         if (node.Content == null)
@@ -203,16 +206,17 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (sourceNodeId == targetNodeId)
             throw new InvalidOperationException("Unable to link node to itself");
 
-        Node sourceAccess = await database.Load<Node>(n => n.OwnerId, n => n.Access)
-                                         .Where(n => n.Id == sourceNodeId)
-                                         .ExecuteEntityAsync();
-        if (sourceAccess == null || !NodeAuthorization.IsAuthorized(sourceAccess.OwnerId, sourceAccess.Access, callerId, isAdmin, write: true))
+        PredicateExpression<Node> gate = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write: true);
+        PredicateExpression<Node> sourcePredicate = new PredicateExpression<Node>(n => n.Id == sourceNodeId);
+        if (gate != null)
+            sourcePredicate &= gate;
+
+        if (await database.Load<Node>(DB.Count()).Where(sourcePredicate.Content).ExecuteScalarAsync<long>() == 0)
             throw new NotFoundException<Node>(sourceNodeId);
 
         using Transaction transaction = database.Transaction();
         if (await database.Load<Node>(DB.Count()).Where(n => n.Id == sourceNodeId || n.Id == targetNodeId).ExecuteScalarAsync<long>(transaction) != 2)
             throw new NotFoundException<Node>($"Either '{sourceNodeId}' or '{targetNodeId}' does not exist");
-        // idempotent: if the link already exists in either direction, treat as success (no-op)
         if (await database.Load<NodeLink>(DB.Count()).Where(n => n.SourceId == sourceNodeId && n.TargetId == targetNodeId || n.SourceId == targetNodeId && n.TargetId == sourceNodeId).ExecuteScalarAsync<long>(transaction) > 0)
             return;
         await database.Insert<NodeLink>()
@@ -757,27 +761,48 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         return false;
     }
 
+    static bool TouchesPath(PatchOperation[] patches, string path)
+    {
+        foreach (PatchOperation op in patches)
+        {
+            if (string.Equals(op.Path, path, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
     /// <inheritdoc />
     public async Task<NodeDetails> Patch(long nodeId, PatchOperation[] patches, long callerId, bool isAdmin, CancellationToken ct)
     {
-        Node accessRow = await database.Load<Node>(n => n.OwnerId, n => n.Access)
-                                      .Where(n => n.Id == nodeId)
-                                      .ExecuteEntityAsync();
-        if (accessRow == null || !NodeAuthorization.IsAuthorized(accessRow.OwnerId, accessRow.Access, callerId, isAdmin, write: true))
-            throw new NotFoundException<Node>(nodeId);
+        bool touchesOwnerId = TouchesPath(patches, "/ownerId");
+        bool touchesAccess = TouchesPath(patches, "/access");
 
-        foreach (PatchOperation op in patches)
+        PredicateExpression<Node> gatePredicate;
+        if (touchesOwnerId)
         {
-            if (!NodeAuthorization.CanPatchPath(op.Path, accessRow.OwnerId, callerId, isAdmin))
-                throw new AuthorizationFailedException($"Caller is not authorized to patch '{op.Path}'");
+            if (!isAdmin)
+                throw new NotFoundException<Node>(nodeId);
+            gatePredicate = null;
         }
+        else if (touchesAccess)
+        {
+            gatePredicate = NodeAuthorization.BuildOwnerPredicate(callerId, isAdmin);
+        }
+        else
+        {
+            gatePredicate = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write: true);
+        }
+
+        PredicateExpression<Node> predicate = new PredicateExpression<Node>(n => n.Id == nodeId);
+        if (gatePredicate != null)
+            predicate &= gatePredicate;
 
         bool nameTouched = embeddingCapability.IsEnabled && TouchesName(patches);
         using Transaction transaction = database.Transaction();
 
         if (await database.Update<Node>()
                          .Patch(patches)
-                         .Where(n => n.Id == nodeId)
+                         .Where(predicate.Content)
                          .ExecuteAsync(transaction) == 0)
             throw new NotFoundException<Node>(nodeId);
 
@@ -895,10 +920,12 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <inheritdoc />
     public async Task UnlinkNodes(long sourceNodeId, long targetNodeId, long callerId, bool isAdmin)
     {
-        Node sourceAccess = await database.Load<Node>(n => n.OwnerId, n => n.Access)
-                                         .Where(n => n.Id == sourceNodeId)
-                                         .ExecuteEntityAsync();
-        if (sourceAccess == null || !NodeAuthorization.IsAuthorized(sourceAccess.OwnerId, sourceAccess.Access, callerId, isAdmin, write: true))
+        PredicateExpression<Node> gate = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write: true);
+        PredicateExpression<Node> sourcePredicate = new PredicateExpression<Node>(n => n.Id == sourceNodeId);
+        if (gate != null)
+            sourcePredicate &= gate;
+
+        if (await database.Load<Node>(DB.Count()).Where(sourcePredicate.Content).ExecuteScalarAsync<long>() == 0)
             throw new NotFoundException<Node>(sourceNodeId);
 
         await database.Delete<NodeLink>()
@@ -909,18 +936,18 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <inheritdoc />
     public async Task UploadContent(long nodeId, string contentType, Stream data, long callerId, bool isAdmin, CancellationToken ct = default)
     {
-        Node accessRow = await database.Load<Node>(n => n.OwnerId, n => n.Access)
-                                      .Where(n => n.Id == nodeId)
-                                      .ExecuteEntityAsync();
-        if (accessRow == null || !NodeAuthorization.IsAuthorized(accessRow.OwnerId, accessRow.Access, callerId, isAdmin, write: true))
-            throw new NotFoundException<Node>(nodeId);
-
         byte[] blob = await data.ToByteArray();
+
+        PredicateExpression<Node> gate = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write: true);
+        PredicateExpression<Node> predicate = new PredicateExpression<Node>(n => n.Id == nodeId);
+        if (gate != null)
+            predicate &= gate;
+
         using Transaction transaction = database.Transaction();
 
         if (await database.Update<Node>()
                           .Set(n => n.ContentType == contentType, n => n.Content == blob)
-                          .Where(n => n.Id == nodeId)
+                          .Where(predicate.Content)
                           .ExecuteAsync(transaction) == 0)
             throw new NotFoundException<Node>(nodeId);
 
@@ -976,9 +1003,13 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     {
         NodeMapper mapper = new();
         LoadOperation<Node> operation = mapper.CreateOperation(database);
-        operation.Where(n => n.Id == nodeId);
+        PredicateExpression<Node> predicate = new PredicateExpression<Node>(n => n.Id == nodeId);
+        PredicateExpression<Node> gate = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write: false);
+        if (gate != null)
+            predicate &= gate;
+        operation.Where(predicate.Content);
         NodeDetails result = await mapper.EntityFromOperation(operation);
-        if (result == null || !NodeAuthorization.IsAuthorized(result.OwnerId, result.Access, callerId, isAdmin, write: false))
+        if (result == null)
             throw new NotFoundException<Node>(nodeId);
         return result;
     }

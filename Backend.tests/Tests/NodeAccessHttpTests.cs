@@ -34,16 +34,8 @@ namespace Backend.tests.Tests;
 [TestFixture]
 public class NodeAccessHttpTests
 {
-    // -----------------------------------------------------------------------
-    // Auth-disabled fixture (group 1)
-    // -----------------------------------------------------------------------
-
     WebApplicationFactory<Program> noAuthFactory = null!;
     IHttpService noAuthHttp = null!;
-
-    // -----------------------------------------------------------------------
-    // Auth-enabled fixture (group 2)
-    // -----------------------------------------------------------------------
 
     JwtAuthFixture jwtFixture = null!;
     IEntityManager db = null!;
@@ -65,10 +57,6 @@ public class NodeAccessHttpTests
         jwtFixture.Dispose();
     }
 
-    // -----------------------------------------------------------------------
-    // Helpers — auth-disabled
-    // -----------------------------------------------------------------------
-
     Task<NodeDetails> NoAuthCreateNodeAsync(NodeDetails payload)
         => noAuthHttp.Post<NodeDetails, NodeDetails>(
             $"{TestSetup.BaseUrl}/api/nodes",
@@ -79,10 +67,6 @@ public class NodeAccessHttpTests
         => noAuthHttp.Get<NodeDetails>(
             $"{TestSetup.BaseUrl}/api/nodes/{id}",
             new HttpOptions());
-
-    // -----------------------------------------------------------------------
-    // Helpers — auth-enabled
-    // -----------------------------------------------------------------------
 
     async Task<long> CreateUserAsync(string[]? permissions = null)
         => await db.Insert<User>()
@@ -156,15 +140,9 @@ public class NodeAccessHttpTests
         return list;
     }
 
-    // -----------------------------------------------------------------------
-    // Group 1 — Auth-disabled: admin-equivalent posture
-    // -----------------------------------------------------------------------
-
     [Test]
     public async Task Create_NoAuth_OwnerIdIs0()
     {
-        // With auth disabled ResolveCaller() returns (callerId=0, isAdmin=true).
-        // CreateNode must use callerId as OwnerId, so OwnerId must be 0.
         NodeDetails created = await NoAuthCreateNodeAsync(
             new NodeDetails { Type = "task", Name = "NoAuthOwnerTest" });
 
@@ -177,11 +155,9 @@ public class NodeAccessHttpTests
     [Test]
     public async Task List_NoAuth_ReturnsAll()
     {
-        // Auth-disabled: no visibility filter applied — all nodes returned.
         NodeDetails n1 = await NoAuthCreateNodeAsync(new NodeDetails { Type = "task", Name = "NoAuthListA" });
         NodeDetails n2 = await NoAuthCreateNodeAsync(new NodeDetails { Type = "task", Name = "NoAuthListB" });
 
-        // GET list — auth disabled, no filter
         HttpResponseMessage resp = await noAuthFactory.CreateClient().GetAsync("/api/nodes");
         resp.EnsureSuccessStatusCode();
         string body = await resp.Content.ReadAsStringAsync();
@@ -202,10 +178,6 @@ public class NodeAccessHttpTests
         });
     }
 
-    // -----------------------------------------------------------------------
-    // Group 2 — Auth-enabled: OwnerId set from callerId on create
-    // -----------------------------------------------------------------------
-
     [Test]
     public async Task Create_AuthEnabled_OwnerIdSetFromCallerId()
     {
@@ -214,7 +186,6 @@ public class NodeAccessHttpTests
 
         NodeDetails created = await PostNodeAsync(client, new NodeDetails { Type = "task", Name = "OwnershipTest" });
 
-        // Re-read to confirm it was persisted
         HttpResponseMessage getResp = await GetNodeRawAsync(client, created.Id);
         getResp.EnsureSuccessStatusCode();
         NodeDetails fetched = Json.Read<NodeDetails>(await getResp.Content.ReadAsStringAsync())!;
@@ -226,11 +197,9 @@ public class NodeAccessHttpTests
     [Test]
     public async Task Create_BodyOwnerIdIgnored_OverriddenByCallerId()
     {
-        // The caller may supply an OwnerId in the body — it must be ignored.
         long userId = await CreateUserAsync();
         HttpClient client = AuthClient(userId);
 
-        // Send body with a different OwnerId
         NodeDetails body = new() { Type = "task", Name = "IgnoreBodyOwner", OwnerId = 99999L };
         NodeDetails created = await PostNodeAsync(client, body);
 
@@ -240,10 +209,6 @@ public class NodeAccessHttpTests
         Assert.That(fetched.OwnerId, Is.EqualTo(userId),
             "body OwnerId must be ignored; server sets OwnerId from the authenticated caller");
     }
-
-    // -----------------------------------------------------------------------
-    // Group 2 — Visibility: owner / admin / stranger / public-read
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task GetById_Owner_CanReadOwnPrivateNode()
@@ -299,7 +264,6 @@ public class NodeAccessHttpTests
         HttpClient ownerClient = AuthClient(ownerId);
         HttpClient strangerClient = AuthClient(strangerId);
 
-        // Create node with Access=Read so any authenticated user can see it
         NodeDetails node = await PostNodeAsync(ownerClient,
             new NodeDetails { Type = "task", Name = "PublicRead", Access = NodeAccess.Read });
 
@@ -316,7 +280,6 @@ public class NodeAccessHttpTests
         HttpClient ownerClient = AuthClient(ownerId);
         HttpClient strangerClient = AuthClient(strangerId);
 
-        // Create private node as owner
         NodeDetails privateNode = await PostNodeAsync(ownerClient,
             new NodeDetails { Type = "task", Name = $"HiddenFromStranger-{Guid.NewGuid():N}", Access = NodeAccess.None });
 
@@ -335,7 +298,6 @@ public class NodeAccessHttpTests
         HttpClient ownerClient = AuthClient(ownerId);
         HttpClient strangerClient = AuthClient(strangerId);
 
-        // Create public node (Access=Read)
         NodeDetails publicNode = await PostNodeAsync(ownerClient,
             new NodeDetails { Type = "task", Name = $"PublicVisible-{Guid.NewGuid():N}", Access = NodeAccess.Read });
 
@@ -345,10 +307,6 @@ public class NodeAccessHttpTests
         Assert.That(ids, Does.Contain(publicNode.Id),
             "node with Access=Read must appear in the stranger's list result");
     }
-
-    // -----------------------------------------------------------------------
-    // Group 2 — PATCH gates: owner / admin / stranger
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task Patch_Owner_CanPatchOwnNode()
@@ -407,7 +365,6 @@ public class NodeAccessHttpTests
         HttpClient ownerClient = AuthClient(ownerId);
         HttpClient strangerClient = AuthClient(strangerId);
 
-        // Node with Write flag open — anyone with write perm can patch it
         NodeDetails node = await PostNodeAsync(ownerClient,
             new NodeDetails { Type = "task", Name = "WriteOpenTest", Access = NodeAccess.Write });
 
@@ -417,9 +374,39 @@ public class NodeAccessHttpTests
             "stranger must be able to patch a node with Access=Write");
     }
 
-    // -----------------------------------------------------------------------
-    // Group 2 — PATCH /ownerId gate: admin-only
-    // -----------------------------------------------------------------------
+    [Test]
+    public async Task Patch_AccessAsStranger_OnWritePublicNode_Returns404()
+    {
+        long ownerId = await CreateUserAsync();
+        long strangerId = await CreateUserAsync();
+        HttpClient ownerClient = AuthClient(ownerId);
+        HttpClient strangerClient = AuthClient(strangerId);
+
+        NodeDetails node = await PostNodeAsync(ownerClient,
+            new NodeDetails { Type = "task", Name = "WritePublicAccessGate", Access = NodeAccess.Read | NodeAccess.Write });
+
+        PatchOperation[] ops = [new() { Op = "replace", Path = "/access", Value = 0 }];
+        HttpResponseMessage resp = await PatchNodeRawAsync(strangerClient, node.Id, ops);
+        Assert.That((int)resp.StatusCode, Is.EqualTo(404),
+            "write-public does not grant permission to flip /access — stranger gets 404");
+    }
+
+    [Test]
+    public async Task Patch_OwnerIdAsStranger_OnWritePublicNode_Returns404()
+    {
+        long ownerId = await CreateUserAsync();
+        long strangerId = await CreateUserAsync();
+        HttpClient ownerClient = AuthClient(ownerId);
+        HttpClient strangerClient = AuthClient(strangerId);
+
+        NodeDetails node = await PostNodeAsync(ownerClient,
+            new NodeDetails { Type = "task", Name = "WritePublicOwnerGate", Access = NodeAccess.Read | NodeAccess.Write });
+
+        PatchOperation[] ops = [new() { Op = "replace", Path = "/ownerId", Value = strangerId }];
+        HttpResponseMessage resp = await PatchNodeRawAsync(strangerClient, node.Id, ops);
+        Assert.That((int)resp.StatusCode, Is.EqualTo(404),
+            "write-public does not grant ownership reassignment — stranger gets 404");
+    }
 
     [Test]
     public async Task Patch_OwnerId_Admin_Succeeds()
@@ -440,7 +427,7 @@ public class NodeAccessHttpTests
     }
 
     [Test]
-    public async Task Patch_OwnerId_Owner_Returns403()
+    public async Task Patch_OwnerId_Owner_Returns404()
     {
         long ownerId = await CreateUserAsync();
         long strangerId = await CreateUserAsync();
@@ -449,16 +436,11 @@ public class NodeAccessHttpTests
         NodeDetails node = await PostNodeAsync(ownerClient,
             new NodeDetails { Type = "task", Name = "OwnerIdPatchOwner", Access = NodeAccess.None });
 
-        // Owner tries to change OwnerId — must be refused even though they own the node
         PatchOperation[] ops = [new() { Op = "replace", Path = "/ownerId", Value = strangerId }];
         HttpResponseMessage resp = await PatchNodeRawAsync(ownerClient, node.Id, ops);
-        Assert.That((int)resp.StatusCode, Is.EqualTo(403),
-            "non-admin must receive 403 when attempting to patch /ownerId");
+        Assert.That((int)resp.StatusCode, Is.EqualTo(404),
+            "non-admin attempting to patch /ownerId must receive 404");
     }
-
-    // -----------------------------------------------------------------------
-    // Group 2 — PATCH /access gate: owner or admin
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task Patch_Access_Owner_Succeeds()
@@ -469,7 +451,6 @@ public class NodeAccessHttpTests
         NodeDetails node = await PostNodeAsync(ownerClient,
             new NodeDetails { Type = "task", Name = "AccessPatchOwner", Access = NodeAccess.None });
 
-        // Owner changes Access to Read-open
         PatchOperation[] ops = [new() { Op = "replace", Path = "/access", Value = 1 }];
         HttpResponseMessage resp = await PatchNodeRawAsync(ownerClient, node.Id, ops);
         Assert.That((int)resp.StatusCode, Is.EqualTo(200),
@@ -504,16 +485,11 @@ public class NodeAccessHttpTests
         NodeDetails node = await PostNodeAsync(ownerClient,
             new NodeDetails { Type = "task", Name = "AccessPatchStranger", Access = NodeAccess.None });
 
-        // Stranger can't even read the node — 404 before the /access gate fires
         PatchOperation[] ops = [new() { Op = "replace", Path = "/access", Value = 1 }];
         HttpResponseMessage resp = await PatchNodeRawAsync(strangerClient, node.Id, ops);
         Assert.That((int)resp.StatusCode, Is.EqualTo(404),
             "stranger patching /access on a private node must receive 404");
     }
-
-    // -----------------------------------------------------------------------
-    // Group 2 — Delete gate
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task Delete_Owner_Succeeds()
@@ -543,5 +519,41 @@ public class NodeAccessHttpTests
         HttpResponseMessage resp = await DeleteNodeRawAsync(strangerClient, node.Id);
         Assert.That((int)resp.StatusCode, Is.EqualTo(404),
             "stranger deleting a private node must receive 404");
+    }
+
+    [Test]
+    public async Task Backfill_ExistingRow_DefaultsToReadWrite_VisibleToStranger()
+    {
+        long strangerId = await CreateUserAsync();
+        HttpClient strangerClient = AuthClient(strangerId);
+
+        long typeId = await db.Insert<NodeType>()
+                              .Columns(t => t.Type)
+                              .Values("backfill-test-type")
+                              .ReturnID()
+                              .ExecuteAsync();
+
+        long nodeId = await db.Insert<Node>()
+                              .Columns(n => n.TypeId, n => n.Name)
+                              .Values(typeId, $"BackfillDefault-{Guid.NewGuid():N}")
+                              .ReturnID()
+                              .ExecuteAsync();
+
+        NodeDetails? fetched = null;
+        await foreach (Node row in db.Load<Node>(n => n.Id, n => n.OwnerId, n => n.Access)
+                                     .Where(n => n.Id == nodeId)
+                                     .ExecuteEntitiesAsync())
+        {
+            fetched = new NodeDetails { Id = row.Id, OwnerId = row.OwnerId, Access = row.Access };
+        }
+
+        Assert.That(fetched, Is.Not.Null, "inserted row must be retrievable");
+        Assert.That(fetched!.OwnerId, Is.EqualTo(0L), "schema default OwnerId must be 0");
+        Assert.That(fetched.Access, Is.EqualTo(NodeAccess.Read | NodeAccess.Write),
+            "schema default Access must be Read|Write (3) — preserves pre-access-layer visibility");
+
+        HttpResponseMessage resp = await GetNodeRawAsync(strangerClient, nodeId);
+        Assert.That((int)resp.StatusCode, Is.EqualTo(200),
+            "backfilled row with default Access=Read|Write must be visible to any authenticated caller");
     }
 }
