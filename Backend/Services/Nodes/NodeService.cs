@@ -101,9 +101,10 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         double insertX = node.X ?? 0.0;
         double insertY = node.Y ?? 0.0;
+        DateTime now = DateTime.UtcNow;
         long nodeId = await database.Insert<Node>()
-                              .Columns(n => n.TypeId, n => n.Name, n => n.Status, n => n.X, n => n.Y)
-                              .Values(type.Id, node.Name, node.Status, insertX, insertY)
+                              .Columns(n => n.TypeId, n => n.Name, n => n.Status, n => n.X, n => n.Y, n => n.Created, n => n.LastUpdate)
+                              .Values(type.Id, node.Name, node.Status, insertX, insertY, now, now)
                               .ReturnID()
                               .ExecuteAsync(transaction);
 
@@ -330,6 +331,30 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             double xMax = filter.Bounds[2];
             double yMax = filter.Bounds[3];
             predicate &= n => n.X >= xMin && n.X <= xMax && n.Y >= yMin && n.Y <= yMax;
+        }
+
+        if (filter.CreatedFrom.HasValue)
+        {
+            DateTime createdFrom = filter.CreatedFrom.Value;
+            predicate &= n => n.Created >= createdFrom;
+        }
+
+        if (filter.CreatedTo.HasValue)
+        {
+            DateTime createdTo = filter.CreatedTo.Value;
+            predicate &= n => n.Created < createdTo;
+        }
+
+        if (filter.UpdatedFrom.HasValue)
+        {
+            DateTime updatedFrom = filter.UpdatedFrom.Value;
+            predicate &= n => n.LastUpdate >= updatedFrom;
+        }
+
+        if (filter.UpdatedTo.HasValue)
+        {
+            DateTime updatedTo = filter.UpdatedTo.Value;
+            predicate &= n => n.LastUpdate < updatedTo;
         }
 
         return predicate?.Content;
@@ -751,6 +776,12 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                          .ExecuteAsync(transaction) == 0)
             throw new NotFoundException<Node>(nodeId);
 
+        DateTime patchedAt = DateTime.UtcNow;
+        await database.Update<Node>()
+                      .Set(n => n.LastUpdate == patchedAt)
+                      .Where(n => n.Id == nodeId)
+                      .ExecuteAsync(transaction);
+
         if (nameTouched)
         {
             ct.ThrowIfCancellationRequested();
@@ -877,8 +908,9 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         byte[] blob = await data.ToByteArray();
         using Transaction transaction = database.Transaction();
 
+        DateTime uploadedAt = DateTime.UtcNow;
         if (await database.Update<Node>()
-                          .Set(n => n.ContentType == contentType, n => n.Content == blob)
+                          .Set(n => n.ContentType == contentType, n => n.Content == blob, n => n.LastUpdate == uploadedAt)
                           .Where(n => n.Id == nodeId)
                           .ExecuteAsync(transaction) == 0)
             throw new NotFoundException<Node>(nodeId);
