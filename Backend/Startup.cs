@@ -81,6 +81,7 @@ public class Startup
         services.AddTransient<IErrorHandler, NotSupportedExceptionHandler>();
         services.AddTransient<IErrorHandler, PathQueryParseExceptionHandler>();
         services.AddTransient<IErrorHandler, SemanticSearchUnavailableExceptionHandler>();
+        services.AddTransient<IErrorHandler, UnknownFieldExceptionHandler>();
         // ArgumentExceptionHandler maps ArgumentException to HTTP 400.
         services.AddTransient<IErrorHandler, ArgumentExceptionHandler>();
         // AuthenticationFailedExceptionHandler and AuthorizationFailedExceptionHandler map

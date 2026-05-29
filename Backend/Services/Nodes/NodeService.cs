@@ -601,6 +601,12 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             throw new SemanticSearchUnavailableException(
                 "Semantic search requires Postgres; this deployment does not support the embedding function.");
 
+        if (filter.Fields != null
+            && filter.Fields.Contains("similarity", StringComparer.OrdinalIgnoreCase)
+            && !isSemantic)
+            throw new SemanticSearchUnavailableException(
+                "Field 'similarity' is only available when a semantic query is provided via '?query='.");
+
         if (string.Equals(filter.Sort, "content", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("sort=content is not supported");
         if (string.Equals(filter.Sort, "links", StringComparison.OrdinalIgnoreCase))

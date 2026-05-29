@@ -19,6 +19,7 @@ using Pooshit.Ocelot.Clients;
 using Pooshit.Ocelot.Entities;
 using Pooshit.Ocelot.Entities.Operations;
 using Pooshit.Ocelot.Entities.Operations.Prepared;
+using Pooshit.Ocelot.Errors;
 using Pooshit.Ocelot.Fields;
 using Pooshit.Ocelot.Info;
 using Pooshit.Ocelot.Tokens;
@@ -186,7 +187,7 @@ public class SemanticSearchTests
     {
         // Without a query filter the mapper must not register a "similarity" key.
         NodeMapper mapper = new();
-        Assert.Throws<KeyNotFoundException>(() => _ = mapper["similarity"],
+        Assert.Throws<UnknownFieldException>(() => _ = mapper["similarity"],
             "mapper without Query must not expose a 'similarity' field mapping");
     }
 
@@ -220,9 +221,9 @@ public class SemanticSearchTests
         NodeMapper mapperEmpty = new(new NodeFilter { Query = "" });
         NodeMapper mapperWhitespace = new(new NodeFilter { Query = "   " });
 
-        Assert.Throws<KeyNotFoundException>(() => _ = mapperEmpty["similarity"],
+        Assert.Throws<UnknownFieldException>(() => _ = mapperEmpty["similarity"],
             "mapper with empty Query must not expose similarity field");
-        Assert.Throws<KeyNotFoundException>(() => _ = mapperWhitespace["similarity"],
+        Assert.Throws<UnknownFieldException>(() => _ = mapperWhitespace["similarity"],
             "mapper with whitespace-only Query must not expose similarity field");
     }
 
@@ -230,7 +231,7 @@ public class SemanticSearchTests
     public void NodeMapper_NullFilter_DoesNotIncludeSimilarityField()
     {
         NodeMapper mapper = new(null);
-        Assert.Throws<KeyNotFoundException>(() => _ = mapper["similarity"],
+        Assert.Throws<UnknownFieldException>(() => _ = mapper["similarity"],
             "mapper with null filter must not expose similarity field");
     }
 
