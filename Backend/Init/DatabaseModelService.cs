@@ -26,7 +26,7 @@ public class DatabaseModelService : IHostedService {
     public async Task StartAsync(CancellationToken cancellationToken) {
         if (database.DBClient == null)
             return;
-            
+
         ISchemaService schemaService = new SchemaService(database.DBClient);
         using Transaction transaction = database.Transaction();
 
@@ -36,6 +36,12 @@ public class DatabaseModelService : IHostedService {
         await schemaService.CreateOrUpdateSchema<NodeLink>(transaction);
         await schemaService.CreateOrUpdateSchema<NodeType>(transaction);
         await schemaService.CreateOrUpdateSchema<Message>(transaction);
+
+        DateTime backfillNow = DateTime.UtcNow;
+        await database.Update<Node>()
+                      .Set(n => n.Created == backfillNow, n => n.LastUpdate == backfillNow)
+                      .Where(n => n.Created == DateTime.MinValue)
+                      .ExecuteAsync(transaction);
 
         transaction.Commit();
     }

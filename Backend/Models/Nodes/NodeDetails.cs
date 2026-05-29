@@ -84,4 +84,14 @@ public class NodeDetails
     /// access flags controlling what non-owner non-admin callers may do with this node.
     /// </summary>
     public NodeAccess Access { get; set; }
+
+    /// <summary>
+    /// UTC timestamp when this node was created.
+    /// </summary>
+    public DateTime? Created { get; set; }
+
+    /// <summary>
+    /// UTC timestamp of the last metadata or content modification to this node.
+    /// </summary>
+    public DateTime? LastUpdate { get; set; }
 }

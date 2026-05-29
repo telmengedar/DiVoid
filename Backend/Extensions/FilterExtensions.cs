@@ -1,5 +1,6 @@
 using Pooshit.AspNetCore.Services.Data;
 using Pooshit.Ocelot.Entities.Operations;
+using Pooshit.Ocelot.Errors;
 using Pooshit.Ocelot.Fields;
 using Pooshit.Ocelot.Tokens;
 
@@ -71,7 +72,11 @@ public static class FilterExtensions
         ApplyFilter(operation, (PageFilter)filter, ignoreLimits);
         if (string.IsNullOrEmpty(filter.Sort)) return operation;
 
-        operation.OrderBy(new OrderByCriteria(mapper[filter.Sort].Field, !filter.Descending));
+        try {
+            operation.OrderBy(new OrderByCriteria(mapper[filter.Sort].Field, !filter.Descending));
+        } catch (KeyNotFoundException) {
+            throw new UnknownFieldException(filter.Sort, mapper.FieldNames);
+        }
 
         return operation;
     }

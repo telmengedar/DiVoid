@@ -90,4 +90,18 @@ public class Node
     [Index("access")]
     [DefaultValue((int)(NodeAccess.Read | NodeAccess.Write))]
     public NodeAccess Access { get; set; }
+
+    /// <summary>
+    /// UTC timestamp when this node was created.
+    /// </summary>
+    [Index("created")]
+    [DefaultValue("0001-01-01 00:00:00")]
+    public DateTime Created { get; set; }
+
+    /// <summary>
+    /// UTC timestamp of the last metadata or content modification to this node.
+    /// </summary>
+    [Index("lastupdate")]
+    [DefaultValue("0001-01-01 00:00:00")]
+    public DateTime LastUpdate { get; set; }
 }
