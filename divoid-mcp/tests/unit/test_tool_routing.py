@@ -993,14 +993,6 @@ async def test_delete_message_forbidden(server: FastMCP) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# divoid_list — timestamp filter tests (DiVoid #1381)
-#
-# Acceptance criterion 1: List nodes with updated_from="2026-05-29T00:00:00Z"
-# → outbound request URL carries UpdatedFrom=2026-05-29T00:00:00Z.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_list_updated_from_forwarded_as_query_param(server: FastMCP) -> None:
     """updated_from is forwarded to the API as UpdatedFrom without transformation.
@@ -1075,11 +1067,6 @@ async def test_list_no_timestamp_params_when_omitted(server: FastMCP) -> None:
         )
 
 
-# ---------------------------------------------------------------------------
-# divoid_search — timestamp filter tests (DiVoid #1381)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_search_updated_from_forwarded(server: FastMCP) -> None:
     """updated_from is forwarded to the search API as UpdatedFrom.
@@ -1108,14 +1095,6 @@ async def test_search_updated_from_forwarded(server: FastMCP) -> None:
         f"Expected UpdatedFrom in URL, got: {url!r}. "
         "Substitution probe: removing the UpdatedFrom forwarding line in search._execute causes this failure."
     )
-
-
-# ---------------------------------------------------------------------------
-# divoid_patch_node — access param tests (DiVoid #1381)
-#
-# Acceptance criterion 4: patch_node(id=X, access="Read, Write")
-# → outbound JSON-Patch contains {"op":"replace","path":"/access","value":3}.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -1233,13 +1212,6 @@ async def test_patch_node_owner_id_appends_op(server: FastMCP) -> None:
     assert owner_ops[0]["value"] == 99, f"Expected value=99, got: {owner_ops[0]['value']!r}"
 
 
-# ---------------------------------------------------------------------------
-# divoid_get_node — access + timestamp fields (DiVoid #1381)
-#
-# Acceptance criterion 3: get_node response includes access field.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_get_node_surfaces_access_owner_created_lastupdate(server: FastMCP) -> None:
     """get_node response includes access, ownerId, created, lastUpdate from server.
@@ -1280,13 +1252,6 @@ async def test_get_node_surfaces_access_owner_created_lastupdate(server: FastMCP
     assert result.get("lastUpdate") == "2026-05-29T08:30:00Z", (
         f"Expected lastUpdate='2026-05-29T08:30:00Z', got: {result.get('lastUpdate')!r}"
     )
-
-
-# ---------------------------------------------------------------------------
-# divoid_create_task — access param tests (DiVoid #1381)
-#
-# Acceptance criterion 2: create_task with access=0 → POST body carries "access": 0.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
