@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
@@ -65,20 +66,20 @@ public class NodeAutoPositionTests
         NodeService svc = MakeService(fixture);
 
         // create anchor node and give it an explicit position via PATCH
-        NodeDetails anchor = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "Anchor" });
+        NodeDetails anchor = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "Anchor" }, callerId: 0);
         await svc.Patch(anchor.Id,
             [new Pooshit.AspNetCore.Services.Patches.PatchOperation { Op = "replace", Path = "/X", Value = 100.0 }, new Pooshit.AspNetCore.Services.Patches.PatchOperation { Op = "replace", Path = "/Y", Value = 200.0 }],
-            CancellationToken.None);
+            callerId: 0, isAdmin: true, CancellationToken.None);
 
         // create new node linked to the anchor, without setting X/Y
         NodeDetails created = await svc.CreateNode(new NodeDetails {
             Type = "task",
             Name = "AutoPositioned",
             Links = [anchor.Id]
-        });
+        }, callerId: 0);
 
         // re-read to confirm the position was persisted, not just echoed
-        NodeDetails fetched = await svc.GetNodeById(created.Id);
+        NodeDetails fetched = await svc.GetNodeById(created.Id, callerId: 0, isAdmin: true);
 
         (double expectedX, double expectedY) = Expected(fetched.Id, 100.0, 200.0);
 
@@ -107,10 +108,10 @@ public class NodeAutoPositionTests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        NodeDetails anchor = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "Anchor" });
+        NodeDetails anchor = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "Anchor" }, callerId: 0);
         await svc.Patch(anchor.Id,
             [new Pooshit.AspNetCore.Services.Patches.PatchOperation { Op = "replace", Path = "/X", Value = 500.0 }, new Pooshit.AspNetCore.Services.Patches.PatchOperation { Op = "replace", Path = "/Y", Value = 600.0 }],
-            CancellationToken.None);
+            callerId: 0, isAdmin: true, CancellationToken.None);
 
         NodeDetails created = await svc.CreateNode(new NodeDetails {
             Type = "task",
@@ -118,9 +119,9 @@ public class NodeAutoPositionTests
             X = 42.5,
             Y = 99.0,
             Links = [anchor.Id]
-        });
+        }, callerId: 0);
 
-        NodeDetails fetched = await svc.GetNodeById(created.Id);
+        NodeDetails fetched = await svc.GetNodeById(created.Id, callerId: 0, isAdmin: true);
 
         Assert.That(fetched.X, Is.Not.Null);
         Assert.That(fetched.Y, Is.Not.Null);
@@ -145,15 +146,15 @@ public class NodeAutoPositionTests
         NodeService svc = MakeService(fixture);
 
         // target has no explicit position — stays at DB default (0, 0)
-        NodeDetails target = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "OriginTarget" });
+        NodeDetails target = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "OriginTarget" }, callerId: 0);
 
         NodeDetails created = await svc.CreateNode(new NodeDetails {
             Type = "task",
             Name = "NoAnchor",
             Links = [target.Id]
-        });
+        }, callerId: 0);
 
-        NodeDetails fetched = await svc.GetNodeById(created.Id);
+        NodeDetails fetched = await svc.GetNodeById(created.Id, callerId: 0, isAdmin: true);
 
         // X/Y may be null (not in default list fields) or 0 — both are acceptable as "at origin"
         double x = fetched.X ?? 0.0;
@@ -181,9 +182,9 @@ public class NodeAutoPositionTests
         NodeDetails created = await svc.CreateNode(new NodeDetails {
             Type = "task",
             Name = "NoLinks"
-        });
+        }, callerId: 0);
 
-        NodeDetails fetched = await svc.GetNodeById(created.Id);
+        NodeDetails fetched = await svc.GetNodeById(created.Id, callerId: 0, isAdmin: true);
 
         double x = fetched.X ?? 0.0;
         double y = fetched.Y ?? 0.0;

@@ -76,6 +76,16 @@ public class NodeDetails
     public long[] Links { get; set; }
 
     /// <summary>
+    /// DiVoid user-id of the node's creator. 0 for rows that pre-date the access layer.
+    /// </summary>
+    public long OwnerId { get; set; }
+
+    /// <summary>
+    /// access flags controlling what non-owner non-admin callers may do with this node.
+    /// </summary>
+    public NodeAccess Access { get; set; }
+
+    /// <summary>
     /// UTC timestamp when this node was created.
     /// </summary>
     public DateTime? Created { get; set; }

@@ -27,12 +27,12 @@ public class NodeServiceTests
     // -----------------------------------------------------------------------
 
     static Task<NodeDetails> Create(NodeService svc, string type = "task", string name = "Test node")
-        => svc.CreateNode(new NodeDetails { Type = type, Name = name });
+        => svc.CreateNode(new NodeDetails { Type = type, Name = name }, callerId: 0);
 
     static async Task<NodeDetails> CreateWithStatus(NodeService svc, string status, string type = "task", string name = "Test node")
     {
-        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = type, Name = name });
-        return await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = status }], CancellationToken.None);
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = type, Name = name }, callerId: 0);
+        return await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = status }], callerId: 0, isAdmin: true, CancellationToken.None);
     }
 
     // -----------------------------------------------------------------------
@@ -90,9 +90,9 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         NodeDetails node = await Create(svc);
-        await svc.Delete(node.Id);
+        await svc.Delete(node.Id, callerId: 0, isAdmin: true);
 
-        Assert.ThrowsAsync<NotFoundException<Node>>(() => svc.GetNodeById(node.Id));
+        Assert.ThrowsAsync<NotFoundException<Node>>(() => svc.GetNodeById(node.Id, callerId: 0, isAdmin: true));
     }
 
     [Test]
@@ -101,7 +101,7 @@ public class NodeServiceTests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        Assert.ThrowsAsync<NotFoundException<Node>>(() => svc.Delete(99999));
+        Assert.ThrowsAsync<NotFoundException<Node>>(() => svc.Delete(99999, callerId: 0, isAdmin: true));
     }
 
     [Test]
@@ -112,9 +112,9 @@ public class NodeServiceTests
 
         NodeDetails a = await Create(svc, name: "A");
         NodeDetails b = await Create(svc, name: "B");
-        await svc.LinkNodes(a.Id, b.Id);
+        await svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true);
 
-        await svc.Delete(a.Id);
+        await svc.Delete(a.Id, callerId: 0, isAdmin: true);
 
         long linkCount = await fixture.EntityManager.Load<NodeLink>(Pooshit.Ocelot.Tokens.DB.Count())
                                       .Where(l => l.SourceId == a.Id || l.TargetId == a.Id)
@@ -130,9 +130,9 @@ public class NodeServiceTests
 
         NodeDetails a = await Create(svc, name: "A");
         NodeDetails b = await Create(svc, name: "B");
-        await svc.LinkNodes(a.Id, b.Id); // stored as SourceId=a, TargetId=b
+        await svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true); // stored as SourceId=a, TargetId=b
 
-        await svc.Delete(b.Id); // exercises the TargetId == nodeId branch of the OR predicate
+        await svc.Delete(b.Id, callerId: 0, isAdmin: true); // exercises the TargetId == nodeId branch of the OR predicate
 
         long linkCount = await fixture.EntityManager.Load<NodeLink>(Pooshit.Ocelot.Tokens.DB.Count())
                                       .Where(l => l.SourceId == b.Id || l.TargetId == b.Id)
@@ -152,9 +152,9 @@ public class NodeServiceTests
 
         NodeDetails node = await Create(svc);
         byte[] content = "hello world"u8.ToArray();
-        await svc.UploadContent(node.Id, "text/plain", new MemoryStream(content));
+        await svc.UploadContent(node.Id, "text/plain", new MemoryStream(content), callerId: 0, isAdmin: true);
 
-        (string contentType, Stream stream) = await svc.GetNodeData(node.Id);
+        (string contentType, Stream stream) = await svc.GetNodeData(node.Id, callerId: 0, isAdmin: true);
         byte[] bytes = new byte[content.Length];
         await stream.ReadExactlyAsync(bytes);
 
@@ -170,7 +170,7 @@ public class NodeServiceTests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        Assert.ThrowsAsync<NotFoundException<Node>>(() => svc.GetNodeData(99999));
+        Assert.ThrowsAsync<NotFoundException<Node>>(() => svc.GetNodeData(99999, callerId: 0, isAdmin: true));
     }
 
     // -----------------------------------------------------------------------
@@ -185,7 +185,7 @@ public class NodeServiceTests
 
         NodeDetails a = await Create(svc, name: "A");
         NodeDetails b = await Create(svc, name: "B");
-        await svc.LinkNodes(a.Id, b.Id);
+        await svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true);
 
         long count = await fixture.EntityManager.Load<NodeLink>(Pooshit.Ocelot.Tokens.DB.Count())
                                   .Where(l => l.SourceId == a.Id && l.TargetId == b.Id)
@@ -199,7 +199,7 @@ public class NodeServiceTests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        Assert.ThrowsAsync<InvalidOperationException>(() => svc.LinkNodes(1, 1));
+        Assert.ThrowsAsync<InvalidOperationException>(() => svc.LinkNodes(1, 1, callerId: 0, isAdmin: true));
     }
 
     [Test]
@@ -210,7 +210,7 @@ public class NodeServiceTests
 
         NodeDetails b = await Create(svc, name: "B");
 
-        Assert.ThrowsAsync<NotFoundException<Node>>(() => svc.LinkNodes(99999, b.Id));
+        Assert.ThrowsAsync<NotFoundException<Node>>(() => svc.LinkNodes(99999, b.Id, callerId: 0, isAdmin: true));
     }
 
     [Test]
@@ -221,7 +221,7 @@ public class NodeServiceTests
 
         NodeDetails a = await Create(svc, name: "A");
 
-        Assert.ThrowsAsync<NotFoundException<Node>>(() => svc.LinkNodes(a.Id, 99999));
+        Assert.ThrowsAsync<NotFoundException<Node>>(() => svc.LinkNodes(a.Id, 99999, callerId: 0, isAdmin: true));
     }
 
     [Test]
@@ -232,10 +232,10 @@ public class NodeServiceTests
 
         NodeDetails a = await Create(svc, name: "A");
         NodeDetails b = await Create(svc, name: "B");
-        await svc.LinkNodes(a.Id, b.Id);
+        await svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true);
 
         // Second call in same direction must succeed silently (bug #702 regression)
-        Assert.DoesNotThrowAsync(() => svc.LinkNodes(a.Id, b.Id));
+        Assert.DoesNotThrowAsync(() => svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true));
 
         // Exactly one link row must exist — not zero, not two
         long count = await fixture.EntityManager.Load<NodeLink>(Pooshit.Ocelot.Tokens.DB.Count())
@@ -252,10 +252,10 @@ public class NodeServiceTests
 
         NodeDetails a = await Create(svc, name: "A");
         NodeDetails b = await Create(svc, name: "B");
-        await svc.LinkNodes(a.Id, b.Id);
+        await svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true);
 
         // Reverse direction is still a duplicate on an undirected graph — must succeed silently
-        Assert.DoesNotThrowAsync(() => svc.LinkNodes(b.Id, a.Id));
+        Assert.DoesNotThrowAsync(() => svc.LinkNodes(b.Id, a.Id, callerId: 0, isAdmin: true));
 
         long count = await fixture.EntityManager.Load<NodeLink>(Pooshit.Ocelot.Tokens.DB.Count())
                                   .Where(l => (l.SourceId == a.Id && l.TargetId == b.Id) || (l.SourceId == b.Id && l.TargetId == a.Id))
@@ -275,9 +275,9 @@ public class NodeServiceTests
 
         NodeDetails a = await Create(svc, name: "A");
         NodeDetails b = await Create(svc, name: "B");
-        await svc.LinkNodes(a.Id, b.Id);
+        await svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true);
 
-        await svc.UnlinkNodes(a.Id, b.Id);
+        await svc.UnlinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true);
 
         long count = await fixture.EntityManager.Load<NodeLink>(Pooshit.Ocelot.Tokens.DB.Count())
                                   .Where(l => l.SourceId == a.Id && l.TargetId == b.Id)
@@ -293,10 +293,10 @@ public class NodeServiceTests
 
         NodeDetails a = await Create(svc, name: "A");
         NodeDetails b = await Create(svc, name: "B");
-        await svc.LinkNodes(a.Id, b.Id); // stored as (a, b)
+        await svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true); // stored as (a, b)
 
         // Unlink from the b→a direction should still work
-        await svc.UnlinkNodes(b.Id, a.Id);
+        await svc.UnlinkNodes(b.Id, a.Id, callerId: 0, isAdmin: true);
 
         long count = await fixture.EntityManager.Load<NodeLink>(Pooshit.Ocelot.Tokens.DB.Count())
                                   .Where(l => l.SourceId == a.Id && l.TargetId == b.Id)
@@ -314,7 +314,7 @@ public class NodeServiceTests
         NodeDetails b = await Create(svc, name: "B");
 
         // DELETE of a non-existent link must succeed silently (bug #702 sibling check)
-        Assert.DoesNotThrowAsync(() => svc.UnlinkNodes(a.Id, b.Id));
+        Assert.DoesNotThrowAsync(() => svc.UnlinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true));
     }
 
     // -----------------------------------------------------------------------
@@ -417,11 +417,11 @@ public class NodeServiceTests
         NodeDetails unrelated = await Create(svc, name: "Unrelated");
 
         // left → hub, hub → right
-        await svc.LinkNodes(left.Id, hub.Id);
-        await svc.LinkNodes(hub.Id, right.Id);
+        await svc.LinkNodes(left.Id, hub.Id, callerId: 0, isAdmin: true);
+        await svc.LinkNodes(hub.Id, right.Id, callerId: 0, isAdmin: true);
 
         // Query for nodes linked to hub — should return left and right, not hub itself
-        var writer = await svc.ListPaged(new NodeFilter { LinkedTo = [hub.Id], Count = 100 });
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { LinkedTo = [hub.Id], Count = 100 }, callerId: 0, isAdmin: true);
         List<NodeDetails> results = await CollectPage(writer);
 
         long[] ids = results.Select(n => n.Id).ToArray();
@@ -442,10 +442,10 @@ public class NodeServiceTests
         for (int i = 0; i < 5; i++)
             await Create(svc, name: $"Page{i}");
 
-        var page1Writer = await svc.ListPaged(new NodeFilter { Count = 3 });
+        AsyncPageResponseWriter<NodeDetails> page1Writer = await svc.ListPaged(new NodeFilter { Count = 3 }, callerId: 0, isAdmin: true);
         List<NodeDetails> page1 = await CollectPage(page1Writer);
 
-        var page2Writer = await svc.ListPaged(new NodeFilter { Count = 3, Continue = 3 });
+        AsyncPageResponseWriter<NodeDetails> page2Writer = await svc.ListPaged(new NodeFilter { Count = 3, Continue = 3 }, callerId: 0, isAdmin: true);
         List<NodeDetails> page2 = await CollectPage(page2Writer);
 
         Assert.Multiple(() => {
@@ -467,12 +467,12 @@ public class NodeServiceTests
 
         // Sort key must be one of NodeMapper's registered keys ("id", "type", "name", "status").
         // The test uses "name" to exercise the ascending/descending path.
-        var writer = await svc.ListPaged(new NodeFilter
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter
         {
             Count = 100,
             Sort = "name",
             Descending = true
-        });
+        }, callerId: 0, isAdmin: true);
         List<NodeDetails> results = await CollectPage(writer);
 
         List<string> names = results.Select(n => n.Name!).ToList();
@@ -493,7 +493,7 @@ public class NodeServiceTests
         await Create(svc, name: "A");
 
         Assert.ThrowsAsync<Pooshit.Ocelot.Errors.UnknownFieldException>(
-            () => svc.ListPaged(new NodeFilter { Count = 10, Sort = "node.name" }));
+            () => svc.ListPaged(new NodeFilter { Count = 10, Sort = "node.name" }, callerId: 0, isAdmin: true));
     }
 
     // -----------------------------------------------------------------------
@@ -576,7 +576,7 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         Assert.ThrowsAsync<NotFoundException<Node>>(
-            () => svc.Patch(99999, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], CancellationToken.None));
+            () => svc.Patch(99999, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], callerId: 0, isAdmin: true, CancellationToken.None));
     }
 
     // -----------------------------------------------------------------------
@@ -590,7 +590,7 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         NodeDetails node = await Create(svc);
-        NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], CancellationToken.None);
+        NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], callerId: 0, isAdmin: true, CancellationToken.None);
 
         Assert.That(result.Status, Is.EqualTo("open"));
     }
@@ -602,8 +602,8 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         NodeDetails node = await Create(svc);
-        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], CancellationToken.None);
-        NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "closed" }], CancellationToken.None);
+        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], callerId: 0, isAdmin: true, CancellationToken.None);
+        NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "closed" }], callerId: 0, isAdmin: true, CancellationToken.None);
 
         Assert.That(result.Status, Is.EqualTo("closed"));
     }
@@ -619,7 +619,7 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         NodeDetails node = await Create(svc, name: "OriginalName");
-        NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/name", Value = "UpdatedName" }], CancellationToken.None);
+        NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/name", Value = "UpdatedName" }], callerId: 0, isAdmin: true, CancellationToken.None);
 
         Assert.That(result.Name, Is.EqualTo("UpdatedName"));
     }
@@ -631,16 +631,16 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         NodeDetails node = await Create(svc, name: "BeforePatch");
-        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/name", Value = "AfterPatch" }], CancellationToken.None);
+        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/name", Value = "AfterPatch" }], callerId: 0, isAdmin: true, CancellationToken.None);
 
         // Reload via list to confirm DB was written
-        var writer = await svc.ListPaged(new NodeFilter { Id = [node.Id], Count = 1 });
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { Id = [node.Id], Count = 1 }, callerId: 0, isAdmin: true);
         List<NodeDetails> results = await CollectPage(writer);
         Assert.That(results.Single().Name, Is.EqualTo("AfterPatch"));
     }
 
     [Test]
-    public void Patch_ReplaceType_ThrowsPropertyNotFoundException()
+    public async Task Patch_ReplaceType_ThrowsPropertyNotFoundException()
     {
         // The PATCH path "/type" does not map to any property on Node — the DB entity
         // stores type as TypeId (long), not as "type". The extension throws
@@ -649,8 +649,10 @@ public class NodeServiceTests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
+        NodeDetails node = await Create(svc);
+
         Assert.ThrowsAsync<PropertyNotFoundException>(
-            () => svc.Patch(1, [new PatchOperation { Op = "replace", Path = "/type", Value = "other" }], CancellationToken.None));
+            () => svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/type", Value = "other" }], callerId: 0, isAdmin: true, CancellationToken.None));
     }
 
     [Test]
@@ -661,7 +663,7 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         NodeDetails node = await Create(svc);
-        NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "in-progress" }], CancellationToken.None);
+        NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "in-progress" }], callerId: 0, isAdmin: true, CancellationToken.None);
 
         Assert.That(result.Status, Is.EqualTo("in-progress"));
     }
@@ -749,10 +751,10 @@ public class NodeServiceTests
         NodeDetails closedTask = await CreateWithStatus(svc, "closed", type: "task", name: "ClosedTask");
         NodeDetails unlinked = await CreateWithStatus(svc, "open", type: "task", name: "UnlinkedOpen");
 
-        await svc.LinkNodes(project.Id, openTask.Id);
-        await svc.LinkNodes(project.Id, closedTask.Id);
+        await svc.LinkNodes(project.Id, openTask.Id, callerId: 0, isAdmin: true);
+        await svc.LinkNodes(project.Id, closedTask.Id, callerId: 0, isAdmin: true);
 
-        var writer = await svc.ListPaged(new NodeFilter { LinkedTo = [project.Id], Status = ["open"], Count = 100 });
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { LinkedTo = [project.Id], Status = ["open"], Count = 100 }, callerId: 0, isAdmin: true);
         List<NodeDetails> results = await CollectPage(writer);
 
         long[] ids = results.Select(n => n.Id).ToArray();
@@ -773,7 +775,7 @@ public class NodeServiceTests
         NodeDetails noStatus = await Create(svc, name: "NoStatus");
         await CreateWithStatus(svc, "open", name: "HasStatus");
 
-        var writer = await svc.ListPaged(new NodeFilter { NoStatus = true, Count = 100 });
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { NoStatus = true, Count = 100 }, callerId: 0, isAdmin: true);
         List<NodeDetails> results = await CollectPage(writer);
 
         long[] ids = results.Select(n => n.Id).ToArray();
@@ -792,7 +794,7 @@ public class NodeServiceTests
 
         NodeDetails withStatus = await CreateWithStatus(svc, "open", name: "WithStatus");
 
-        var writer = await svc.ListPaged(new NodeFilter { NoStatus = true, Count = 100 });
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { NoStatus = true, Count = 100 }, callerId: 0, isAdmin: true);
         List<NodeDetails> results = await CollectPage(writer);
 
         Assert.That(results.Select(n => n.Id), Does.Not.Contain(withStatus.Id));
@@ -826,7 +828,7 @@ public class NodeServiceTests
         NodeDetails closedNode = await CreateWithStatus(svc, "closed", name: "ClosedNode");
         NodeDetails nullNode   = await Create(svc, name: "NullStatusNode");
 
-        var writer = await svc.ListPaged(new NodeFilter { Status = ["open", "in-progress"], NoStatus = true, Count = 100 });
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { Status = ["open", "in-progress"], NoStatus = true, Count = 100 }, callerId: 0, isAdmin: true);
         List<NodeDetails> results = await CollectPage(writer);
 
         long[] ids = results.Select(n => n.Id).ToArray();
@@ -850,7 +852,7 @@ public class NodeServiceTests
         NodeDetails openNode   = await CreateWithStatus(svc, "open", name: "OpenNode");
         NodeDetails nullNode   = await Create(svc, name: "NullStatusNode");
 
-        var writer = await svc.ListPaged(new NodeFilter { Status = ["open"], Count = 100 });
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { Status = ["open"], Count = 100 }, callerId: 0, isAdmin: true);
         List<NodeDetails> results = await CollectPage(writer);
 
         long[] ids = results.Select(n => n.Id).ToArray();
@@ -873,7 +875,7 @@ public class NodeServiceTests
         NodeDetails openNode   = await CreateWithStatus(svc, "open", name: "OpenNode");
         NodeDetails nullNode   = await Create(svc, name: "NullStatusNode");
 
-        var writer = await svc.ListPaged(new NodeFilter { NoStatus = true, Count = 100 });
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { NoStatus = true, Count = 100 }, callerId: 0, isAdmin: true);
         List<NodeDetails> results = await CollectPage(writer);
 
         long[] ids = results.Select(n => n.Id).ToArray();
@@ -890,9 +892,9 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         NodeDetails node = await Create(svc, name: "CheckFields");
-        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], CancellationToken.None);
+        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], callerId: 0, isAdmin: true, CancellationToken.None);
 
-        var writer = await svc.ListPaged(new NodeFilter { Id = [node.Id], Count = 100 });
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { Id = [node.Id], Count = 100 }, callerId: 0, isAdmin: true);
         List<NodeDetails> results = await CollectPage(writer);
 
         Assert.That(results.Single().Status, Is.EqualTo("open"));
@@ -911,9 +913,9 @@ public class NodeServiceTests
         NodeDetails node = await Create(svc);
         byte[] data = "test content"u8.ToArray();
 
-        await svc.UploadContent(node.Id, "text/markdown", new MemoryStream(data));
+        await svc.UploadContent(node.Id, "text/markdown", new MemoryStream(data), callerId: 0, isAdmin: true);
 
-        (string ct, Stream stream) = await svc.GetNodeData(node.Id);
+        (string ct, Stream stream) = await svc.GetNodeData(node.Id, callerId: 0, isAdmin: true);
         byte[] stored = new byte[data.Length];
         await stream.ReadExactlyAsync(stored);
 
@@ -930,7 +932,7 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         Assert.ThrowsAsync<NotFoundException<Node>>(
-            () => svc.UploadContent(99999, "text/plain", new MemoryStream("x"u8.ToArray())));
+            () => svc.UploadContent(99999, "text/plain", new MemoryStream("x"u8.ToArray()), callerId: 0, isAdmin: true));
     }
 
     // -----------------------------------------------------------------------
@@ -973,7 +975,7 @@ public class NodeServiceTests
                                    .Where(n => n.Id == node.Id)
                                    .ExecuteEntityAsync();
 
-        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], CancellationToken.None);
+        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], callerId: 0, isAdmin: true, CancellationToken.None);
 
         Node after = await fixture.EntityManager.Load<Node>()
                                   .Where(n => n.Id == node.Id)
@@ -1000,7 +1002,7 @@ public class NodeServiceTests
                                    .Where(n => n.Id == node.Id)
                                    .ExecuteEntityAsync();
 
-        await svc.UploadContent(node.Id, "text/plain", new MemoryStream("hello"u8.ToArray()));
+        await svc.UploadContent(node.Id, "text/plain", new MemoryStream("hello"u8.ToArray()), callerId: 0, isAdmin: true);
 
         Node after = await fixture.EntityManager.Load<Node>()
                                   .Where(n => n.Id == node.Id)
@@ -1059,7 +1061,7 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         NodeDetails node = await Create(svc, name: "UpdatedTarget");
-        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], CancellationToken.None);
+        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], callerId: 0, isAdmin: true, CancellationToken.None);
 
         Node raw = await fixture.EntityManager.Load<Node>()
                                 .Where(n => n.Id == node.Id)
@@ -1077,7 +1079,7 @@ public class NodeServiceTests
         NodeService svc = MakeService(fixture);
 
         NodeDetails node = await Create(svc, name: "UpdatedTarget");
-        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], CancellationToken.None);
+        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], callerId: 0, isAdmin: true, CancellationToken.None);
 
         Node raw = await fixture.EntityManager.Load<Node>()
                                 .Where(n => n.Id == node.Id)
@@ -1108,7 +1110,7 @@ public class NodeServiceTests
             Status = ["open"],
             CreatedFrom = cutoff,
             Count = 100
-        }));
+        }, callerId: 0, isAdmin: true));
 
         long[] ids = results.Select(n => n.Id).ToArray();
 
@@ -1124,7 +1126,7 @@ public class NodeServiceTests
 
     static async Task<long> GetPageCount(NodeService svc, NodeFilter filter)
     {
-        var writer = await svc.ListPaged(filter);
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(filter, callerId: 0, isAdmin: true);
         List<NodeDetails> items = await CollectPage(writer);
         return items.Count;
     }
@@ -1186,7 +1188,7 @@ public class NodeServiceTests
         // Create two linked nodes so ListLinks has real rows to return.
         NodeDetails a = await Create(svc, name: "LinkA");
         NodeDetails b = await Create(svc, name: "LinkB");
-        await svc.LinkNodes(a.Id, b.Id);
+        await svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true);
 
         // Wrap the real IDBClient in a spy that rejects CancellationToken SQL parameters.
         IDBClient spyClient = CancellationTokenRejectingDbClientSpy.Wrap(fixture.EntityManager.DBClient);

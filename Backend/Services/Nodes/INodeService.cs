@@ -16,38 +16,47 @@ public interface INodeService
     /// creates a new <see cref="Node"/>
     /// </summary>
     /// <param name="node">node to create</param>
+    /// <param name="callerId">DiVoid user-id of the authenticated caller; becomes the node's OwnerId</param>
     /// <returns>created node</returns>
-    Task<NodeDetails> CreateNode(NodeDetails node);
+    Task<NodeDetails> CreateNode(NodeDetails node, long callerId);
 
     /// <summary>
     /// get a node by id
     /// </summary>
     /// <param name="nodeId">id of node to get</param>
+    /// <param name="callerId">DiVoid user-id of the caller; used for per-node access check</param>
+    /// <param name="isAdmin">true when the caller holds the admin permission</param>
     /// <returns><see cref="NodeDetails"/></returns>
-    Task<NodeDetails> GetNodeById(long nodeId);
+    Task<NodeDetails> GetNodeById(long nodeId, long callerId, bool isAdmin);
 
     /// <summary>
     /// lists existing nodes
     /// </summary>
     /// <param name="filter">filter to apply</param>
+    /// <param name="callerId">DiVoid user-id of the caller; used for visibility predicate</param>
+    /// <param name="isAdmin">true when the caller holds the admin permission</param>
     /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
     /// <returns>page of nodes matching filter</returns>
-    Task<AsyncPageResponseWriter<NodeDetails>> ListPaged(NodeFilter filter = null, CancellationToken ct = default);
+    Task<AsyncPageResponseWriter<NodeDetails>> ListPaged(NodeFilter filter, long callerId, bool isAdmin, CancellationToken ct = default);
 
     /// <summary>
     /// lists nodes reachable via a graph path expression
     /// </summary>
     /// <param name="filter">path filter with the raw path string and paging parameters</param>
+    /// <param name="callerId">DiVoid user-id of the caller; used for visibility predicate on the terminal hop</param>
+    /// <param name="isAdmin">true when the caller holds the admin permission</param>
     /// <param name="ct">cancellation token from the HTTP request</param>
     /// <returns>page of terminal-hop nodes</returns>
-    Task<AsyncPageResponseWriter<NodeDetails>> ListPagedByPath(NodePathFilter filter, CancellationToken ct);
+    Task<AsyncPageResponseWriter<NodeDetails>> ListPagedByPath(NodePathFilter filter, long callerId, bool isAdmin, CancellationToken ct);
 
     /// <summary>
     /// get data of a node
     /// </summary>
     /// <param name="nodeId">id of node</param>
+    /// <param name="callerId">DiVoid user-id of the caller; used for per-node access check</param>
+    /// <param name="isAdmin">true when the caller holds the admin permission</param>
     /// <returns>content type and data of node</returns>
-    Task<(string, Stream)> GetNodeData(long nodeId);
+    Task<(string, Stream)> GetNodeData(long nodeId, long callerId, bool isAdmin);
 
     /// <summary>
     /// patches data of a node.
@@ -56,9 +65,11 @@ public interface INodeService
     /// </summary>
     /// <param name="nodeId">id of node to patch</param>
     /// <param name="patches">patches to apply</param>
+    /// <param name="callerId">DiVoid user-id of the caller; used for per-node and per-property access checks</param>
+    /// <param name="isAdmin">true when the caller holds the admin permission</param>
     /// <param name="ct">cancellation token</param>
     /// <returns>patched node</returns>
-    Task<NodeDetails> Patch(long nodeId, PatchOperation[] patches, CancellationToken ct);
+    Task<NodeDetails> Patch(long nodeId, PatchOperation[] patches, long callerId, bool isAdmin, CancellationToken ct);
 
     /// <summary>
     /// uploads data for a node.
@@ -69,8 +80,10 @@ public interface INodeService
     /// <param name="nodeId">id of node for which to upload data</param>
     /// <param name="contentType">content type of data</param>
     /// <param name="data">data to upload</param>
+    /// <param name="callerId">DiVoid user-id of the caller; used for per-node access check</param>
+    /// <param name="isAdmin">true when the caller holds the admin permission</param>
     /// <param name="ct">cancellation token</param>
-    Task UploadContent(long nodeId, string contentType, Stream data, CancellationToken ct = default);
+    Task UploadContent(long nodeId, string contentType, Stream data, long callerId, bool isAdmin, CancellationToken ct = default);
 
     /// <summary>
     /// lists link adjacency rows where either endpoint is in <paramref name="ids"/>.
@@ -95,21 +108,27 @@ public interface INodeService
     /// deletes an existing node
     /// </summary>
     /// <param name="nodeId">id of node to delete</param>
-    Task Delete(long nodeId);
+    /// <param name="callerId">DiVoid user-id of the caller; used for per-node access check</param>
+    /// <param name="isAdmin">true when the caller holds the admin permission</param>
+    Task Delete(long nodeId, long callerId, bool isAdmin);
 
     /// <summary>
     /// links nodes
     /// </summary>
     /// <param name="sourceNodeId">id of first node</param>
     /// <param name="targetNodeId">id of second node</param>
-    Task LinkNodes(long sourceNodeId, long targetNodeId);
+    /// <param name="callerId">DiVoid user-id of the caller; write required on source node</param>
+    /// <param name="isAdmin">true when the caller holds the admin permission</param>
+    Task LinkNodes(long sourceNodeId, long targetNodeId, long callerId, bool isAdmin);
 
     /// <summary>
     /// removes a link between nodes
     /// </summary>
     /// <param name="sourceNodeId">id of first node</param>
     /// <param name="targetNodeId">id of second node</param>
-    Task UnlinkNodes(long sourceNodeId, long targetNodeId);
+    /// <param name="callerId">DiVoid user-id of the caller; write required on source node</param>
+    /// <param name="isAdmin">true when the caller holds the admin permission</param>
+    Task UnlinkNodes(long sourceNodeId, long targetNodeId, long callerId, bool isAdmin);
 
     /// <summary>
     /// resolves a node-id to the auth user-id of the user whose

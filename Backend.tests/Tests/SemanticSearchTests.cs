@@ -55,7 +55,7 @@ public class SemanticSearchTests
         => new(fixture.EntityManager, capability ?? DisabledCapability);
 
     static Task<NodeDetails> CreateNode(NodeService svc, string type = "task", string name = "node")
-        => svc.CreateNode(new NodeDetails { Type = type, Name = name });
+        => svc.CreateNode(new NodeDetails { Type = type, Name = name }, callerId: 0);
 
     static async Task<List<NodeDetails>> CollectPage(
         Pooshit.AspNetCore.Services.Formatters.DataStream.AsyncPageResponseWriter<NodeDetails> writer)
@@ -85,7 +85,7 @@ public class SemanticSearchTests
         NodeDetails n1 = await CreateNode(svc, name: "Alpha");
         NodeDetails n2 = await CreateNode(svc, name: "Beta");
 
-        var writer = await svc.ListPaged(new NodeFilter { Count = 100 });
+        Pooshit.AspNetCore.Services.Formatters.DataStream.AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { Count = 100 }, callerId: 0, isAdmin: true);
         List<NodeDetails> items = await CollectPage(writer);
 
         long[] ids = items.Select(n => n.Id).ToArray();
@@ -110,7 +110,7 @@ public class SemanticSearchTests
         NodeService svc = MakeService(fixture, DisabledCapability);
 
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
-            () => svc.ListPaged(new NodeFilter { Query = "find something useful", Count = 10 }));
+            () => svc.ListPaged(new NodeFilter { Query = "find something useful", Count = 10 }, callerId: 0, isAdmin: true));
     }
 
     [Test]
@@ -120,7 +120,7 @@ public class SemanticSearchTests
         NodeService svc = MakeService(fixture, DisabledCapability);
 
         SemanticSearchUnavailableException ex = Assert.ThrowsAsync<SemanticSearchUnavailableException>(
-            () => svc.ListPaged(new NodeFilter { Query = "find something", Count = 10 }));
+            () => svc.ListPaged(new NodeFilter { Query = "find something", Count = 10 }, callerId: 0, isAdmin: true));
 
         Assert.That(ex!.Message, Does.Contain("Postgres").IgnoreCase.Or.Contain("embedding function").IgnoreCase,
             "error message must identify the unsupported capability (Postgres / embedding function)");
@@ -136,7 +136,7 @@ public class SemanticSearchTests
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPagedByPath(
                 new NodePathFilter { Path = "[type:task]", Query = "find something", Count = 10 },
-                CancellationToken.None));
+                callerId: 0, isAdmin: true, CancellationToken.None));
     }
 
     // -----------------------------------------------------------------------
@@ -150,7 +150,7 @@ public class SemanticSearchTests
         NodeService svc = MakeService(fixture, DisabledCapability);
 
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
-            () => svc.ListPaged(new NodeFilter { MinSimilarity = 0.5f, Count = 10 }));
+            () => svc.ListPaged(new NodeFilter { MinSimilarity = 0.5f, Count = 10 }, callerId: 0, isAdmin: true));
     }
 
     [Test]
@@ -160,7 +160,7 @@ public class SemanticSearchTests
         NodeService svc = MakeService(fixture, DisabledCapability);
 
         SemanticSearchUnavailableException ex = Assert.ThrowsAsync<SemanticSearchUnavailableException>(
-            () => svc.ListPaged(new NodeFilter { MinSimilarity = 0.7f, Count = 10 }));
+            () => svc.ListPaged(new NodeFilter { MinSimilarity = 0.7f, Count = 10 }, callerId: 0, isAdmin: true));
 
         Assert.That(ex!.Message, Does.Contain("query").IgnoreCase,
             "error message must mention the required 'query' parameter");
@@ -175,7 +175,7 @@ public class SemanticSearchTests
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPagedByPath(
                 new NodePathFilter { Path = "[type:task]", MinSimilarity = 0.5f, Count = 10 },
-                CancellationToken.None));
+                callerId: 0, isAdmin: true, CancellationToken.None));
     }
 
     // -----------------------------------------------------------------------

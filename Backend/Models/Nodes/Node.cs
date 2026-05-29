@@ -73,6 +73,25 @@ public class Node
     public double Y { get; set; }
 
     /// <summary>
+    /// DiVoid user-id of the node's creator. set once on insert from the authenticated caller.
+    /// sentinel 0 for rows that pre-date this feature. admin override applies regardless.
+    /// </summary>
+    [AllowPatch]
+    [Index("owner")]
+    [DefaultValue(0L)]
+    public long OwnerId { get; set; }
+
+    /// <summary>
+    /// access flags controlling what non-owner non-admin callers may do with this node.
+    /// owner and admin always override. defaults to <see cref="NodeAccess.Read"/> | <see cref="NodeAccess.Write"/>
+    /// (fully public) to preserve the pre-access-layer posture of existing rows.
+    /// </summary>
+    [AllowPatch]
+    [Index("access")]
+    [DefaultValue((int)(NodeAccess.Read | NodeAccess.Write))]
+    public NodeAccess Access { get; set; }
+
+    /// <summary>
     /// UTC timestamp when this node was created.
     /// </summary>
     [Index("created")]

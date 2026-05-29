@@ -35,7 +35,7 @@ public class EmbeddingV2Tests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        NodeDetails created = await svc.CreateNode(new NodeDetails { Type = "task", Name = "CreateEmbedTest" });
+        NodeDetails created = await svc.CreateNode(new NodeDetails { Type = "task", Name = "CreateEmbedTest" }, callerId: 0);
 
         Node raw = await fixture.EntityManager.Load<Node>()
                                               .Where(n => n.Id == created.Id)
@@ -55,7 +55,7 @@ public class EmbeddingV2Tests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        NodeDetails created = await svc.CreateNode(new NodeDetails { Type = "task", Name = "" });
+        NodeDetails created = await svc.CreateNode(new NodeDetails { Type = "task", Name = "" }, callerId: 0);
 
         Node raw = await fixture.EntityManager.Load<Node>()
                                               .Where(n => n.Id == created.Id)
@@ -72,12 +72,12 @@ public class EmbeddingV2Tests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "ContentTest" });
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "doc", Name = "ContentTest" }, callerId: 0);
         byte[] content = Encoding.UTF8.GetBytes("# v2 content");
 
-        await svc.UploadContent(node.Id, "text/markdown", new MemoryStream(content));
+        await svc.UploadContent(node.Id, "text/markdown", new MemoryStream(content), callerId: 0, isAdmin: true);
 
-        (string ct, Stream stream) = await svc.GetNodeData(node.Id);
+        (string ct, Stream stream) = await svc.GetNodeData(node.Id, callerId: 0, isAdmin: true);
         byte[] stored = new byte[content.Length];
         await stream.ReadExactlyAsync(stored);
 
@@ -93,10 +93,10 @@ public class EmbeddingV2Tests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "asset", Name = "ImageNode" });
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "asset", Name = "ImageNode" }, callerId: 0);
         byte[] content = [0x89, 0x50, 0x4E, 0x47]; // PNG magic bytes
 
-        await svc.UploadContent(node.Id, "image/png", new MemoryStream(content));
+        await svc.UploadContent(node.Id, "image/png", new MemoryStream(content), callerId: 0, isAdmin: true);
 
         Node raw = await fixture.EntityManager.Load<Node>()
                                               .Where(n => n.Id == node.Id)
@@ -113,11 +113,11 @@ public class EmbeddingV2Tests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "task", Name = "OldName" });
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "task", Name = "OldName" }, callerId: 0);
 
         NodeDetails patched = await svc.Patch(node.Id,
             [new PatchOperation { Op = "replace", Path = "/name", Value = "NewName" }],
-            CancellationToken.None);
+            callerId: 0, isAdmin: true, CancellationToken.None);
 
         Node raw = await fixture.EntityManager.Load<Node>()
                                               .Where(n => n.Id == node.Id)
@@ -137,11 +137,11 @@ public class EmbeddingV2Tests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "task", Name = "StatusPatch", Status = "open" });
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "task", Name = "StatusPatch", Status = "open" }, callerId: 0);
 
         NodeDetails patched = await svc.Patch(node.Id,
             [new PatchOperation { Op = "replace", Path = "/status", Value = "closed" }],
-            CancellationToken.None);
+            callerId: 0, isAdmin: true, CancellationToken.None);
 
         Assert.That(patched.Status, Is.EqualTo("closed"), "status must be updated");
     }
@@ -155,7 +155,7 @@ public class EmbeddingV2Tests
         Assert.ThrowsAsync<Pooshit.AspNetCore.Services.Errors.Exceptions.NotFoundException<Node>>(
             () => svc.Patch(999999L,
                 [new PatchOperation { Op = "replace", Path = "/name", Value = "X" }],
-                CancellationToken.None));
+                callerId: 0, isAdmin: true, CancellationToken.None));
     }
 
 
@@ -165,14 +165,14 @@ public class EmbeddingV2Tests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "task", Name = "OldName", Status = "open" });
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "task", Name = "OldName", Status = "open" }, callerId: 0);
 
         NodeDetails patched = await svc.Patch(node.Id,
             [
                 new PatchOperation { Op = "replace", Path = "/name", Value = "BrandNewName" },
                 new PatchOperation { Op = "replace", Path = "/status", Value = "in-progress" }
             ],
-            CancellationToken.None);
+            callerId: 0, isAdmin: true, CancellationToken.None);
 
         Assert.Multiple(() => {
             Assert.That(patched.Name, Is.EqualTo("BrandNewName"));
@@ -187,10 +187,10 @@ public class EmbeddingV2Tests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "asset", Name = "AssetNode" });
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "asset", Name = "AssetNode" }, callerId: 0);
         byte[] img = [0xFF, 0xD8, 0xFF]; // JPEG magic
 
-        await svc.UploadContent(node.Id, "image/jpeg", new MemoryStream(img));
+        await svc.UploadContent(node.Id, "image/jpeg", new MemoryStream(img), callerId: 0, isAdmin: true);
 
         Node raw = await fixture.EntityManager.Load<Node>()
                                               .Where(n => n.Id == node.Id)
