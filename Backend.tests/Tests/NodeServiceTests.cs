@@ -934,6 +934,191 @@ public class NodeServiceTests
     }
 
     // -----------------------------------------------------------------------
+    // Timestamps — CreateNode sets Created and LastUpdate
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task CreateNode_SetsCreatedAndLastUpdate()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        DateTime before = DateTime.UtcNow.AddSeconds(-1);
+        NodeDetails node = await Create(svc);
+        DateTime after = DateTime.UtcNow.AddSeconds(1);
+
+        Node raw = await fixture.EntityManager.Load<Node>()
+                                .Where(n => n.Id == node.Id)
+                                .ExecuteEntityAsync();
+
+        Assert.Multiple(() => {
+            Assert.That(raw.Created, Is.GreaterThanOrEqualTo(before), "Created must be >= time before insert");
+            Assert.That(raw.Created, Is.LessThanOrEqualTo(after), "Created must be <= time after insert");
+            Assert.That(raw.LastUpdate, Is.EqualTo(raw.Created), "LastUpdate must equal Created on a fresh node");
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Timestamps — Patch moves LastUpdate, leaves Created unchanged
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task Patch_MovesLastUpdate_LeavesCreatedUnchanged()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await Create(svc);
+        Node before = await fixture.EntityManager.Load<Node>()
+                                   .Where(n => n.Id == node.Id)
+                                   .ExecuteEntityAsync();
+
+        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], CancellationToken.None);
+
+        Node after = await fixture.EntityManager.Load<Node>()
+                                  .Where(n => n.Id == node.Id)
+                                  .ExecuteEntityAsync();
+
+        Assert.Multiple(() => {
+            Assert.That(after.Created, Is.EqualTo(before.Created), "Created must not change after Patch");
+            Assert.That(after.LastUpdate, Is.GreaterThanOrEqualTo(before.LastUpdate), "LastUpdate must advance on Patch");
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Timestamps — UploadContent moves LastUpdate, leaves Created unchanged
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task UploadContent_MovesLastUpdate_LeavesCreatedUnchanged()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await Create(svc);
+        Node before = await fixture.EntityManager.Load<Node>()
+                                   .Where(n => n.Id == node.Id)
+                                   .ExecuteEntityAsync();
+
+        await svc.UploadContent(node.Id, "text/plain", new MemoryStream("hello"u8.ToArray()));
+
+        Node after = await fixture.EntityManager.Load<Node>()
+                                  .Where(n => n.Id == node.Id)
+                                  .ExecuteEntityAsync();
+
+        Assert.Multiple(() => {
+            Assert.That(after.Created, Is.EqualTo(before.Created), "Created must not change after UploadContent");
+            Assert.That(after.LastUpdate, Is.GreaterThanOrEqualTo(before.LastUpdate), "LastUpdate must advance on UploadContent");
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Timestamps — CreatedFrom is inclusive, CreatedTo is exclusive
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task ListPaged_CreatedFrom_IsInclusive()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await Create(svc, name: "TimestampTarget");
+        Node raw = await fixture.EntityManager.Load<Node>()
+                                .Where(n => n.Id == node.Id)
+                                .ExecuteEntityAsync();
+
+        long count = await GetPageCount(svc, new NodeFilter { Id = [node.Id], CreatedFrom = raw.Created, Count = 100 });
+
+        Assert.That(count, Is.EqualTo(1), "node at exact CreatedFrom boundary must be included (inclusive)");
+    }
+
+    [Test]
+    public async Task ListPaged_CreatedTo_IsExclusive()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await Create(svc, name: "TimestampTarget");
+        Node raw = await fixture.EntityManager.Load<Node>()
+                                .Where(n => n.Id == node.Id)
+                                .ExecuteEntityAsync();
+
+        long count = await GetPageCount(svc, new NodeFilter { Id = [node.Id], CreatedTo = raw.Created, Count = 100 });
+
+        Assert.That(count, Is.EqualTo(0), "node at exact CreatedTo boundary must be excluded (exclusive)");
+    }
+
+    // -----------------------------------------------------------------------
+    // Timestamps — UpdatedFrom is inclusive, UpdatedTo is exclusive
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task ListPaged_UpdatedFrom_IsInclusive()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await Create(svc, name: "UpdatedTarget");
+        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], CancellationToken.None);
+
+        Node raw = await fixture.EntityManager.Load<Node>()
+                                .Where(n => n.Id == node.Id)
+                                .ExecuteEntityAsync();
+
+        long count = await GetPageCount(svc, new NodeFilter { Id = [node.Id], UpdatedFrom = raw.LastUpdate, Count = 100 });
+
+        Assert.That(count, Is.EqualTo(1), "node at exact UpdatedFrom boundary must be included (inclusive)");
+    }
+
+    [Test]
+    public async Task ListPaged_UpdatedTo_IsExclusive()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await Create(svc, name: "UpdatedTarget");
+        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "open" }], CancellationToken.None);
+
+        Node raw = await fixture.EntityManager.Load<Node>()
+                                .Where(n => n.Id == node.Id)
+                                .ExecuteEntityAsync();
+
+        long count = await GetPageCount(svc, new NodeFilter { Id = [node.Id], UpdatedTo = raw.LastUpdate, Count = 100 });
+
+        Assert.That(count, Is.EqualTo(0), "node at exact UpdatedTo boundary must be excluded (exclusive)");
+    }
+
+    // -----------------------------------------------------------------------
+    // Timestamps — timestamp filters compose with existing Type and Status filters
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task ListPaged_TimestampFilters_ComposeWithTypeAndStatus()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        DateTime cutoff = DateTime.UtcNow.AddSeconds(-2);
+
+        NodeDetails task1 = await CreateWithStatus(svc, "open", type: "task", name: "TaskOpen");
+        NodeDetails bug1 = await CreateWithStatus(svc, "open", type: "bug", name: "BugOpen");
+
+        List<NodeDetails> results = await CollectPage(await svc.ListPaged(new NodeFilter {
+            Type = ["task"],
+            Status = ["open"],
+            CreatedFrom = cutoff,
+            Count = 100
+        }));
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(task1.Id), "task+open node must appear");
+            Assert.That(ids, Does.Not.Contain(bug1.Id), "bug node must be excluded by type filter");
+        });
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 

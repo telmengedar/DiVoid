@@ -52,4 +52,24 @@ public class NodeFilter : ListFilter
     /// length must be exactly 4; xMin must be ≤ xMax and yMin must be ≤ yMax — otherwise HTTP 400.
     /// </summary>
     public double[] Bounds { get; set; }
+
+    /// <summary>
+    /// inclusive lower bound on <see cref="Node.Created"/>: only nodes created at or after this timestamp are returned.
+    /// </summary>
+    public DateTime? CreatedFrom { get; set; }
+
+    /// <summary>
+    /// exclusive upper bound on <see cref="Node.Created"/>: only nodes created before this timestamp are returned.
+    /// </summary>
+    public DateTime? CreatedTo { get; set; }
+
+    /// <summary>
+    /// inclusive lower bound on <see cref="Node.LastUpdate"/>: only nodes last updated at or after this timestamp are returned.
+    /// </summary>
+    public DateTime? UpdatedFrom { get; set; }
+
+    /// <summary>
+    /// exclusive upper bound on <see cref="Node.LastUpdate"/>: only nodes last updated before this timestamp are returned.
+    /// </summary>
+    public DateTime? UpdatedTo { get; set; }
 }

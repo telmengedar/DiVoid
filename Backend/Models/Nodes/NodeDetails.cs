@@ -74,4 +74,14 @@ public class NodeDetails
     /// On <c>POST /api/nodes</c>: ids of nodes to link at creation time; drives auto-positioning.
     /// </summary>
     public long[] Links { get; set; }
+
+    /// <summary>
+    /// UTC timestamp when this node was created.
+    /// </summary>
+    public DateTime? Created { get; set; }
+
+    /// <summary>
+    /// UTC timestamp of the last metadata or content modification to this node.
+    /// </summary>
+    public DateTime? LastUpdate { get; set; }
 }
