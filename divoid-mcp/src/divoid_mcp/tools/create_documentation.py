@@ -32,6 +32,7 @@ from .. import http_client
 from ..config import DivoidConfig
 from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
 from ._groups import resolve_group
+from .patch_node import _canonicalize_access
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         project_id: int | None = None,
         docs_group_id: int | None = None,
         extra_links: list[int] | None = None,
+        access: int | str | None = None,
     ) -> dict[str, Any]:
         """
         Create a documentation node in DiVoid atomically.
@@ -128,6 +130,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             extra_links: Additional node ids to link the documentation to (e.g. the
                          task it was produced for, related siblings, the project
                          itself). The Docs group link is always added automatically.
+            access: Visibility flags for the new node. Accepts int (0-3) or string
+                    ("None", "Read", "Write", "Read, Write"). When None, the server's
+                    default of Read|Write (3) applies. Use access=0 to create a
+                    private node visible only to owner/admin.
         """
         if extra_links is None:
             extra_links = []
@@ -158,6 +164,12 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         # --- Step 2: Create the node ---
         # documentation nodes have null status — do not pass status.
         node_body: dict[str, Any] = {"name": name, "type": "documentation"}
+        if access is not None:
+            try:
+                node_body["access"] = _canonicalize_access(access)
+            except InvariantViolation as exc:
+                logger.debug("divoid_create_documentation invariant violation: %s", exc.code)
+                return {"isError": True, "content": make_error_content(exc.code, exc.message)}
         try:
             create_result = await http_client.post_json("nodes", node_body)
         except http_client.DiVoidUnreachable as exc:

@@ -1,17 +1,22 @@
 """
 divoid_patch_node -- primitive JSON-Patch wrapper around PATCH /api/nodes/{id}.
 
-Accepts the patchable properties (name, status, x, y) as explicit parameters
-and composes the JSON-Patch array internally. The caller does not need to know
-the patch format.
+Accepts the patchable properties (name, status, x, y, access, owner_id) as
+explicit parameters and composes the JSON-Patch array internally. The caller
+does not need to know the patch format.
 
 Supported paths per DiVoid #8:
-  /name   -- node name (string)
-  /status -- node status (string)
-  /X      -- canvas X position (number)
-  /Y      -- canvas Y position (number)
+  /name     -- node name (string)
+  /status   -- node status (string)
+  /X        -- canvas X position (number)
+  /Y        -- canvas Y position (number)
+  /access   -- visibility flags: None=0, Read=1, Write=2, Read|Write=3 (default)
+               Accepts int 0-3 or string "None"/"Read"/"Write"/"Read, Write".
+               Canonicalized to int before composing the patch op.
+               Owner-or-admin gated on the server.
+  /ownerId  -- transfer ownership (admin-only on the server; 404 if unauthorized).
 
-At least one of the four must be provided — the invariant guard fires before
+At least one of the six must be provided — the invariant guard fires before
 any HTTP call with code 'no_fields_to_patch'.
 
 Note: for status changes with lifecycle validation, use divoid_set_status
@@ -36,13 +41,37 @@ from ..errors import InvariantViolation, make_error_content, map_http_error, map
 logger = logging.getLogger(__name__)
 
 _TOOL_DESCRIPTION = """\
-Primitive JSON-Patch update for a DiVoid node. Accepts name, status, x, and y \
-as explicit parameters and composes the PATCH /api/nodes/{id} call internally. \
-At least one of the four fields must be provided (invariant guard: no_fields_to_patch). \
+Primitive JSON-Patch update for a DiVoid node. Accepts name, status, x, y, access, \
+and owner_id as explicit parameters and composes the PATCH /api/nodes/{id} call \
+internally. At least one field must be provided (invariant guard: no_fields_to_patch). \
 Returns the updated node on success. For status changes that should enforce the \
 type's lifecycle (task/bug), use divoid_set_status instead — this tool accepts \
-any string for status without validation.\
+any string for status without validation. access accepts int 0-3 or the string \
+representation ("None", "Read", "Write", "Read, Write") and is canonicalized to int \
+before patching. owner_id transfer is admin-only on the server (returns 404 if \
+unauthorized — the MCP does not gate it).\
 """
+
+_ACCESS_STRING_MAP: dict[str, int] = {
+    "None": 0,
+    "Read": 1,
+    "Write": 2,
+    "Read, Write": 3,
+}
+
+
+def _canonicalize_access(access: int | str) -> int:
+    if isinstance(access, int):
+        return access
+    mapped = _ACCESS_STRING_MAP.get(access)
+    if mapped is None:
+        raise InvariantViolation(
+            "access_invalid_value",
+            f"access string {access!r} is not recognized. "
+            f"Valid strings: {', '.join(repr(k) for k in _ACCESS_STRING_MAP)}. "
+            "Or pass an integer 0-3 directly.",
+        )
+    return mapped
 
 
 def _check_invariants(
@@ -50,6 +79,8 @@ def _check_invariants(
     status: str | None,
     x: float | None,
     y: float | None,
+    access: int | str | None,
+    owner_id: int | None,
 ) -> None:
     """
     Check runtime invariants before making any HTTP call.
@@ -59,12 +90,14 @@ def _check_invariants(
     parameters as plain {"type": "string"} / {"type": "number"} without
     cross-parameter constraints; enforcement is entirely here.
     """
-    if name is None and status is None and x is None and y is None:
+    if name is None and status is None and x is None and y is None and access is None and owner_id is None:
         raise InvariantViolation(
             "no_fields_to_patch",
-            "At least one of name, status, x, or y must be provided. "
+            "At least one of name, status, x, y, access, or owner_id must be provided. "
             "A PATCH with no fields is a no-op.",
         )
+    if access is not None:
+        _canonicalize_access(access)
 
 
 async def _execute(
@@ -74,6 +107,8 @@ async def _execute(
     status: str | None = None,
     x: float | None = None,
     y: float | None = None,
+    access: int | str | None = None,
+    owner_id: int | None = None,
 ) -> dict[str, Any]:
     """
     Core implementation of divoid_patch_node.
@@ -84,7 +119,6 @@ async def _execute(
 
     Callers must run _check_invariants() before calling this function.
     """
-    # Build the JSON-Patch array from provided fields.
     ops: list[dict[str, Any]] = []
     if name is not None:
         ops.append({"op": "replace", "path": "/name", "value": name})
@@ -94,6 +128,10 @@ async def _execute(
         ops.append({"op": "replace", "path": "/X", "value": x})
     if y is not None:
         ops.append({"op": "replace", "path": "/Y", "value": y})
+    if access is not None:
+        ops.append({"op": "replace", "path": "/access", "value": _canonicalize_access(access)})
+    if owner_id is not None:
+        ops.append({"op": "replace", "path": "/ownerId", "value": owner_id})
 
     logger.info(
         "divoid_patch_node id=%d ops=%s",
@@ -138,6 +176,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         status: str | None = None,
         x: float | None = None,
         y: float | None = None,
+        access: int | str | None = None,
+        owner_id: int | None = None,
     ) -> dict[str, Any]:
         """
         Patch one or more properties of a DiVoid node.
@@ -152,13 +192,19 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                     sole enforcement layer (FastMCP exposes status as plain string).
             x: New canvas X position (world units). Optional.
             y: New canvas Y position (world units). Optional.
+            access: Visibility flags. Accepts int (0-3) or string ("None", "Read",
+                    "Write", "Read, Write"). Canonicalized to int before composing
+                    the patch op. None=0, Read=1, Write=2, Read|Write=3 (default).
+                    Owner-or-admin gated on the server.
+            owner_id: Transfer ownership to this user id. Admin-only on the server —
+                      returns 404 if the caller lacks permission.
 
-        At least one of name, status, x, or y must be provided (invariant guard:
-        no_fields_to_patch — FastMCP does not enforce cross-parameter requirements).
+        At least one of name, status, x, y, access, or owner_id must be provided
+        (invariant guard: no_fields_to_patch).
         """
         # --- Invariant guard (before any HTTP call) ---
         try:
-            _check_invariants(name, status, x, y)
+            _check_invariants(name, status, x, y, access, owner_id)
         except InvariantViolation as exc:
             logger.debug("divoid_patch_node invariant violation: %s", exc.code)
             return {"isError": True, "content": make_error_content(exc.code, exc.message)}
@@ -170,4 +216,6 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             status=status,
             x=x,
             y=y,
+            access=access,
+            owner_id=owner_id,
         )

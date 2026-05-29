@@ -37,6 +37,7 @@ from .. import http_client
 from ..config import DivoidConfig
 from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
 from ._groups import resolve_group
+from .patch_node import _canonicalize_access
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         content: str | None = None,
         status: str = "open",
         extra_links: list[int] | None = None,
+        access: int | str | None = None,
     ) -> dict[str, Any]:
         """
         Create a task node in DiVoid atomically.
@@ -150,6 +152,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             extra_links: Additional node ids to link the new task to (e.g. parent
                          task, related documentation). The Tasks group link is always
                          added automatically.
+            access: Visibility flags for the new node. Accepts int (0-3) or string
+                    ("None", "Read", "Write", "Read, Write"). When None, the server's
+                    default of Read|Write (3) applies. Use access=0 to create a
+                    private node visible only to owner/admin.
         """
         if extra_links is None:
             extra_links = []
@@ -179,6 +185,12 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
 
         # --- Step 2: Create the node ---
         node_body: dict[str, Any] = {"name": name, "type": "task", "status": status}
+        if access is not None:
+            try:
+                node_body["access"] = _canonicalize_access(access)
+            except InvariantViolation as exc:
+                logger.debug("divoid_create_task invariant violation: %s", exc.code)
+                return {"isError": True, "content": make_error_content(exc.code, exc.message)}
         try:
             create_result = await http_client.post_json("nodes", node_body)
         except http_client.DiVoidUnreachable as exc:

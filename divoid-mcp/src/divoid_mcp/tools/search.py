@@ -5,6 +5,10 @@ Wraps GET /api/nodes?query=<text> with optional type/linkedto/status/count
 filters. The DiVoid API performs vector similarity search when a query
 parameter is supplied; results are returned ranked by similarity score.
 
+Timestamp filters (created_from, created_to, updated_from, updated_to) accept
+ISO 8601 datetime strings and are forwarded as-is to the backend query params.
+The backend semantics are From inclusive, To exclusive.
+
 Architecture reference: §8.1
 """
 
@@ -55,6 +59,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         count: int = 10,
         include_content: bool = False,
         include_links: bool = False,
+        created_from: str | None = None,
+        created_to: str | None = None,
+        updated_from: str | None = None,
+        updated_to: str | None = None,
     ) -> dict[str, Any]:
         """
         Semantic search over the DiVoid graph.
@@ -80,6 +88,14 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                            links: [id, ...] (or [] for isolated nodes). Use for graph-walking /
                            fan-out-avoidance flows. Opt-in; costs bandwidth proportional to
                            adjacency density.
+            created_from: ISO 8601 datetime string. Return only nodes created at or after
+                          this timestamp (inclusive). Forwarded as-is to the backend.
+            created_to: ISO 8601 datetime string. Return only nodes created before this
+                        timestamp (exclusive). Forwarded as-is to the backend.
+            updated_from: ISO 8601 datetime string. Return only nodes last updated at or
+                          after this timestamp (inclusive). Forwarded as-is to the backend.
+            updated_to: ISO 8601 datetime string. Return only nodes last updated before this
+                        timestamp (exclusive). Forwarded as-is to the backend.
         """
         if not query or not query.strip():
             return {
@@ -116,6 +132,14 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             if include_links:
                 base_fields.append("links")
             params["fields"] = base_fields
+        if created_from is not None:
+            params["CreatedFrom"] = created_from
+        if created_to is not None:
+            params["CreatedTo"] = created_to
+        if updated_from is not None:
+            params["UpdatedFrom"] = updated_from
+        if updated_to is not None:
+            params["UpdatedTo"] = updated_to
 
         logger.info(
             "divoid_search query=%r type=%s linkedto=%s status=%s count=%d",

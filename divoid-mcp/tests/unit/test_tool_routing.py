@@ -1,5 +1,6 @@
 """
-Hermetic tool-level routing tests for divoid_get_content and divoid_search.
+Hermetic tool-level routing tests for divoid_get_content, divoid_search,
+divoid_list, divoid_patch_node, divoid_get_node, and access+timestamp features.
 
 These tests mock the HTTP transport layer (via respx) and assert on the
 MCP-side response shape. They exercise each routing branch in isolation,
@@ -28,7 +29,9 @@ from divoid_mcp import http_client
 from divoid_mcp.config import DivoidConfig
 from divoid_mcp.tools.delete_message import register as register_delete_message
 from divoid_mcp.tools.get_content import register as register_get_content
+from divoid_mcp.tools.get_node import register as register_get_node
 from divoid_mcp.tools.list_nodes import register as register_list_nodes
+from divoid_mcp.tools.patch_node import register as register_patch_node
 from divoid_mcp.tools.search import register as register_search
 
 # ---------------------------------------------------------------------------
@@ -43,6 +46,7 @@ _DUMMY_KEY = "dummy-key-for-unit-tests"
 # URL templates matching what http_client.get() constructs at runtime.
 _CONTENT_URL = f"{_DUMMY_BASE}/nodes/{{id}}/content"
 _NODES_URL = f"{_DUMMY_BASE}/nodes"
+_NODE_URL = f"{_DUMMY_BASE}/nodes/{{id}}"
 _MESSAGES_URL = f"{_DUMMY_BASE}/messages/{{id}}"
 
 
@@ -67,7 +71,9 @@ def server() -> FastMCP:
     mcp_server.config = config  # type: ignore[attr-defined]
 
     register_get_content(mcp_server)
+    register_get_node(mcp_server)
     register_list_nodes(mcp_server)
+    register_patch_node(mcp_server)
     register_search(mcp_server)
     register_delete_message(mcp_server)
 
@@ -984,4 +990,392 @@ async def test_delete_message_forbidden(server: FastMCP) -> None:
     # 403 routes through the 4xx fallback in map_http_error → divoid_bad_request.
     assert "divoid_bad_request" in content_text or "403" in content_text, (
         f"Expected 403-mapped error code in text, got: {content_text!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# divoid_list — timestamp filter tests (DiVoid #1381)
+#
+# Acceptance criterion 1: List nodes with updated_from="2026-05-29T00:00:00Z"
+# → outbound request URL carries UpdatedFrom=2026-05-29T00:00:00Z.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_updated_from_forwarded_as_query_param(server: FastMCP) -> None:
+    """updated_from is forwarded to the API as UpdatedFrom without transformation.
+
+    Substitution probe: remove the `params["UpdatedFrom"] = updated_from` line in
+    list_nodes.py._execute — this test fails because UpdatedFrom is absent from the URL.
+    """
+    api_response = {"result": [], "total": 0}
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_list", {"updated_from": "2026-05-29T00:00:00Z"})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url = str(captured_request[0].url)
+    assert "UpdatedFrom=2026-05-29T00%3A00%3A00Z" in url or "UpdatedFrom=2026-05-29T00:00:00Z" in url, (
+        f"Expected UpdatedFrom in URL, got: {url!r}. "
+        "Substitution probe: removing the UpdatedFrom forwarding line in list_nodes._execute causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_created_from_and_updated_to_forwarded(server: FastMCP) -> None:
+    """created_from and updated_to are both forwarded independently as CreatedFrom / UpdatedTo."""
+    api_response = {"result": [], "total": 0}
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_list", {
+            "created_from": "2026-01-01T00:00:00Z",
+            "updated_to": "2026-06-01T00:00:00Z",
+        })
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url = str(captured_request[0].url)
+    assert "CreatedFrom" in url, f"Expected CreatedFrom in URL, got: {url!r}"
+    assert "UpdatedTo" in url, f"Expected UpdatedTo in URL, got: {url!r}"
+
+
+@pytest.mark.asyncio
+async def test_list_no_timestamp_params_when_omitted(server: FastMCP) -> None:
+    """Default divoid_list call must NOT send any timestamp params."""
+    api_response = {"result": [], "total": 0}
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_list", {})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url = str(captured_request[0].url)
+    for param in ("CreatedFrom", "CreatedTo", "UpdatedFrom", "UpdatedTo"):
+        assert param not in url, (
+            f"Default call must not include {param!r} in URL, got: {url!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# divoid_search — timestamp filter tests (DiVoid #1381)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_updated_from_forwarded(server: FastMCP) -> None:
+    """updated_from is forwarded to the search API as UpdatedFrom.
+
+    Substitution probe: remove the `params["UpdatedFrom"] = updated_from` line in
+    search.py — this test fails because UpdatedFrom is absent from the URL.
+    """
+    api_response = {"result": [], "total": 0}
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_search", {
+            "query": "recent changes",
+            "updated_from": "2026-05-29T00:00:00Z",
+        })
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url = str(captured_request[0].url)
+    assert "UpdatedFrom" in url, (
+        f"Expected UpdatedFrom in URL, got: {url!r}. "
+        "Substitution probe: removing the UpdatedFrom forwarding line in search._execute causes this failure."
+    )
+
+
+# ---------------------------------------------------------------------------
+# divoid_patch_node — access param tests (DiVoid #1381)
+#
+# Acceptance criterion 4: patch_node(id=X, access="Read, Write")
+# → outbound JSON-Patch contains {"op":"replace","path":"/access","value":3}.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_patch_node_access_string_read_write_canonicalized(server: FastMCP) -> None:
+    """access="Read, Write" → JSON-Patch op has value=3.
+
+    Substitution probe: remove the access branch from patch_node._execute — the
+    /access op is absent from the patch body and this test fails on the assertion
+    that the op's value is 3.
+    """
+    node_id = 42
+    captured_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_body.append(json.loads(request.content))
+            return httpx.Response(200, json={"id": node_id, "name": "test", "access": "Read, Write"})
+
+        mock.patch(_NODE_URL.format(id=node_id)).mock(side_effect=capture)
+        result = await _call(server, "divoid_patch_node", {"id": node_id, "access": "Read, Write"})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_body) == 1
+    ops = captured_body[0]
+    access_ops = [op for op in ops if op.get("path") == "/access"]
+    assert len(access_ops) == 1, f"Expected exactly one /access op, got ops: {ops!r}"
+    assert access_ops[0]["op"] == "replace", f"Expected op=replace, got: {access_ops[0]!r}"
+    assert access_ops[0]["value"] == 3, (
+        f"Expected value=3 for 'Read, Write', got: {access_ops[0]['value']!r}. "
+        "Substitution probe: removing the access canonicalization line causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_patch_node_access_string_none_canonicalized_to_zero(server: FastMCP) -> None:
+    """access="None" → JSON-Patch op has value=0.
+
+    Substitution probe: remove the _canonicalize_access call for "None" → value=0
+    assertion fails (would produce a non-zero value or missing op).
+    """
+    node_id = 55
+    captured_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_body.append(json.loads(request.content))
+            return httpx.Response(200, json={"id": node_id, "name": "private", "access": "None"})
+
+        mock.patch(_NODE_URL.format(id=node_id)).mock(side_effect=capture)
+        result = await _call(server, "divoid_patch_node", {"id": node_id, "access": "None"})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    ops = captured_body[0]
+    access_ops = [op for op in ops if op.get("path") == "/access"]
+    assert len(access_ops) == 1, f"Expected one /access op, got: {ops!r}"
+    assert access_ops[0]["value"] == 0, (
+        f"Expected value=0 for 'None', got: {access_ops[0]['value']!r}. "
+        "Substitution probe: removing _ACCESS_STRING_MAP['None']=0 causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_patch_node_access_int_forwarded_directly(server: FastMCP) -> None:
+    """access=1 (integer) → JSON-Patch op has value=1 without transformation."""
+    node_id = 77
+    captured_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_body.append(json.loads(request.content))
+            return httpx.Response(200, json={"id": node_id, "name": "readonly", "access": "Read"})
+
+        mock.patch(_NODE_URL.format(id=node_id)).mock(side_effect=capture)
+        result = await _call(server, "divoid_patch_node", {"id": node_id, "access": 1})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    ops = captured_body[0]
+    access_ops = [op for op in ops if op.get("path") == "/access"]
+    assert len(access_ops) == 1, f"Expected one /access op, got: {ops!r}"
+    assert access_ops[0]["value"] == 1, f"Expected value=1, got: {access_ops[0]['value']!r}"
+
+
+@pytest.mark.asyncio
+async def test_patch_node_invalid_access_string_returns_error(server: FastMCP) -> None:
+    """access='bogus' → invariant guard returns isError before any HTTP call."""
+    with respx.mock(assert_all_called=False) as mock:
+        mock.patch(_NODE_URL.format(id=1)).mock(return_value=httpx.Response(200, json={}))
+        result = await _call(server, "divoid_patch_node", {"id": 1, "access": "bogus"})
+
+    assert result.get("isError") is True, f"Expected isError=True for invalid access string, got: {result}"
+    content_text: str = result["content"][0]["text"]
+    assert "access_invalid_value" in content_text, (
+        f"Expected access_invalid_value error code, got: {content_text!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_patch_node_owner_id_appends_op(server: FastMCP) -> None:
+    """owner_id=99 → JSON-Patch body contains replace /ownerId op with value 99."""
+    node_id = 10
+    captured_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_body.append(json.loads(request.content))
+            return httpx.Response(200, json={"id": node_id, "ownerId": 99})
+
+        mock.patch(_NODE_URL.format(id=node_id)).mock(side_effect=capture)
+        result = await _call(server, "divoid_patch_node", {"id": node_id, "owner_id": 99})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    ops = captured_body[0]
+    owner_ops = [op for op in ops if op.get("path") == "/ownerId"]
+    assert len(owner_ops) == 1, f"Expected one /ownerId op, got: {ops!r}"
+    assert owner_ops[0]["value"] == 99, f"Expected value=99, got: {owner_ops[0]['value']!r}"
+
+
+# ---------------------------------------------------------------------------
+# divoid_get_node — access + timestamp fields (DiVoid #1381)
+#
+# Acceptance criterion 3: get_node response includes access field.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_node_surfaces_access_owner_created_lastupdate(server: FastMCP) -> None:
+    """get_node response includes access, ownerId, created, lastUpdate from server.
+
+    Substitution probe: remove the four new keys from get_node.py's return dict —
+    access/ownerId/created/lastUpdate are absent from the result and the assertions fail.
+    """
+    node_id = 9
+    server_response = {
+        "id": node_id,
+        "type": "documentation",
+        "name": "Onboarding",
+        "status": None,
+        "contentType": "text/markdown",
+        "x": 0.0,
+        "y": 0.0,
+        "access": "Read, Write",
+        "ownerId": 2,
+        "created": "2026-05-01T12:00:00Z",
+        "lastUpdate": "2026-05-29T08:30:00Z",
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODE_URL.format(id=node_id)).mock(
+            return_value=httpx.Response(200, json=server_response)
+        )
+        result = await _call(server, "divoid_get_node", {"id": node_id})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert result.get("access") == "Read, Write", (
+        f"Expected access='Read, Write', got: {result.get('access')!r}. "
+        "Substitution probe: removing the 'access' key from get_node return dict causes this failure."
+    )
+    assert result.get("ownerId") == 2, f"Expected ownerId=2, got: {result.get('ownerId')!r}"
+    assert result.get("created") == "2026-05-01T12:00:00Z", (
+        f"Expected created='2026-05-01T12:00:00Z', got: {result.get('created')!r}"
+    )
+    assert result.get("lastUpdate") == "2026-05-29T08:30:00Z", (
+        f"Expected lastUpdate='2026-05-29T08:30:00Z', got: {result.get('lastUpdate')!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# divoid_create_task — access param tests (DiVoid #1381)
+#
+# Acceptance criterion 2: create_task with access=0 → POST body carries "access": 0.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_task_access_zero_in_post_body(server: FastMCP) -> None:
+    """access=0 on divoid_create_task → POST /nodes body carries access=0.
+
+    Substitution probe: remove the `node_body["access"] = _canonicalize_access(access)`
+    line from create_task.py — the access key is absent from the POST body and this test fails.
+    """
+    from divoid_mcp.tools.create_task import register as register_create_task
+
+    ct_server = FastMCP("divoid-mcp-create-test")
+    ct_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    register_create_task(ct_server)
+
+    task_id = 500
+    captured_create_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture_create(request: httpx.Request) -> httpx.Response:
+            captured_create_body.append(json.loads(request.content))
+            return httpx.Response(201, json={"id": task_id, "name": "private task", "type": "task"})
+
+        mock.post(_NODES_URL).mock(side_effect=capture_create)
+        mock.post(f"{_DUMMY_BASE}/nodes/{task_id}/content").mock(
+            return_value=httpx.Response(200, content=b"")
+        )
+        mock.post(f"{_DUMMY_BASE}/nodes/{task_id}/links").mock(
+            return_value=httpx.Response(200, json={})
+        )
+        mock.get(_NODES_URL).mock(
+            return_value=httpx.Response(200, json={"result": [{"id": 314, "name": "Tasks"}], "total": 1})
+        )
+
+        result = await _call(ct_server, "divoid_create_task", {
+            "name": "private task",
+            "tasks_group_id": 314,
+            "content": "This task is private.",
+            "access": 0,
+        })
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_create_body) >= 1
+    create_body = captured_create_body[0]
+    assert "access" in create_body, (
+        f"Expected 'access' key in POST body, got: {create_body!r}. "
+        "Substitution probe: removing node_body['access'] in create_task.py causes this failure."
+    )
+    assert create_body["access"] == 0, (
+        f"Expected access=0, got: {create_body['access']!r}. "
+        "Substitution probe: _canonicalize_access('None'→0) or int(0) branch causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_task_access_string_none_canonicalized(server: FastMCP) -> None:
+    """access='None' string on divoid_create_task → POST body carries access=0."""
+    from divoid_mcp.tools.create_task import register as register_create_task
+
+    ct_server = FastMCP("divoid-mcp-create-test-2")
+    ct_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    register_create_task(ct_server)
+
+    task_id = 501
+    captured_create_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture_create(request: httpx.Request) -> httpx.Response:
+            captured_create_body.append(json.loads(request.content))
+            return httpx.Response(201, json={"id": task_id, "name": "secret task", "type": "task"})
+
+        mock.post(_NODES_URL).mock(side_effect=capture_create)
+        mock.post(f"{_DUMMY_BASE}/nodes/{task_id}/content").mock(
+            return_value=httpx.Response(200, content=b"")
+        )
+        mock.post(f"{_DUMMY_BASE}/nodes/{task_id}/links").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        result = await _call(ct_server, "divoid_create_task", {
+            "name": "secret task",
+            "tasks_group_id": 314,
+            "content": "Secret task content.",
+            "access": "None",
+        })
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    create_body = captured_create_body[0]
+    assert create_body.get("access") == 0, (
+        f"Expected access=0 for string 'None', got: {create_body.get('access')!r}. "
+        "Substitution probe: removing _ACCESS_STRING_MAP['None']=0 causes value≠0."
     )

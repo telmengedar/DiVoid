@@ -17,6 +17,10 @@ Unknown field names in the fields parameter are passed through to the API,
 which returns HTTP 400 for unrecognised values. The error is surfaced via
 map_http_error — no client-side guard is needed.
 
+Timestamp filters (created_from, created_to, updated_from, updated_to) accept
+ISO 8601 datetime strings and are forwarded as-is to the backend query params.
+The backend semantics are From inclusive, To exclusive.
+
 API reference: DiVoid node #8 (GET /api/nodes + path parameter section).
 Architecture: DiVoid node #695.
 """
@@ -156,6 +160,10 @@ async def _execute(
     fields: list[str] | None = None,
     include_content: bool = False,
     include_links: bool = False,
+    created_from: str | None = None,
+    created_to: str | None = None,
+    updated_from: str | None = None,
+    updated_to: str | None = None,
 ) -> dict[str, Any]:
     """
     Core implementation of divoid_list.
@@ -204,6 +212,14 @@ async def _execute(
         params["descending"] = "true"
     if fields is not None:
         params["fields"] = fields
+    if created_from is not None:
+        params["CreatedFrom"] = created_from
+    if created_to is not None:
+        params["CreatedTo"] = created_to
+    if updated_from is not None:
+        params["UpdatedFrom"] = updated_from
+    if updated_to is not None:
+        params["UpdatedTo"] = updated_to
 
     logger.info(
         "divoid_list path=%r linkedto=%s type=%s status=%s count=%d",
@@ -260,6 +276,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         fields: list[str] | None = None,
         include_content: bool = False,
         include_links: bool = False,
+        created_from: str | None = None,
+        created_to: str | None = None,
+        updated_from: str | None = None,
+        updated_to: str | None = None,
     ) -> dict[str, Any]:
         """
         List DiVoid nodes with structural filters, pagination, and optional path-query.
@@ -299,6 +319,14 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                            for isolated nodes). Use for graph-walking / fan-out-avoidance flows
                            that would otherwise issue N divoid_get_links calls. Opt-in; costs
                            bandwidth proportional to adjacency density.
+            created_from: ISO 8601 datetime string. Return only nodes created at or after
+                          this timestamp (inclusive). Forwarded as-is to the backend.
+            created_to: ISO 8601 datetime string. Return only nodes created before this
+                        timestamp (exclusive). Forwarded as-is to the backend.
+            updated_from: ISO 8601 datetime string. Return only nodes last updated at or
+                          after this timestamp (inclusive). Forwarded as-is to the backend.
+            updated_to: ISO 8601 datetime string. Return only nodes last updated before this
+                        timestamp (exclusive). Forwarded as-is to the backend.
         """
         # --- Invariant guard (before any HTTP call) ---
         try:
@@ -332,4 +360,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             fields=fields,
             include_content=include_content,
             include_links=include_links,
+            created_from=created_from,
+            created_to=created_to,
+            updated_from=updated_from,
+            updated_to=updated_to,
         )
