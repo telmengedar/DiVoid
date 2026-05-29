@@ -2,7 +2,8 @@
 divoid_get_node — fetch a single node's properties by id.
 
 Wraps GET /api/nodes/{id}. Returns id, type, name, status, contentType,
-x, y. Does NOT return the content body — use divoid_get_content for that.
+x, y, access, ownerId, created, lastUpdate. Does NOT return the content body —
+use divoid_get_content for that.
 
 Architecture reference: §8.2
 """
@@ -22,10 +23,10 @@ logger = logging.getLogger(__name__)
 
 _TOOL_DESCRIPTION = """\
 Fetch a single node's properties (id, type, name, status, contentType, \
-position). Use this when you have a node id (from search results, a link, \
-a memory pointer) and need its metadata. For the content body, use \
-divoid_get_content separately — properties and content are intentionally \
-split because content can be large and is not always needed.\
+position, access, ownerId, created, lastUpdate). Use this when you have a node \
+id (from search results, a link, a memory pointer) and need its metadata. For \
+the content body, use divoid_get_content separately — properties and content are \
+intentionally split because content can be large and is not always needed.\
 """
 
 
@@ -38,7 +39,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         Fetch a single node's properties by id.
 
         Args:
-            id: The node id. Must be a positive integer.
+            id: The node id. Must be a positive integer. Returns id, type, name,
+                status, contentType, x, y, access, ownerId, created, lastUpdate.
         """
         if id < 1:
             return {
@@ -71,4 +73,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             "contentType": data.get("contentType"),
             "x": data.get("x"),
             "y": data.get("y"),
+            "access": data.get("access"),
+            "ownerId": data.get("ownerId"),
+            "created": data.get("created"),
+            "lastUpdate": data.get("lastUpdate"),
         }

@@ -17,18 +17,18 @@ claude mcp add --transport stdio --scope user divoid -- python -m divoid_mcp
 
 | Tool | What it does |
 |---|---|
-| `divoid_search` | Semantic search over the graph — returns nodes ranked by cosine similarity to a plain-language query |
-| `divoid_get_node` | Fetch a single node's metadata (id, type, name, status) by id |
+| `divoid_search` | Semantic search over the graph — returns nodes ranked by cosine similarity; supports timestamp range filters (created_from/to, updated_from/to) |
+| `divoid_get_node` | Fetch a single node's metadata (id, type, name, status, access, ownerId, created, lastUpdate) by id |
 | `divoid_get_content` | Fetch the text body of a node — decoded as UTF-8 |
-| `divoid_list` | List nodes with filtering by type, status, linkedto, name, id; returns paged results |
+| `divoid_list` | List nodes with filtering by type, status, linkedto, name, id, and timestamp ranges (created_from/to, updated_from/to); returns paged results |
 | `divoid_get_links` | Return all nodes linked to a given node (one-hop neighbours) |
 | `divoid_link_nodes` | Create an undirected link between two existing nodes |
-| `divoid_patch_node` | Apply JSON-Patch operations to a node's metadata fields |
+| `divoid_patch_node` | Apply JSON-Patch operations to a node's metadata fields (name, status, x, y, access, owner_id) |
 | `divoid_set_status` | Set or clear a node's status field — enforces valid lifecycle values client-side |
 | `divoid_set_content` | Post content to a node's body — UTF-8 safe, no bash heredoc mangling |
-| `divoid_create_task` | Atomic create: makes the node, sets its content, links it to the project's Tasks group |
-| `divoid_create_documentation` | Atomic create: makes the node, sets its content, links it to the project's Docs group |
-| `divoid_create_session_log` | Atomic create: makes the node, sets its content, links it to the project's Docs group + any extra links you specify |
+| `divoid_create_task` | Atomic create: makes the node, sets its content, links it to the project's Tasks group; accepts optional `access` param |
+| `divoid_create_documentation` | Atomic create: makes the node, sets its content, links it to the project's Docs group; accepts optional `access` param |
+| `divoid_create_session_log` | Atomic create: makes the node, sets its content, links it to the project's Docs group + any extra links; accepts optional `access` param |
 | `divoid_resolve_user` | Look up a DiVoid user by name — returns the user id needed for message routing |
 | `divoid_send_message` | Send a message to a DiVoid user's inbox |
 | `divoid_list_messages` | List messages in a user's inbox, optionally filtered by project |
