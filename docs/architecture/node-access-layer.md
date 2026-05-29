@@ -418,9 +418,9 @@ The DB can use either index — in practice it uses `OwnerId` for selective owne
 
 The graph has tens of nodes and is dev-local. Migration is small.
 
-**Phase 1 — schema and code.** Add `OwnerId` and `Access` to `Node` with `[DefaultValue(0)]`. `Init/DatabaseModelService.CreateOrUpdateSchema<Node>` reconciles the schema on boot (DiVoid #91). Add the `NodeAccess` enum file. Add the per-node helper. Wire the per-node check into `NodeService` entry points. Compose the visibility predicate into `GenerateFilter`. Add the per-property PATCH gates. Update `NodeMapper` + `NodeDetails` + `NodeFilter` (the last receives **no** new filter property, but its `Fields` defaulting will surface the new columns).
+**Phase 1 — schema and code.** Add `OwnerId` with `[DefaultValue(0L)]` and `Access` with `[DefaultValue((int)(NodeAccess.Read | NodeAccess.Write))]` to `Node`. `Init/DatabaseModelService.CreateOrUpdateSchema<Node>` reconciles the schema on boot (DiVoid #91). Add the `NodeAccess` enum file. Add the per-node helper. Wire the per-node check into `NodeService` entry points. Compose the visibility predicate into `GenerateFilter`. Add the per-property PATCH gates. Update `NodeMapper` + `NodeDetails` + `NodeFilter` (the last receives **no** new filter property, but its `Fields` defaulting will surface the new columns).
 
-**Phase 2 — backfill.** Existing rows get `OwnerId = 0`, `Access = 0` by virtue of `[DefaultValue]`. No explicit `UPDATE` is required — the admin override means Toni still sees everything. If any nodes need to remain publicly readable (e.g. the agent-onboarding doc #9, the API reference #8, the operating contract #190 — DiVoid's documentation public surface), an admin runs `PATCH /access -> Read` on those after deploy. Toni's call which ones to publicize; the design does not pre-list them.
+**Phase 2 — backfill.** Existing rows get `OwnerId = 0`, `Access = 3` (= `Read | Write`) by virtue of `[DefaultValue]`. No explicit `UPDATE` is required — the admin override means Toni still sees everything, and the `Read | Write` default preserves the pre-access-layer behaviour for existing data. If any nodes need to be made private after deploy, an admin sets `PATCH /access -> None` on those explicitly. Toni's call which ones to restrict; the design does not pre-list them.
 
 **Phase 3 — tests + verification.** Tests (per §13) cover owner / admin / stranger behaviour at GET, list, PATCH, content GET/POST, DELETE. Test suite passes both with `Auth:Enabled=true` (per-node gate) and `Auth:Enabled=false` (admin-equivalent fall-through).
 
@@ -558,9 +558,7 @@ Toni's verbatim words:
 
 **Revision 3 — 404 across the board for all access failures (no 403 from per-property gates)**
 
-Toni's verbatim words (on W1, as a principle):
-
-> *"for W1: i want for jenny to treat comment fencing (or such matters in general) more seriously. Its better to deliver it clean right away than to have to task it for cleanup later. Behavior like this leads to technical debts (even though here its just comments), but its the principle which matters, do it right immediately instead of having to invest time later."*
+Revision 3 — 404 across the board for access failures. **Derived consequence of Revision 2**: pushing access checks into the operation's WHERE means 0 affected rows cannot distinguish "node doesn't exist" from "you can't see it." Sarah's original 403-after-read-passes posture required reintroducing the load-then-check smell that Revision 2 eliminated. 404 across the board preserves the existence-leak posture without the second query.
 
 The original design returned `403` for per-property PATCH gate failures (`/access` and `/ownerId`) on the reasoning that the caller had already proven they could see the node (read check passed) so the failure was at the per-property layer — not an existence-leak. With Revision 2's query-level approach, there is no longer a separate read pre-check before write ops — the read and write paths are independent. Returning `403` here would require a separate SELECT to confirm the node exists before returning the property-gate error, reintroducing the load-then-check smell. **404 across the board** is simpler: every node-touching op that fails (for any access reason) returns 404.
 
