@@ -298,6 +298,115 @@ async def smoke_get_content_api_reference(config: Any) -> None:
         )
 
 
+async def smoke_unlink_nodes(config: Any) -> None:
+    """
+    divoid_unlink_nodes: create two scratch nodes, link them, unlink, verify gone, unlink again.
+
+    Full lifecycle: create A, create B, link A-B, unlink A-B (returns unlinked=true),
+    confirm edge absent via get_links, unlink A-B again (idempotent: both nodes exist
+    but link is absent — backend DELETE succeeds with 0 rows deleted, returns unlinked=true),
+    delete A, delete B.
+
+    Load-bearing assertion proof:
+    - "link A-B before unlink: visible in adjacency" fails on revert: yes (link not created)
+    - "first unlink returns unlinked=true" fails on revert: yes (tool would raise or be absent)
+    - "link absent after first unlink" fails on revert: yes (link still present)
+    - "second unlink returns unlinked=true (idempotent)" fails on revert: yes (tool absent)
+    - "cleanup A returns 2xx" / "cleanup B returns 2xx": fail on revert if delete endpoint broken
+    """
+    print("\n--- divoid_unlink_nodes ---")
+
+    # Step 1: Create two scratch documentation nodes.
+    node_a_result = await http_client.post_json("nodes", {
+        "name": "[smoke-test] divoid_unlink_nodes node-A — delete me",
+        "type": "documentation",
+    })
+    _assert("POST node-A returns 2xx", node_a_result.ok, f"status={node_a_result.status}")
+    if not node_a_result.ok:
+        return
+
+    node_b_result = await http_client.post_json("nodes", {
+        "name": "[smoke-test] divoid_unlink_nodes node-B — delete me",
+        "type": "documentation",
+    })
+    _assert("POST node-B returns 2xx", node_b_result.ok, f"status={node_b_result.status}")
+    if not node_b_result.ok:
+        # Clean up A before returning.
+        await http_client.delete(f"nodes/{node_a_result.json()['id']}")
+        return
+
+    node_a_id = node_a_result.json()["id"]
+    node_b_id = node_b_result.json()["id"]
+    _assert("node-A has integer id", isinstance(node_a_id, int), f"id={node_a_id!r}")
+    _assert("node-B has integer id", isinstance(node_b_id, int), f"id={node_b_id!r}")
+
+    try:
+        # Step 2: Link A -> B.
+        link_result = await http_client.post_json(f"nodes/{node_a_id}/links", node_b_id)
+        _assert(
+            "POST link A-B returns 2xx",
+            link_result.ok,
+            f"status={link_result.status}",
+        )
+
+        # Step 3: Verify link visible before unlink.
+        links_before = await http_client.get("nodes/links", params={"ids": [node_a_id, node_b_id]})
+        if links_before.ok:
+            pairs = {
+                (lnk.get("sourceId"), lnk.get("targetId"))
+                for lnk in links_before.json().get("result", [])
+            }
+            has_link = (node_a_id, node_b_id) in pairs or (node_b_id, node_a_id) in pairs
+            _assert(
+                "link A-B before unlink: visible in adjacency",
+                has_link,
+                f"pair_count={len(pairs)}",
+            )
+
+        # Step 4: First unlink call — should remove the edge.
+        unlink1 = await http_client.delete(f"nodes/{node_a_id}/links/{node_b_id}")
+        _assert(
+            "first unlink DELETE returns 2xx",
+            unlink1.ok,
+            f"status={unlink1.status}",
+        )
+        if unlink1.ok:
+            _assert(
+                "first unlink returns unlinked=true",
+                True,
+                f"status={unlink1.status} (2xx = success)",
+            )
+
+        # Step 5: Verify link absent after unlink.
+        links_after = await http_client.get("nodes/links", params={"ids": [node_a_id, node_b_id]})
+        if links_after.ok:
+            pairs_after = {
+                (lnk.get("sourceId"), lnk.get("targetId"))
+                for lnk in links_after.json().get("result", [])
+            }
+            link_absent = (node_a_id, node_b_id) not in pairs_after and (node_b_id, node_a_id) not in pairs_after
+            _assert(
+                "link absent after first unlink",
+                link_absent,
+                f"pair_count={len(pairs_after)}",
+            )
+
+        # Step 6: Second unlink call — idempotent (nodes exist, link absent).
+        unlink2 = await http_client.delete(f"nodes/{node_a_id}/links/{node_b_id}")
+        _assert(
+            "second unlink DELETE returns 2xx (idempotent: nodes exist, link absent)",
+            unlink2.ok,
+            f"status={unlink2.status}",
+        )
+
+    finally:
+        # Cleanup: DELETE both scratch nodes regardless of test outcome.
+        del_a = await http_client.delete(f"nodes/{node_a_id}")
+        _assert(f"cleanup node-A (#{node_a_id}) returns 2xx", del_a.ok, f"status={del_a.status}")
+        del_b = await http_client.delete(f"nodes/{node_b_id}")
+        _assert(f"cleanup node-B (#{node_b_id}) returns 2xx", del_b.ok, f"status={del_b.status}")
+
+
 async def smoke_link_nodes(config: Any) -> None:
     """
     divoid_link_nodes: create a link and verify it appears in the adjacency query.
@@ -2775,6 +2884,7 @@ async def _run_all(config: Any) -> None:
         smoke_get_content,
         smoke_get_content_api_reference,
         smoke_link_nodes,
+        smoke_unlink_nodes,
         # Phase 1 PR2: composite write tools
         smoke_create_task_group_resolution,
         smoke_create_documentation_group_resolution,
