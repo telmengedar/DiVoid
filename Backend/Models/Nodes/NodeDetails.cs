@@ -82,8 +82,10 @@ public class NodeDetails
 
     /// <summary>
     /// access flags controlling what non-owner non-admin callers may do with this node.
+    /// null on <c>POST /api/nodes</c> means "apply server default" (<see cref="NodeAccess.Read"/> | <see cref="NodeAccess.Write"/>).
+    /// always populated in GET and list responses.
     /// </summary>
-    public NodeAccess Access { get; set; }
+    public NodeAccess? Access { get; set; }
 
     /// <summary>
     /// UTC timestamp when this node was created.
