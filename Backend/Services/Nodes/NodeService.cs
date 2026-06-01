@@ -104,7 +104,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         DateTime now = DateTime.UtcNow;
         long nodeId = await database.Insert<Node>()
                               .Columns(n => n.TypeId, n => n.Name, n => n.Status, n => n.X, n => n.Y, n => n.OwnerId, n => n.Access, n => n.Created, n => n.LastUpdate)
-                              .Values(type.Id, node.Name, node.Status, insertX, insertY, callerId, node.Access, now, now)
+                              .Values(type.Id, node.Name, node.Status, insertX, insertY, callerId, node.Access ?? (NodeAccess.Read | NodeAccess.Write), now, now)
                               .ReturnID()
                               .ExecuteAsync(transaction);
 

@@ -556,4 +556,53 @@ public class NodeAccessHttpTests
         Assert.That((int)resp.StatusCode, Is.EqualTo(200),
             "backfilled row with default Access=Read|Write must be visible to any authenticated caller");
     }
+
+    [Test]
+    public async Task Create_AccessOmitted_DefaultsToReadWrite()
+    {
+        long userId = await CreateUserAsync();
+        HttpClient client = AuthClient(userId);
+
+        string json = Json.WriteString(new NodeDetails { Type = "task", Name = "AccessOmittedDefault" }, JsonOptions.RestApi);
+        using StringContent body = new(json, Encoding.UTF8, "application/json");
+        HttpResponseMessage postResp = await client.PostAsync("/api/nodes", body);
+        postResp.EnsureSuccessStatusCode();
+        string postBody = await postResp.Content.ReadAsStringAsync();
+
+        Assert.That(postBody, Does.Contain("\"access\":\"Read, Write\""),
+            "POST response wire shape must contain \"access\":\"Read, Write\" when access is omitted from body");
+
+        NodeDetails created = Json.Read<NodeDetails>(postBody)!;
+        HttpResponseMessage getResp = await GetNodeRawAsync(client, created.Id);
+        getResp.EnsureSuccessStatusCode();
+        string getBody = await getResp.Content.ReadAsStringAsync();
+        NodeDetails fetched = Json.Read<NodeDetails>(getBody)!;
+
+        Assert.That(fetched.Access, Is.EqualTo(NodeAccess.Read | NodeAccess.Write),
+            "GET after omitted-access POST must return Access=Read|Write from database");
+    }
+
+    [Test]
+    public async Task Create_AccessExplicitlyNone_PreservesNone()
+    {
+        long userId = await CreateUserAsync();
+        HttpClient client = AuthClient(userId);
+
+        string json = Json.WriteString(new NodeDetails { Type = "task", Name = "AccessExplicitNone", Access = NodeAccess.None }, JsonOptions.RestApi);
+        using StringContent body = new(json, Encoding.UTF8, "application/json");
+        HttpResponseMessage postResp = await client.PostAsync("/api/nodes", body);
+        postResp.EnsureSuccessStatusCode();
+        string postBody = await postResp.Content.ReadAsStringAsync();
+
+        Assert.That(postBody, Does.Contain("\"access\":\"None\""),
+            "POST response wire shape must contain \"access\":\"None\" when access is explicitly set to None");
+
+        NodeDetails created = Json.Read<NodeDetails>(postBody)!;
+        HttpResponseMessage getResp = await GetNodeRawAsync(client, created.Id);
+        getResp.EnsureSuccessStatusCode();
+        NodeDetails fetched = Json.Read<NodeDetails>(await getResp.Content.ReadAsStringAsync())!;
+
+        Assert.That(fetched.Access, Is.EqualTo(NodeAccess.None),
+            "GET after explicit-None POST must return Access=None from database");
+    }
 }
