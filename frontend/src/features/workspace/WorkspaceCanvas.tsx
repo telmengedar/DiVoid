@@ -49,7 +49,6 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useTheme } from 'next-themes';
-import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import {
@@ -242,7 +241,6 @@ interface WorkspaceCanvasProps {
 
 export function WorkspaceCanvas({ onPeek }: WorkspaceCanvasProps) {
   const { resolvedTheme } = useTheme();
-  const navigate          = useNavigate();
   const client            = useApiClient();
   const moveNode          = useMoveNode();
   const createNode        = useCreateNode();
@@ -493,9 +491,9 @@ export function WorkspaceCanvas({ onPeek }: WorkspaceCanvasProps) {
   const handleNodeCreated = useCallback(
     (id: number) => {
       setCreateDialogOpen(false);
-      navigate(`/nodes/${id}`);
+      onPeek(id);
     },
-    [navigate],
+    [onPeek],
   );
 
   // ── Drag-to-connect (#287) ────────────────────────────────────────────────

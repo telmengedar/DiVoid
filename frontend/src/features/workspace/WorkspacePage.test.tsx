@@ -27,8 +27,9 @@
  */
 
 import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
+import { useEffect, type MutableRefObject } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
@@ -138,6 +139,39 @@ function renderPage() {
       </QueryClientProvider>
     </MemoryRouter>,
   );
+}
+
+/**
+ * LocationCapture — writes the current location to the provided ref on every
+ * render. Pattern from #420 §13.10 — cleaner than navigation spies.
+ */
+function LocationCapture({ locationRef }: { locationRef: MutableRefObject<ReturnType<typeof useLocation> | null> }) {
+  const location = useLocation();
+  useEffect(() => {
+    locationRef.current = location;
+  });
+  return null;
+}
+
+/**
+ * renderPageWithLocationCapture — renders WorkspacePage inside a MemoryRouter
+ * that also mounts a LocationCapture child so tests can assert on the URL
+ * after user interactions.
+ */
+function renderPageWithLocationCapture() {
+  const qc = makeQC();
+  const locationRef: MutableRefObject<ReturnType<typeof useLocation> | null> = { current: null };
+
+  const result = render(
+    <MemoryRouter initialEntries={['/workspace']}>
+      <QueryClientProvider client={qc}>
+        <WorkspacePage />
+        <LocationCapture locationRef={locationRef} />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+
+  return { ...result, locationRef };
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -255,6 +289,86 @@ describe('WorkspacePage — click empty space → CreateNodeDialog', () => {
 
     // The dialog should show "New node" heading.
     expect(screen.getByRole('heading', { name: /new node/i })).toBeInTheDocument();
+  });
+});
+
+describe('WorkspacePage — create node opens peek modal (DiVoid #1606)', () => {
+  it('opens peek modal with the new node id and stays on /workspace after dialog success', async () => {
+    server.use(
+      http.get(`${BASE_URL}/nodes/99`, () =>
+        HttpResponse.json({ id: 99, type: 'task', name: 'New node', status: 'open' }),
+      ),
+      http.get(`${BASE_URL}/nodes/99/content`, () =>
+        new HttpResponse(null, { status: 404 }),
+      ),
+    );
+
+    const { locationRef } = renderPageWithLocationCapture();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('rf__wrapper')).toBeInTheDocument();
+    }, { timeout: 5000 });
+
+    const pane = document.querySelector('.react-flow__pane');
+    if (!pane) return; // xyflow pane not found — DOM not hydrated, skip.
+
+    await act(async () => {
+      fireEvent.click(pane, { clientX: 300, clientY: 400 });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeInTheDocument();
+    }, { timeout: 3000 });
+
+    await act(async () => {
+      fireEvent.change(document.getElementById('create-type')!, { target: { value: 'task' } });
+      fireEvent.change(document.getElementById('create-name')!, { target: { value: 'Peek node' } });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /create/i }));
+    });
+
+    await waitFor(() => {
+      expect(locationRef.current?.search).toContain('peek=99');
+    }, { timeout: 3000 });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-peek-modal')).toBeInTheDocument();
+    }, { timeout: 3000 });
+
+    expect(locationRef.current?.pathname).toBe('/workspace');
+  });
+
+  it('cancel on CreateNodeDialog does not open peek modal', async () => {
+    const { locationRef } = renderPageWithLocationCapture();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('rf__wrapper')).toBeInTheDocument();
+    }, { timeout: 5000 });
+
+    const pane = document.querySelector('.react-flow__pane');
+    if (!pane) return;
+
+    await act(async () => {
+      fireEvent.click(pane, { clientX: 300, clientY: 400 });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeInTheDocument();
+    }, { timeout: 3000 });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    }, { timeout: 3000 });
+
+    expect(locationRef.current?.search ?? '').not.toContain('peek=');
+
+    expect(screen.queryByTestId('workspace-peek-modal')).not.toBeInTheDocument();
   });
 });
 
