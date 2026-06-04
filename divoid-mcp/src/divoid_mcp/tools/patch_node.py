@@ -41,15 +41,16 @@ from ..errors import InvariantViolation, make_error_content, map_http_error, map
 logger = logging.getLogger(__name__)
 
 _TOOL_DESCRIPTION = """\
-Primitive JSON-Patch update for a DiVoid node. Accepts name, status, x, y, access, \
-and owner_id as explicit parameters and composes the PATCH /api/nodes/{id} call \
+Primitive JSON-Patch update for a DiVoid node. Accepts name, status, severity, x, y, \
+access, and owner_id as explicit parameters and composes the PATCH /api/nodes/{id} call \
 internally. At least one field must be provided (invariant guard: no_fields_to_patch). \
 Returns the updated node on success. For status changes that should enforce the \
 type's lifecycle (task/bug), use divoid_set_status instead — this tool accepts \
 any string for status without validation. access accepts int 0-3 or the string \
 representation ("None", "Read", "Write", "Read, Write") and is canonicalized to int \
 before patching. owner_id transfer is admin-only on the server (returns 404 if \
-unauthorized — the MCP does not gate it).\
+unauthorized — the MCP does not gate it). severity accepts a positive integer or null; \
+use replace null as the canonical clear verb (sets severity to NULL on the server).\
 """
 
 _ACCESS_STRING_MAP: dict[str, int] = {
@@ -81,6 +82,8 @@ def _check_invariants(
     y: float | None,
     access: int | str | None,
     owner_id: int | None,
+    severity: int | None = None,
+    clear_severity: bool = False,
 ) -> None:
     """
     Check runtime invariants before making any HTTP call.
@@ -90,10 +93,12 @@ def _check_invariants(
     parameters as plain {"type": "string"} / {"type": "number"} without
     cross-parameter constraints; enforcement is entirely here.
     """
-    if name is None and status is None and x is None and y is None and access is None and owner_id is None:
+    has_severity_op = severity is not None or clear_severity
+    if (name is None and status is None and x is None and y is None
+            and access is None and owner_id is None and not has_severity_op):
         raise InvariantViolation(
             "no_fields_to_patch",
-            "At least one of name, status, x, y, access, or owner_id must be provided. "
+            "At least one of name, status, severity, x, y, access, or owner_id must be provided. "
             "A PATCH with no fields is a no-op.",
         )
     if access is not None:
@@ -109,6 +114,8 @@ async def _execute(
     y: float | None = None,
     access: int | str | None = None,
     owner_id: int | None = None,
+    severity: int | None = None,
+    clear_severity: bool = False,
 ) -> dict[str, Any]:
     """
     Core implementation of divoid_patch_node.
@@ -132,6 +139,10 @@ async def _execute(
         ops.append({"op": "replace", "path": "/access", "value": _canonicalize_access(access)})
     if owner_id is not None:
         ops.append({"op": "replace", "path": "/ownerId", "value": owner_id})
+    if severity is not None:
+        ops.append({"op": "replace", "path": "/severity", "value": severity})
+    elif clear_severity:
+        ops.append({"op": "replace", "path": "/severity", "value": None})
 
     logger.info(
         "divoid_patch_node id=%d ops=%s",
@@ -178,6 +189,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         y: float | None = None,
         access: int | str | None = None,
         owner_id: int | None = None,
+        severity: int | None = None,
+        clear_severity: bool = False,
     ) -> dict[str, Any]:
         """
         Patch one or more properties of a DiVoid node.
@@ -198,13 +211,18 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                     Owner-or-admin gated on the server.
             owner_id: Transfer ownership to this user id. Admin-only on the server —
                       returns 404 if the caller lacks permission.
+            severity: New severity value (positive integer). Optional. To clear
+                      severity (set to NULL), pass clear_severity=True instead —
+                      that is the canonical clear verb per DiVoid #1609 design §13.
+            clear_severity: If True, sets severity to NULL on the server. Mutually
+                            implied exclusive with severity — if both are set, the
+                            explicit severity value wins.
 
-        At least one of name, status, x, y, access, or owner_id must be provided
-        (invariant guard: no_fields_to_patch).
+        At least one of name, status, severity, clear_severity, x, y, access, or
+        owner_id must be provided (invariant guard: no_fields_to_patch).
         """
-        # --- Invariant guard (before any HTTP call) ---
         try:
-            _check_invariants(name, status, x, y, access, owner_id)
+            _check_invariants(name, status, x, y, access, owner_id, severity, clear_severity)
         except InvariantViolation as exc:
             logger.debug("divoid_patch_node invariant violation: %s", exc.code)
             return {"isError": True, "content": make_error_content(exc.code, exc.message)}
@@ -218,4 +236,6 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             y=y,
             access=access,
             owner_id=owner_id,
+            severity=severity,
+            clear_severity=clear_severity,
         )

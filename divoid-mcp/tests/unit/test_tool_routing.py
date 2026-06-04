@@ -1344,3 +1344,389 @@ async def test_create_task_access_string_none_canonicalized(server: FastMCP) -> 
         f"Expected access=0 for string 'None', got: {create_body.get('access')!r}. "
         "Substitution probe: removing _ACCESS_STRING_MAP['None']=0 causes value≠0."
     )
+
+
+@pytest.mark.asyncio
+async def test_get_node_severity_set(server: FastMCP) -> None:
+    """get_node returns severity integer when the server sends it.
+
+    Substitution probe: remove the 'severity' key from get_node.py's return dict —
+    the key is absent from the result and the assertion fails.
+    """
+    node_id = 42
+    server_response = {
+        "id": node_id,
+        "type": "task",
+        "name": "High priority task",
+        "status": "open",
+        "severity": 5,
+        "contentType": None,
+        "x": 0.0,
+        "y": 0.0,
+        "access": "Read, Write",
+        "ownerId": 1,
+        "created": "2026-06-01T10:00:00Z",
+        "lastUpdate": "2026-06-01T10:00:00Z",
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODE_URL.format(id=node_id)).mock(
+            return_value=httpx.Response(200, json=server_response)
+        )
+        result = await _call(server, "divoid_get_node", {"id": node_id})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert "severity" in result, (
+        f"Expected 'severity' key in result, got: {list(result.keys())!r}. "
+        "Substitution probe: removing 'severity' from get_node return dict causes this failure."
+    )
+    assert result.get("severity") == 5, (
+        f"Expected severity=5, got: {result.get('severity')!r}. "
+        "Substitution probe: removing the severity key from the return dict causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_node_severity_null(server: FastMCP) -> None:
+    """get_node returns severity=None when the server omits it.
+
+    Substitution probe: remove the 'severity' key from get_node.py's return dict —
+    the key is absent and the wire-shape regression assertion fails.
+    """
+    node_id = 99
+    server_response = {
+        "id": node_id,
+        "type": "documentation",
+        "name": "Design doc",
+        "status": None,
+        "contentType": "text/markdown",
+        "x": 0.0,
+        "y": 0.0,
+        "access": "Read, Write",
+        "ownerId": 2,
+        "created": "2026-06-01T00:00:00Z",
+        "lastUpdate": "2026-06-01T00:00:00Z",
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODE_URL.format(id=node_id)).mock(
+            return_value=httpx.Response(200, json=server_response)
+        )
+        result = await _call(server, "divoid_get_node", {"id": node_id})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert "severity" in result, (
+        f"Expected 'severity' key present even when null, got keys: {list(result.keys())!r}. "
+        "The key must always be present so callers can distinguish absent from zero."
+    )
+    assert result.get("severity") is None, (
+        f"Expected severity=None for node without severity, got: {result.get('severity')!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_severity_exact_filter_forwarded(server: FastMCP) -> None:
+    """severity=[5] → ?severity=5 appears in the backend URL.
+
+    Substitution probe: remove the severity forwarding block from list_nodes._execute —
+    the severity param is absent from the URL and this test fails.
+    """
+    api_response = {"result": [], "total": 0}
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_list", {"severity": [5]})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url = str(captured_request[0].url)
+    assert "severity=5" in url, (
+        f"Expected 'severity=5' in URL, got: {url!r}. "
+        "Substitution probe: removing the severity forwarding block in list_nodes._execute causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_severity_range_forwarded(server: FastMCP) -> None:
+    """severity_min=2, severity_max=4 → ?severityMin=2&severityMax=4 in backend URL.
+
+    Substitution probe: remove the severityMin/severityMax forwarding from _execute —
+    either or both params are absent and the assertions fail.
+    """
+    api_response = {"result": [], "total": 0}
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_list", {"severity_min": 2, "severity_max": 4})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url = str(captured_request[0].url)
+    assert "severityMin=2" in url, (
+        f"Expected 'severityMin=2' in URL, got: {url!r}. "
+        "Substitution probe: removing severityMin forwarding causes this failure."
+    )
+    assert "severityMax=4" in url, (
+        f"Expected 'severityMax=4' in URL, got: {url!r}. "
+        "Substitution probe: removing severityMax forwarding causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_no_severity_forwarded(server: FastMCP) -> None:
+    """no_severity=True → ?noSeverity=true in backend URL.
+
+    Substitution probe: remove the noSeverity forwarding block from _execute —
+    the param is absent from the URL and this test fails.
+    """
+    api_response = {"result": [], "total": 0}
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_list", {"no_severity": True})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url = str(captured_request[0].url)
+    assert "noSeverity=true" in url, (
+        f"Expected 'noSeverity=true' in URL, got: {url!r}. "
+        "Substitution probe: removing the noSeverity forwarding block in _execute causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_sort_severity_forwarded(server: FastMCP) -> None:
+    """sort='severity' → ?sort=severity in backend URL; invariant guard accepts it.
+
+    Substitution probe: remove 'severity' from _VALID_SORT_FIELDS — the invariant
+    guard rejects it before any HTTP call and this test fails on isError.
+    """
+    api_response = {"result": [], "total": 0}
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_list", {"sort": "severity"})
+
+    assert result.get("isError") is not True, (
+        f"Expected success for sort='severity', got error: {result}. "
+        "Substitution probe: removing 'severity' from _VALID_SORT_FIELDS causes invariant rejection."
+    )
+    assert len(captured_request) == 1
+    url = str(captured_request[0].url)
+    assert "sort=severity" in url, (
+        f"Expected 'sort=severity' in URL, got: {url!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_no_severity_and_severity_mutually_exclusive(server: FastMCP) -> None:
+    """no_severity=True and severity=[5] → invariant guard returns isError before HTTP call."""
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODES_URL).mock(return_value=httpx.Response(200, json={"result": [], "total": 0}))
+        result = await _call(server, "divoid_list", {"no_severity": True, "severity": [5]})
+
+    assert result.get("isError") is True, (
+        f"Expected isError=True for no_severity+severity conflict, got: {result}"
+    )
+    content_text: str = result["content"][0]["text"]
+    assert "mutually_exclusive_noseverity_severity" in content_text, (
+        f"Expected mutually_exclusive_noseverity_severity error code, got: {content_text!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_patch_node_severity_value_appends_op(server: FastMCP) -> None:
+    """severity=5 → JSON-Patch body contains replace /severity op with value 5.
+
+    Substitution probe: remove the severity block from patch_node._execute — the
+    /severity op is absent from the patch body and this test fails.
+    """
+    node_id = 77
+    captured_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_body.append(json.loads(request.content))
+            return httpx.Response(200, json={"id": node_id, "severity": 5})
+
+        mock.patch(_NODE_URL.format(id=node_id)).mock(side_effect=capture)
+        result = await _call(server, "divoid_patch_node", {"id": node_id, "severity": 5})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_body) == 1
+    ops = captured_body[0]
+    sev_ops = [op for op in ops if op.get("path") == "/severity"]
+    assert len(sev_ops) == 1, f"Expected exactly one /severity op, got ops: {ops!r}"
+    assert sev_ops[0]["op"] == "replace", f"Expected op=replace, got: {sev_ops[0]!r}"
+    assert sev_ops[0]["value"] == 5, (
+        f"Expected value=5, got: {sev_ops[0]['value']!r}. "
+        "Substitution probe: removing the severity block from _execute causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_patch_node_clear_severity_sends_null(server: FastMCP) -> None:
+    """clear_severity=True → JSON-Patch body contains replace /severity op with value null.
+
+    Substitution probe: remove the clear_severity branch from patch_node._execute —
+    the /severity op is absent and this test fails.
+    """
+    node_id = 88
+    captured_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_body.append(json.loads(request.content))
+            return httpx.Response(200, json={"id": node_id, "severity": None})
+
+        mock.patch(_NODE_URL.format(id=node_id)).mock(side_effect=capture)
+        result = await _call(server, "divoid_patch_node", {"id": node_id, "clear_severity": True})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_body) == 1
+    ops = captured_body[0]
+    sev_ops = [op for op in ops if op.get("path") == "/severity"]
+    assert len(sev_ops) == 1, f"Expected exactly one /severity op, got ops: {ops!r}"
+    assert sev_ops[0]["op"] == "replace", f"Expected op=replace, got: {sev_ops[0]!r}"
+    assert sev_ops[0]["value"] is None, (
+        f"Expected value=null for clear_severity=True, got: {sev_ops[0]['value']!r}. "
+        "Substitution probe: removing the clear_severity branch from _execute causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_task_severity_in_post_body(server: FastMCP) -> None:
+    """severity=3 on divoid_create_task → POST /nodes body carries severity=3.
+
+    Substitution probe: remove node_body['severity'] = severity from create_task.py —
+    the severity key is absent from the POST body and this test fails.
+    """
+    from divoid_mcp.tools.create_task import register as register_create_task
+
+    ct_server = FastMCP("divoid-mcp-severity-test")
+    ct_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    register_create_task(ct_server)
+
+    task_id = 600
+    captured_create_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture_create(request: httpx.Request) -> httpx.Response:
+            captured_create_body.append(json.loads(request.content))
+            return httpx.Response(201, json={"id": task_id, "name": "urgent task", "type": "task"})
+
+        mock.post(_NODES_URL).mock(side_effect=capture_create)
+        mock.post(f"{_DUMMY_BASE}/nodes/{task_id}/content").mock(
+            return_value=httpx.Response(200, content=b"")
+        )
+        mock.post(f"{_DUMMY_BASE}/nodes/{task_id}/links").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        result = await _call(ct_server, "divoid_create_task", {
+            "name": "urgent task",
+            "tasks_group_id": 314,
+            "content": "This task has explicit severity.",
+            "severity": 3,
+        })
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_create_body) >= 1
+    create_body = captured_create_body[0]
+    assert "severity" in create_body, (
+        f"Expected 'severity' key in POST body, got: {create_body!r}. "
+        "Substitution probe: removing node_body['severity'] in create_task.py causes this failure."
+    )
+    assert create_body["severity"] == 3, (
+        f"Expected severity=3, got: {create_body['severity']!r}."
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_severity_in_result_rows(server: FastMCP) -> None:
+    """search result rows include severity field when present in API response.
+
+    Substitution probe: remove the severity key from the row construction in search.py —
+    severity is absent from the result rows and this test fails.
+    """
+    api_response = {
+        "result": [
+            {
+                "id": 55,
+                "name": "Critical task",
+                "type": "task",
+                "status": "open",
+                "severity": 8,
+                "similarity": 0.90,
+            }
+        ],
+        "total": 1,
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODES_URL).mock(return_value=httpx.Response(200, json=api_response))
+        result = await _call(server, "divoid_search", {"query": "critical task"})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    rows = result.get("results", [])
+    assert len(rows) == 1
+    assert rows[0].get("severity") == 8, (
+        f"Expected severity=8 in search result row, got: {rows[0].get('severity')!r}. "
+        "Substitution probe: removing the severity key from search row construction causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_severity_null_in_result_rows(server: FastMCP) -> None:
+    """search result rows carry severity=None when the node has no severity.
+
+    Substitution probe: remove the severity key from search.py row construction —
+    the key is absent and this wire-shape regression assertion fails.
+    """
+    api_response = {
+        "result": [
+            {
+                "id": 99,
+                "name": "No-severity task",
+                "type": "task",
+                "status": "open",
+                "similarity": 0.75,
+            }
+        ],
+        "total": 1,
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODES_URL).mock(return_value=httpx.Response(200, json=api_response))
+        result = await _call(server, "divoid_search", {"query": "no severity task"})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    rows = result.get("results", [])
+    assert len(rows) == 1
+    assert "severity" in rows[0], (
+        f"Expected 'severity' key present in search result row even when null, "
+        f"got keys: {list(rows[0].keys())!r}"
+    )
+    assert rows[0].get("severity") is None, (
+        f"Expected severity=None for node without severity, got: {rows[0].get('severity')!r}"
+    )

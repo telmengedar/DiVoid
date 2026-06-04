@@ -128,6 +128,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         status: str = "open",
         extra_links: list[int] | None = None,
         access: int | str | None = None,
+        severity: int | None = None,
     ) -> dict[str, Any]:
         """
         Create a task node in DiVoid atomically.
@@ -156,11 +157,13 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                     ("None", "Read", "Write", "Read, Write"). When None, the server's
                     default of Read|Write (3) applies. Use access=0 to create a
                     private node visible only to owner/admin.
+            severity: Optional integer severity for this task. Application scope
+                      fills in meaning (e.g. priority). When absent the server
+                      defaults to NULL (no severity set).
         """
         if extra_links is None:
             extra_links = []
 
-        # --- Invariant guard (before any HTTP call) ---
         try:
             _check_invariants(name, content, status, project_id, tasks_group_id)
         except InvariantViolation as exc:
@@ -172,7 +175,6 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             name[:60], status, project_id, tasks_group_id,
         )
 
-        # --- Step 1: Resolve Tasks group (only when project_id is given) ---
         resolved_group_id: int
         if project_id is not None:
             group_id, err = await _resolve_tasks_group(project_id, config)
@@ -183,8 +185,9 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         else:
             resolved_group_id = tasks_group_id  # type: ignore[assignment]
 
-        # --- Step 2: Create the node ---
         node_body: dict[str, Any] = {"name": name, "type": "task", "status": status}
+        if severity is not None:
+            node_body["severity"] = severity
         if access is not None:
             try:
                 node_body["access"] = _canonicalize_access(access)
