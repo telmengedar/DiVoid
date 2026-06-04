@@ -279,6 +279,13 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                         predicate &= n => n.Status.In(p.Values);
                     }
                     break;
+
+                case "severity":
+                {
+                    int[] severityValues = Array.ConvertAll(p.Values, v => int.Parse(v));
+                    predicate &= n => n.Severity.In(severityValues);
+                    break;
+                }
             }
         }
 
@@ -344,6 +351,35 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         } else if (filter.NoStatus)
         {
             predicate &= n => n.Status == null || n.Status == "";
+        }
+
+        if (filter.Severity?.Length > 0)
+        {
+            PredicateExpression<Node> severityValuePredicate =
+                new PredicateExpression<Node>(n => n.Severity.In(filter.Severity));
+
+            if (filter.NoSeverity)
+            {
+                predicate &= severityValuePredicate | new PredicateExpression<Node>(n => n.Severity == null);
+            } else
+            {
+                predicate &= severityValuePredicate;
+            }
+        } else if (filter.NoSeverity)
+        {
+            predicate &= n => n.Severity == null;
+        }
+
+        if (filter.SeverityMin.HasValue)
+        {
+            int severityMin = filter.SeverityMin.Value;
+            predicate &= n => n.Severity >= severityMin;
+        }
+
+        if (filter.SeverityMax.HasValue)
+        {
+            int severityMax = filter.SeverityMax.Value;
+            predicate &= n => n.Severity <= severityMax;
         }
 
         if (filter.Bounds?.Length == 4)

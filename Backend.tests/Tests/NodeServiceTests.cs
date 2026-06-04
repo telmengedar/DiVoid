@@ -901,6 +901,197 @@ public class NodeServiceTests
     }
 
     // -----------------------------------------------------------------------
+    // ListPaged — severity filter
+    // -----------------------------------------------------------------------
+
+    static async Task<NodeDetails> CreateWithSeverity(NodeService svc, int severity, string type = "task", string name = "Test node")
+    {
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = type, Name = name }, callerId: 0);
+        return await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/severity", Value = severity }], callerId: 0, isAdmin: true, CancellationToken.None);
+    }
+
+    [Test]
+    public async Task ListPaged_FilterBySeverity_SingleValue_ReturnsMatchingNodes()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails sev3 = await CreateWithSeverity(svc, 3, name: "Sev3");
+        NodeDetails sev5 = await CreateWithSeverity(svc, 5, name: "Sev5");
+        await Create(svc, name: "NoSeverity");
+
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { Severity = [3], Count = 100 }, callerId: 0, isAdmin: true);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(sev3.Id));
+            Assert.That(ids, Does.Not.Contain(sev5.Id));
+        });
+    }
+
+    [Test]
+    public async Task ListPaged_FilterBySeverity_MultiValue_InStyle()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails sev1 = await CreateWithSeverity(svc, 1, name: "Sev1");
+        NodeDetails sev3 = await CreateWithSeverity(svc, 3, name: "Sev3");
+        NodeDetails sev5 = await CreateWithSeverity(svc, 5, name: "Sev5");
+
+        long count = await GetPageCount(svc, new NodeFilter { Severity = [1, 3], Count = 100 });
+        Assert.That(count, Is.EqualTo(2));
+    }
+
+    [Test]
+    public async Task ListPaged_FilterBySeverityRange_ReturnsNodesInRange()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails sev1 = await CreateWithSeverity(svc, 1, name: "Sev1");
+        NodeDetails sev3 = await CreateWithSeverity(svc, 3, name: "Sev3");
+        NodeDetails sev5 = await CreateWithSeverity(svc, 5, name: "Sev5");
+        NodeDetails sev7 = await CreateWithSeverity(svc, 7, name: "Sev7");
+
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { SeverityMin = 3, SeverityMax = 5, Count = 100 }, callerId: 0, isAdmin: true);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Not.Contain(sev1.Id));
+            Assert.That(ids, Does.Contain(sev3.Id));
+            Assert.That(ids, Does.Contain(sev5.Id));
+            Assert.That(ids, Does.Not.Contain(sev7.Id));
+        });
+    }
+
+    [Test]
+    public async Task ListPaged_NoSeverityFilter_ReturnsOnlyNoSeverityNodes()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails noSeverity = await Create(svc, name: "NoSeverity");
+        NodeDetails hasSeverity = await CreateWithSeverity(svc, 5, name: "HasSeverity");
+
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { NoSeverity = true, Count = 100 }, callerId: 0, isAdmin: true);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(noSeverity.Id));
+            Assert.That(ids, Does.Not.Contain(hasSeverity.Id));
+        });
+    }
+
+    [Test]
+    public async Task ListPaged_SeverityAndNoSeverity_UsesOrSemantics()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails sev3 = await CreateWithSeverity(svc, 3, name: "Sev3");
+        NodeDetails sev5 = await CreateWithSeverity(svc, 5, name: "Sev5");
+        NodeDetails noSeverity = await Create(svc, name: "NoSeverity");
+
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { Severity = [3], NoSeverity = true, Count = 100 }, callerId: 0, isAdmin: true);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(sev3.Id),      "severity=3 node must be included (matches Severity list)");
+            Assert.That(ids, Does.Contain(noSeverity.Id), "null-severity node must be included (matches NoSeverity)");
+            Assert.That(ids, Does.Not.Contain(sev5.Id),   "severity=5 node must be excluded");
+        });
+    }
+
+    [Test]
+    public async Task ListPaged_FilterBySeverity_ComposesWithType()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails taskSev3 = await CreateWithSeverity(svc, 3, type: "task", name: "TaskSev3");
+        NodeDetails bugSev3 = await CreateWithSeverity(svc, 3, type: "bug", name: "BugSev3");
+        NodeDetails taskSev5 = await CreateWithSeverity(svc, 5, type: "task", name: "TaskSev5");
+
+        long count = await GetPageCount(svc, new NodeFilter { Type = ["task"], Severity = [3], Count = 100 });
+        Assert.That(count, Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task ListPaged_SortBySeverity_Ascending_OrdersCorrectly()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails sev5 = await CreateWithSeverity(svc, 5, name: "Sev5");
+        NodeDetails sev1 = await CreateWithSeverity(svc, 1, name: "Sev1");
+        NodeDetails sev3 = await CreateWithSeverity(svc, 3, name: "Sev3");
+
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter
+        {
+            Id = [sev1.Id, sev3.Id, sev5.Id],
+            Count = 100,
+            Sort = "severity",
+            Descending = false
+        }, callerId: 0, isAdmin: true);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        List<int?> severities = results.Select(n => n.Severity).ToList();
+        Assert.That(severities, Is.EqualTo(severities.OrderBy(s => s).ToList()));
+    }
+
+    [Test]
+    public async Task ListPaged_SortBySeverity_Descending_OrdersCorrectly()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails sev5 = await CreateWithSeverity(svc, 5, name: "SortSev5");
+        NodeDetails sev1 = await CreateWithSeverity(svc, 1, name: "SortSev1");
+        NodeDetails sev3 = await CreateWithSeverity(svc, 3, name: "SortSev3");
+
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter
+        {
+            Id = [sev1.Id, sev3.Id, sev5.Id],
+            Count = 100,
+            Sort = "severity",
+            Descending = true
+        }, callerId: 0, isAdmin: true);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        List<int?> severities = results.Select(n => n.Severity).ToList();
+        Assert.That(severities, Is.EqualTo(severities.OrderByDescending(s => s).ToList()));
+    }
+
+    [Test]
+    public async Task PathQuery_SeverityHop_ReturnsOnlyMatchingSeverity()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails hub = await Create(svc, type: "project", name: "Hub");
+        NodeDetails sev5 = await CreateWithSeverity(svc, 5, type: "task", name: "HopSev5");
+        NodeDetails sev3 = await CreateWithSeverity(svc, 3, type: "task", name: "HopSev3");
+        await svc.LinkNodes(hub.Id, sev5.Id, callerId: 0, isAdmin: true);
+        await svc.LinkNodes(hub.Id, sev3.Id, callerId: 0, isAdmin: true);
+
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPagedByPath(
+            new NodePathFilter { Path = $"[type:project,name:Hub]/[type:task,severity:5]", Count = 100 },
+            callerId: 0, isAdmin: true, CancellationToken.None);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(sev5.Id));
+            Assert.That(ids, Does.Not.Contain(sev3.Id));
+        });
+    }
+
+    // -----------------------------------------------------------------------
     // UploadContent
     // -----------------------------------------------------------------------
 
