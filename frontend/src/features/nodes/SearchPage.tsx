@@ -1,10 +1,11 @@
 /**
  * SearchPage — /search route.
  *
- * Three-tab search surface for the three DiVoid retrieval modes:
+ * Search surface for the DiVoid retrieval modes:
  *  1. Semantic — plain-language query ranked by vector similarity.
  *  2. Linked  — one-hop neighbour walk from a known node id.
  *  3. Path    — graph path traversal using the path expression grammar.
+ *  4. By ID   — open a known node directly by its numeric id.
  *
  * Read-only. No create/edit/delete buttons. All data comes from the backend.
  *
@@ -429,7 +430,7 @@ export function SearchPage() {
         <div>
           <h1 className="text-xl font-semibold">Search</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Three retrieval modes for the DiVoid graph.
+            Retrieval modes for the DiVoid graph.
           </p>
         </div>
 
