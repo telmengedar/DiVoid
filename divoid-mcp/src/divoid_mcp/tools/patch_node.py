@@ -49,8 +49,9 @@ type's lifecycle (task/bug), use divoid_set_status instead — this tool accepts
 any string for status without validation. access accepts int 0-3 or the string \
 representation ("None", "Read", "Write", "Read, Write") and is canonicalized to int \
 before patching. owner_id transfer is admin-only on the server (returns 404 if \
-unauthorized — the MCP does not gate it). severity accepts a positive integer or null; \
-use replace null as the canonical clear verb (sets severity to NULL on the server).\
+unauthorized — the MCP does not gate it). severity accepts a positive integer; \
+to clear severity, pass clear_severity=True — the tool composes a replace /severity null op \
+internally and sends it to the server.\
 """
 
 _ACCESS_STRING_MAP: dict[str, int] = {

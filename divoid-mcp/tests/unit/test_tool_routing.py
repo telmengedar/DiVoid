@@ -1730,3 +1730,99 @@ async def test_search_severity_null_in_result_rows(server: FastMCP) -> None:
     assert rows[0].get("severity") is None, (
         f"Expected severity=None for node without severity, got: {rows[0].get('severity')!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_create_documentation_severity_in_post_body(server: FastMCP) -> None:
+    """severity=5 on divoid_create_documentation -> POST /nodes body carries severity=5.
+
+    Substitution probe: remove node_body['severity'] = severity from create_documentation.py —
+    the severity key is absent from the POST body and this test fails.
+    """
+    from divoid_mcp.tools.create_documentation import register as register_create_documentation
+
+    doc_server = FastMCP("divoid-mcp-severity-doc-test")
+    doc_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    register_create_documentation(doc_server)
+
+    doc_id = 700
+    captured_create_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture_create(request: httpx.Request) -> httpx.Response:
+            captured_create_body.append(json.loads(request.content))
+            return httpx.Response(201, json={"id": doc_id, "name": "severe doc", "type": "documentation"})
+
+        mock.post(_NODES_URL).mock(side_effect=capture_create)
+        mock.post(f"{_DUMMY_BASE}/nodes/{doc_id}/content").mock(
+            return_value=httpx.Response(200, content=b"")
+        )
+        mock.post(f"{_DUMMY_BASE}/nodes/{doc_id}/links").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        result = await _call(doc_server, "divoid_create_documentation", {
+            "name": "severe doc",
+            "docs_group_id": 7,
+            "content": "This documentation node has explicit severity.",
+            "severity": 5,
+        })
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_create_body) >= 1
+    create_body = captured_create_body[0]
+    assert "severity" in create_body, (
+        f"Expected 'severity' key in POST body, got: {create_body!r}. "
+        "Substitution probe: removing node_body['severity'] in create_documentation.py causes this failure."
+    )
+    assert create_body["severity"] == 5, (
+        f"Expected severity=5, got: {create_body['severity']!r}."
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_session_log_severity_in_post_body(server: FastMCP) -> None:
+    """severity=7 on divoid_create_session_log -> POST /nodes body carries severity=7.
+
+    Substitution probe: remove node_body['severity'] = severity from create_session_log.py —
+    the severity key is absent from the POST body and this test fails.
+    """
+    from divoid_mcp.tools.create_session_log import register as register_create_session_log
+
+    sl_server = FastMCP("divoid-mcp-severity-sl-test")
+    sl_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    register_create_session_log(sl_server)
+
+    sl_id = 800
+    captured_create_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture_create(request: httpx.Request) -> httpx.Response:
+            captured_create_body.append(json.loads(request.content))
+            return httpx.Response(201, json={"id": sl_id, "name": "severity arc log", "type": "session-log"})
+
+        mock.post(_NODES_URL).mock(side_effect=capture_create)
+        mock.post(f"{_DUMMY_BASE}/nodes/{sl_id}/content").mock(
+            return_value=httpx.Response(200, content=b"")
+        )
+        mock.post(f"{_DUMMY_BASE}/nodes/{sl_id}/links").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        result = await _call(sl_server, "divoid_create_session_log", {
+            "name": "severity arc log",
+            "docs_group_id": 7,
+            "content": "This session-log node has explicit severity.",
+            "severity": 7,
+        })
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_create_body) >= 1
+    create_body = captured_create_body[0]
+    assert "severity" in create_body, (
+        f"Expected 'severity' key in POST body, got: {create_body!r}. "
+        "Substitution probe: removing node_body['severity'] in create_session_log.py causes this failure."
+    )
+    assert create_body["severity"] == 7, (
+        f"Expected severity=7, got: {create_body['severity']!r}."
+    )
