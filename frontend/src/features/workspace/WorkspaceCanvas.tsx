@@ -49,7 +49,6 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useTheme } from 'next-themes';
-// react-router-dom navigate no longer needed here — peek opens in modal (DiVoid #1606)
 import { toast } from 'sonner';
 
 import {
@@ -489,8 +488,6 @@ export function WorkspaceCanvas({ onPeek }: WorkspaceCanvasProps) {
   );
 
   // ── After create-node from dialog ─────────────────────────────────────────
-  // Opens the newly-created node in the peek modal rather than navigating away,
-  // so the user stays on /workspace. See DiVoid #1606.
   const handleNodeCreated = useCallback(
     (id: number) => {
       setCreateDialogOpen(false);
