@@ -173,6 +173,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                 "type": n.get("type"),
                 "name": n.get("name"),
                 "status": n.get("status"),
+                "severity": n.get("severity"),
                 "similarity": n.get("similarity"),
             }
             if "contentType" in n:

@@ -102,6 +102,7 @@ async def _execute(
     docs_group_id: int | None = None,
     extra_links: list[int] | None = None,
     access: int | str | None = None,
+    severity: int | None = None,
 ) -> dict[str, Any]:
     """
     Core implementation of divoid_create_session_log.
@@ -121,7 +122,6 @@ async def _execute(
         name[:60], project_id, docs_group_id,
     )
 
-    # --- Step 1: Resolve Docs group (only when project_id is given) ---
     resolved_group_id: int
     if project_id is not None:
         group_id, err = await resolve_group(project_id, "Docs", config)
@@ -132,9 +132,9 @@ async def _execute(
     else:
         resolved_group_id = docs_group_id  # type: ignore[assignment]
 
-    # --- Step 2: Create the node ---
-    # session-log nodes have null status — do not pass status.
     node_body: dict[str, Any] = {"name": name, "type": "session-log"}
+    if severity is not None:
+        node_body["severity"] = severity
     if access is not None:
         node_body["access"] = _canonicalize_access(access)
     try:
@@ -292,6 +292,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         docs_group_id: int | None = None,
         extra_links: list[int] | None = None,
         access: int | str | None = None,
+        severity: int | None = None,
     ) -> dict[str, Any]:
         """
         Create a session-log node in DiVoid atomically.
@@ -321,8 +322,9 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                     ("None", "Read", "Write", "Read, Write"). When None, the server's
                     default of Read|Write (3) applies. Use access=0 to create a
                     private node visible only to owner/admin.
+            severity: Optional integer severity for this node. When absent the server
+                      defaults to NULL (no severity set).
         """
-        # --- Invariant guard (before any HTTP call) ---
         try:
             _check_invariants(name, content, project_id, docs_group_id)
         except InvariantViolation as exc:
@@ -344,4 +346,5 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             docs_group_id=docs_group_id,
             extra_links=extra_links,
             access=access,
+            severity=severity,
         )

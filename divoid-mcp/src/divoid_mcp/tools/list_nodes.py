@@ -9,8 +9,9 @@ topology (type, status, linkedto, path). Use divoid_search for semantic /
 Invariants enforced at runtime (not expressible in JSON Schema / FastMCP):
   - path and linkedto are mutually exclusive (path subsumes linkedto per #8).
   - nostatus=True and a non-empty status[] are mutually exclusive.
+  - no_severity=True and a non-empty severity[] are mutually exclusive.
   - bounds must have exactly 4 elements if provided.
-  - sort must be one of: id, type, name, status.
+  - sort must be one of: id, type, name, status, severity.
   - count is clamped silently to [1, 500].
 
 Unknown field names in the fields parameter are passed through to the API,
@@ -38,7 +39,7 @@ from ..errors import InvariantViolation, make_error_content, map_http_error, map
 
 logger = logging.getLogger(__name__)
 
-_VALID_SORT_FIELDS = frozenset({"id", "type", "name", "status"})
+_VALID_SORT_FIELDS = frozenset({"id", "type", "name", "status", "severity"})
 
 _TOOL_DESCRIPTION = """\
 Structural listing of DiVoid nodes. Use this when you know the topology — type, \
@@ -89,7 +90,17 @@ FIELDS: default projection is [id, type, name, status, contentType]. Add x or y 
   Set include_links=True to fetch the direct neighbor ids inline on each row — opt-in for
   graph-walking / fan-out-avoidance flows; costs bandwidth proportional to adjacency
   density; saves N follow-up divoid_get_links calls when you need the full adjacency of a
-  page of nodes.\
+  page of nodes.
+
+SEVERITY FILTERS:
+  - severity=[3,5]: exact match — return only nodes whose severity is 3 or 5.
+    Mutually exclusive with no_severity (invariant guard).
+  - severity_min=2, severity_max=4: inclusive range filter — [2, 3, 4].
+    Either bound may be omitted.
+  - no_severity=true: return only nodes with no severity set (NULL). Mutually
+    exclusive with severity[].
+  - sort="severity": order by severity ascending (combine with descending=true for DESC).
+    Each result row always includes severity: int | null.\
 """
 
 
@@ -101,6 +112,10 @@ def _check_invariants(
     bounds: list[float] | None,
     sort: str | None,
     fields: list[str] | None,
+    no_severity: bool = False,
+    severity: list[int] | None = None,
+    severity_min: int | None = None,
+    severity_max: int | None = None,
 ) -> None:
     """
     Enforce runtime invariants before making any HTTP call.
@@ -139,6 +154,13 @@ def _check_invariants(
             f"sort must be one of: {', '.join(sorted(_VALID_SORT_FIELDS))}. Got {sort!r}.",
         )
 
+    if no_severity and severity:
+        raise InvariantViolation(
+            "mutually_exclusive_noseverity_severity",
+            "no_severity=true returns nodes with no severity set; providing severity[] "
+            "simultaneously is contradictory. Provide one or the other.",
+        )
+
 
 _DEFAULT_FIELDS = ["id", "type", "name", "status", "contentType"]
 
@@ -164,6 +186,10 @@ async def _execute(
     created_to: str | None = None,
     updated_from: str | None = None,
     updated_to: str | None = None,
+    severity: list[int] | None = None,
+    severity_min: int | None = None,
+    severity_max: int | None = None,
+    no_severity: bool = False,
 ) -> dict[str, Any]:
     """
     Core implementation of divoid_list.
@@ -174,10 +200,8 @@ async def _execute(
 
     Callers must run _check_invariants() before calling this function.
     """
-    # Silently clamp count to [1, 500].
     count = max(1, min(500, count))
 
-    # Resolve the effective fields list when include_content and/or include_links requested.
     if include_content or include_links:
         base_fields = list(fields) if fields is not None else list(_DEFAULT_FIELDS)
         if include_content and "content" not in base_fields:
@@ -220,6 +244,14 @@ async def _execute(
         params["UpdatedFrom"] = updated_from
     if updated_to is not None:
         params["UpdatedTo"] = updated_to
+    if severity:
+        params["severity"] = severity
+    if severity_min is not None:
+        params["severityMin"] = severity_min
+    if severity_max is not None:
+        params["severityMax"] = severity_max
+    if no_severity:
+        params["noSeverity"] = "true"
 
     logger.info(
         "divoid_list path=%r linkedto=%s type=%s status=%s count=%d",
@@ -280,6 +312,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         created_to: str | None = None,
         updated_from: str | None = None,
         updated_to: str | None = None,
+        severity: list[int] | None = None,
+        severity_min: int | None = None,
+        severity_max: int | None = None,
+        no_severity: bool = False,
     ) -> dict[str, Any]:
         """
         List DiVoid nodes with structural filters, pagination, and optional path-query.
@@ -305,7 +341,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             count: Page size. Default 20, max 500. Silently clamped; no error on out-of-range.
             continue_cursor: Pagination cursor from a previous response's 'continue' field.
                              Null or absent = first page.
-            sort: Sort field: 'id', 'type', 'name', or 'status'. Validated by invariant guard.
+            sort: Sort field: 'id', 'type', 'name', 'status', or 'severity'. Validated by invariant guard.
             descending: If true, sort descending. Default false (ascending).
             fields: Fields to include in each result node. Default: id, type, name, status,
                     contentType. Also available: x, y.
@@ -327,8 +363,15 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                           after this timestamp (inclusive). Forwarded as-is to the backend.
             updated_to: ISO 8601 datetime string. Return only nodes last updated before this
                         timestamp (exclusive). Forwarded as-is to the backend.
+            severity: Filter by exact severity value(s). Multiple values = OR. Mutually
+                      exclusive with no_severity (invariant guard). Forwarded as ?severity=.
+            severity_min: Inclusive lower bound on severity. May be combined with severity_max.
+                          Forwarded as ?severityMin=.
+            severity_max: Inclusive upper bound on severity. May be combined with severity_min.
+                          Forwarded as ?severityMax=.
+            no_severity: If true, return only nodes with no severity set (NULL). Mutually
+                         exclusive with severity[] (invariant guard). Forwarded as ?noSeverity=true.
         """
-        # --- Invariant guard (before any HTTP call) ---
         try:
             _check_invariants(
                 path=path,
@@ -338,6 +381,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                 bounds=bounds,
                 sort=sort,
                 fields=fields,
+                no_severity=no_severity,
+                severity=severity,
+                severity_min=severity_min,
+                severity_max=severity_max,
             )
         except InvariantViolation as exc:
             logger.debug("divoid_list invariant violation: %s", exc.code)
@@ -364,4 +411,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             created_to=created_to,
             updated_from=updated_from,
             updated_to=updated_to,
+            severity=severity,
+            severity_min=severity_min,
+            severity_max=severity_max,
+            no_severity=no_severity,
         )
