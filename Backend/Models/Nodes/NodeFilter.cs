@@ -39,6 +39,26 @@ public class NodeFilter : ListFilter
     public bool NoStatus { get; set; }
 
     /// <summary>
+    /// severity values to filter for; matches nodes whose severity is in this list
+    /// </summary>
+    public int[] Severity { get; set; }
+
+    /// <summary>
+    /// inclusive lower bound on <see cref="Node.Severity"/>: only nodes with severity &gt;= this value are returned
+    /// </summary>
+    public int? SeverityMin { get; set; }
+
+    /// <summary>
+    /// inclusive upper bound on <see cref="Node.Severity"/>: only nodes with severity &lt;= this value are returned
+    /// </summary>
+    public int? SeverityMax { get; set; }
+
+    /// <summary>
+    /// when true, only return nodes with no severity set (null)
+    /// </summary>
+    public bool NoSeverity { get; set; }
+
+    /// <summary>
     /// minimum cosine similarity floor (0–1) for semantic search results.
     /// only meaningful when <see cref="Pooshit.AspNetCore.Services.Data.ListFilter.Query"/> is also supplied;
     /// supplying <c>minSimilarity</c> without <c>query</c> returns HTTP 400.

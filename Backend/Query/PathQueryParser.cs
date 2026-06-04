@@ -9,7 +9,7 @@ namespace Backend.Query;
 ///   segment     = "[" predicate ( "," predicate )* "]"
 ///               | "[" "]"
 ///   predicate   = key ":" valueList
-///   key         = "id" | "type" | "name" | "status"
+///   key         = "id" | "type" | "name" | "status" | "severity"
 ///   valueList   = value ( "|" value )*
 ///   value       = bareToken | quotedString
 ///   bareToken   = one-or-more chars excluding  , ] | : / [ " whitespace
@@ -26,7 +26,7 @@ namespace Backend.Query;
 /// </summary>
 public static class PathQueryParser
 {
-    static readonly HashSet<string> AllowedKeys = ["id", "type", "name", "status"];
+    static readonly HashSet<string> AllowedKeys = ["id", "type", "name", "status", "severity"];
 
     /// <summary>
     /// parses <paramref name="input"/> and returns a <see cref="PathQuery"/>.
@@ -130,7 +130,7 @@ public static class PathQueryParser
 
             if (!AllowedKeys.Contains(key))
                 throw new PathQueryParseException(keyStart,
-                    $"unsupported key '{key}' (allowed: id, type, name, status)");
+                    $"unsupported key '{key}' (allowed: id, type, name, status, severity)");
 
             Expect(':');
 
