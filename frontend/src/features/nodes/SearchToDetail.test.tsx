@@ -43,8 +43,6 @@ import { setupServer } from 'msw/node';
 import { BASE_URL, sampleNode, samplePage, semanticPage } from '@/test/msw/handlers';
 import { Toaster } from 'sonner';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const server = setupServer(
   http.get(`${BASE_URL}/users/me`, () =>
     HttpResponse.json({
@@ -82,8 +80,6 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 // Mock useAuth at module level — we can't start a real Keycloak in jsdom.
 // IMPORTANT: unlike the unit tests, we do NOT mock sonner here so that render-body
@@ -138,8 +134,6 @@ vi.mock('./ContentUploadZone', () => ({
   ContentUploadZone: () => null,
 }));
 
-// ─── Import lazily (mocks must be registered first) ───────────────────────────
-
 let SearchPage: typeof import('./SearchPage').SearchPage;
 let NodeDetailPage: typeof import('./NodeDetailPage').NodeDetailPage;
 
@@ -151,8 +145,6 @@ beforeAll(async () => {
   SearchPage = search.SearchPage;
   NodeDetailPage = detail.NodeDetailPage;
 });
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function renderApp(initialPath: string) {
   const qc = new QueryClient({
@@ -175,8 +167,6 @@ function renderApp(initialPath: string) {
     </MemoryRouter>,
   );
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('SearchPage → NodeDetailPage navigation — no render loop', () => {
   it('navigates from search results to node detail without infinite render loop', async () => {

@@ -15,8 +15,6 @@ import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { BASE_URL, sampleNode } from '@/test/msw/handlers';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const server = setupServer(
   http.get(`${BASE_URL}/nodes/:id`, ({ params }) => {
     const id = parseInt(params.id as string, 10);
@@ -28,8 +26,6 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
@@ -65,16 +61,12 @@ vi.mock('@/lib/constants', () => ({
   },
 }));
 
-// ─── Wrapper ──────────────────────────────────────────────────────────────────
-
 function createWrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
   );
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('useNode', () => {
   it('returns node metadata on happy path', async () => {

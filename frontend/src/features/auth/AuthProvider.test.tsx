@@ -14,8 +14,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render } from '@testing-library/react';
 import { AuthProvider } from './AuthProvider';
 
-// ─── Mocks ─────────────────────────────────────────────────────────────────────
-
 // Mock constants to supply deterministic authority/client_id values so we can
 // compute the exact user-store key oidc-client-ts would write.
 vi.mock('@/lib/constants', () => ({
@@ -65,8 +63,6 @@ vi.mock('react-oidc-context', () => ({
   })),
 }));
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────
-
 // The key pattern oidc-client-ts uses for the User object in userStore:
 // `user:<authority>:<client_id>` (see UserManager._userStoreKey in source).
 const OIDC_USER_KEY_PATTERN = /^user:/;
@@ -78,8 +74,6 @@ function sessionStorageHasUserKey(): boolean {
   }
   return false;
 }
-
-// ─── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('AuthProvider_TokensNotPersisted_AcrossReload', () => {
   beforeEach(() => {

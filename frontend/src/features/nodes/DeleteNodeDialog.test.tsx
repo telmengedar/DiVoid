@@ -22,8 +22,6 @@ import { setupServer } from 'msw/node';
 import { BASE_URL, sampleNode } from '@/test/msw/handlers';
 import { DeleteNodeDialog } from './DeleteNodeDialog';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const server = setupServer(
   http.delete(`${BASE_URL}/nodes/:id`, () => new HttpResponse(null, { status: 204 })),
 );
@@ -31,8 +29,6 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
@@ -68,8 +64,6 @@ vi.mock('@/lib/constants', () => ({
 
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
-// ─── Wrapper factory ──────────────────────────────────────────────────────────
-
 function Wrapper({ children }: { children: ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return (
@@ -78,8 +72,6 @@ function Wrapper({ children }: { children: ReactNode }) {
     </QueryClientProvider>
   );
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('DeleteNodeDialog', () => {
   it('renders the confirmation prompt with node name', () => {

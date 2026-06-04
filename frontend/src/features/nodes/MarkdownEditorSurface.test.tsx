@@ -22,8 +22,6 @@ import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { BASE_URL } from '@/test/msw/handlers';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const server = setupServer(
   http.get(`${BASE_URL}/users/me`, () =>
     HttpResponse.json({
@@ -37,8 +35,6 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
@@ -74,8 +70,6 @@ vi.mock('@/lib/constants', () => ({
 
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
-// ─── Import lazily so mocks are registered first ──────────────────────────────
-
 let MarkdownEditorSurface: typeof import('./MarkdownEditorSurface').MarkdownEditorSurface;
 let isTextShaped: typeof import('./MarkdownEditorSurface').isTextShaped;
 
@@ -84,8 +78,6 @@ beforeAll(async () => {
   MarkdownEditorSurface = mod.MarkdownEditorSurface;
   isTextShaped = mod.isTextShaped;
 });
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function renderEditor(nodeId = 42, initialContent = '') {
   const qc = new QueryClient({
@@ -97,8 +89,6 @@ function renderEditor(nodeId = 42, initialContent = '') {
     </QueryClientProvider>,
   );
 }
-
-// ─── isTextShaped unit tests ──────────────────────────────────────────────────
 
 describe('isTextShaped', () => {
   it('returns true for text/markdown', () => {
@@ -130,8 +120,6 @@ describe('isTextShaped', () => {
   });
 });
 
-// ─── Editor mount and pre-population ─────────────────────────────────────────
-
 describe('MarkdownEditorSurface — pre-population', () => {
   it('renders the Write and Preview tabs', () => {
     renderEditor(42, '');
@@ -160,8 +148,6 @@ describe('MarkdownEditorSurface — pre-population', () => {
     expect(textarea).toBeInTheDocument();
   });
 });
-
-// ─── Preview tab ─────────────────────────────────────────────────────────────
 
 describe('MarkdownEditorSurface — preview tab', () => {
   it('shows "Nothing to preview" when draft is empty', async () => {
@@ -199,8 +185,6 @@ describe('MarkdownEditorSurface — preview tab', () => {
   });
 });
 
-// ─── Save path (load-bearing) ─────────────────────────────────────────────────
-//
 // This is the load-bearing test for the save-on-click logic (DiVoid #275).
 //
 // The real footgun shape being guarded against:

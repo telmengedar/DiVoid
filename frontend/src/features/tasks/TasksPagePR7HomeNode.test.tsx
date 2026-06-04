@@ -45,8 +45,6 @@ import { setupServer } from 'msw/node';
 import { BASE_URL } from '@/test/msw/handlers';
 import type { Page, NodeDetails } from '@/types/divoid';
 
-// ─── Module mocks (hoisted before all imports by vitest) ──────────────────────
-
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
     isAuthenticated: true,
@@ -94,8 +92,6 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: v
  * they do not call useWhoami at all.
  */
 vi.mock('@/features/auth/useWhoami');
-
-// ─── MSW server ───────────────────────────────────────────────────────────────
 
 const pooshitOrgFixtures: Page<NodeDetails> = {
   result: [
@@ -185,8 +181,6 @@ afterEach(() => {
 });
 afterAll(() => server.close());
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 function makeQC() {
   return new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 }
@@ -223,8 +217,6 @@ function makeWhoamiReturn(homeNodeId: number | null) {
   };
 }
 
-// ─── Lazy imports (mocks must be registered before import) ────────────────────
-
 let TasksPageComponent: typeof import('./TasksPage').TasksPage;
 let OrgPillRowComponent: typeof import('./OrgPillRow').OrgPillRow;
 let ProjectPillRowComponent: typeof import('./ProjectPillRow').ProjectPillRow;
@@ -245,8 +237,6 @@ beforeAll(async () => {
   // Set default: homeNodeId=null.
   useWhoamiMock.mockReturnValue(makeWhoamiReturn(null) as ReturnType<typeof whoamiMod.useWhoami>);
 });
-
-// ─── Test 1: OrgPillRow with homeNodeId set queries linkedto=<homeId> ─────────
 
 describe('Test 1 — OrgPillRow with homeNodeId set queries ?linkedto=<homeId>&type=organization', () => {
   it('positive: homeNodeId=10 → request URL contains linkedto=10 and type=organization', async () => {
@@ -299,8 +289,6 @@ describe('Test 1 — OrgPillRow with homeNodeId set queries ?linkedto=<homeId>&t
     expect(linkedtoRequestMade).toBe(false);
   });
 });
-
-// ─── Test 2: OrgPillRow with homeNodeId=null falls back to unfiltered ──────────
 
 describe('Test 2 — OrgPillRow with homeNodeId=null falls back to unfiltered query', () => {
   it('positive: homeNodeId=null → request URL has no linkedto param', async () => {
@@ -355,8 +343,6 @@ describe('Test 2 — OrgPillRow with homeNodeId=null falls back to unfiltered qu
   });
 });
 
-// ─── Test 3: ProjectPillRow intersects against homeProjectIds ─────────────────
-
 describe('Test 3 — ProjectPillRow intersects rendered pills against homeProjectIds', () => {
   it('positive: homeProjectIds=Set([3,4]), org returns [3,4,5] → only pills 3 and 4 render', async () => {
     server.use(
@@ -409,8 +395,6 @@ describe('Test 3 — ProjectPillRow intersects rendered pills against homeProjec
   });
 });
 
-// ─── Test 4: ProjectPillRow with homeProjectIds=null renders all org projects ──
-
 describe('Test 4 — ProjectPillRow with homeProjectIds=null renders all org projects', () => {
   it('positive: homeProjectIds=null → all three org projects render', async () => {
     server.use(
@@ -462,8 +446,6 @@ describe('Test 4 — ProjectPillRow with homeProjectIds=null renders all org pro
   });
 });
 
-// ─── Test 5: TasksPage auto-redirects to first home project ──────────────────
-
 describe('Test 5 — TasksPage auto-redirects to first home project when /tasks + homeNodeId set', () => {
   /**
    * Positive: /tasks + homeNodeId=10 (via useWhoami mock) + home-projects=[3,4].
@@ -514,8 +496,6 @@ describe('Test 5 — TasksPage auto-redirects to first home project when /tasks 
     expect(locationSnapshot.value).toBe('/tasks');
   });
 });
-
-// ─── Test 6: No auto-redirect when homeNodeId=null ────────────────────────────
 
 describe('Test 6 — No auto-redirect when homeNodeId=null', () => {
   it('positive: homeNodeId=null → URL stays /tasks and empty-state is shown', async () => {
@@ -570,8 +550,6 @@ describe('Test 6 — No auto-redirect when homeNodeId=null', () => {
     expect(linkedtoOrgRequestMade).toBe(false);
   });
 });
-
-// ─── Test 7: No auto-redirect when home-projects is empty ────────────────────
 
 describe('Test 7 — No auto-redirect when home-projects is empty', () => {
   it('positive: homeNodeId=10 + empty home-projects → URL stays /tasks', async () => {
@@ -635,8 +613,6 @@ describe('Test 7 — No auto-redirect when home-projects is empty', () => {
     }, { timeout: 3000 });
   });
 });
-
-// ─── Test 8: No auto-redirect when projectId already in URL ─────────────────
 
 describe('Test 8 — No auto-redirect when projectId already in URL', () => {
   /**

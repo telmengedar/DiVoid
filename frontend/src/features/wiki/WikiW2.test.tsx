@@ -29,8 +29,6 @@ import { setupServer } from 'msw/node';
 import { BASE_URL } from '@/test/msw/handlers';
 import type { Page, NodeDetails } from '@/types/divoid';
 
-// ─── Module mocks (hoisted) ───────────────────────────────────────────────────
-
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
     isAuthenticated: true,
@@ -76,8 +74,6 @@ vi.mock('sonner', () => ({
 
 vi.mock('@/features/auth/useWhoami');
 
-// ─── Fixtures ─────────────────────────────────────────────────────────────────
-
 const nodeWithMarkdown: NodeDetails = {
   id: 42,
   type: 'documentation',
@@ -95,8 +91,6 @@ const nodeWithoutContent: NodeDetails = {
 };
 
 const emptyPage: Page<NodeDetails> = { result: [], total: 0 };
-
-// ─── MSW server ───────────────────────────────────────────────────────────────
 
 const server = setupServer(
   http.get(`${BASE_URL}/users/me`, () =>
@@ -131,8 +125,6 @@ afterEach(() => {
   sessionStorage.clear();
 });
 afterAll(() => server.close());
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeQC() {
   return new QueryClient({
@@ -184,8 +176,6 @@ beforeAll(async () => {
   WikiLayoutComponent = wikiLayoutMod.WikiLayout;
 });
 
-// ─── W2-Test 1 — Edit-and-save round-trip ─────────────────────────────────────
-//
 // This test pins TWO things:
 //
 // 1. The mutation fires: remove `mutation.mutate(...)` from handleSave →
@@ -311,8 +301,6 @@ describe('W2-Test 1 — edit-and-save round-trip', () => {
   });
 });
 
-// ─── W2-Test 2 — Add-markdown-to-empty ────────────────────────────────────────
-//
 // Substitution failure: remove the `mutation.mutate(...)` call from WikiMarkdownEditor
 // handleSave when mounted from compose mode → POST /content never fires →
 // capturedBody stays '' → `expect(capturedBody).toContain('My new content')` fails with:
@@ -370,8 +358,6 @@ describe('W2-Test 2 — add-markdown-to-empty', () => {
   });
 });
 
-// ─── W2-Test 3 — Upload-file-to-empty ─────────────────────────────────────────
-//
 // Substitution failure: bypass the upload mutate call in ContentUploadZone →
 // POST /content never fires → capturedMime stays '' →
 // `expect(capturedMime).toContain('text/plain')` fails with:
@@ -425,8 +411,6 @@ describe('W2-Test 3 — upload-file-to-empty', () => {
   });
 });
 
-// ─── W2-Test 4 — Empty-state buttons hidden when contentType IS set ────────────
-//
 // Substitution failure: remove the `!node.contentType` guard around the
 // empty-state block → "Add markdown" and "Upload file" render alongside the
 // markdown content →
@@ -454,8 +438,6 @@ describe('W2-Test 4 — empty-state buttons absent when contentType is set', () 
   });
 });
 
-// ─── W2-Test 5 — Add-child-page flow ─────────────────────────────────────────
-//
 // Substitution failure: remove the `useLinkNodes` mutate call from handleChildCreated
 // in WikiLayout → create POST fires but link POST does NOT →
 // capturedLinkTargetId stays 0 →
@@ -536,8 +518,6 @@ describe('W2-Test 5 — add-child-page flow', () => {
   });
 });
 
-// ─── W2-Test 6 — Add-child-page bug #317 graceful path ───────────────────────
-//
 // Substitution failure: remove the `isAlreadyLinked` check and navigation
 // in the onError branch of WikiLayout.handleChildCreated →
 // when MSW returns 500 "Nodes already linked", navigation is suppressed →
@@ -603,8 +583,6 @@ describe('W2-Test 6 — add-child-page bug #317 graceful path', () => {
   });
 });
 
-// ─── W2-Test 7 — Rename flow ──────────────────────────────────────────────────
-//
 // Substitution failure: remove the `wiki-rename-btn` button or remove its
 // onClick handler opening the dialog → clicking "Rename" does nothing →
 // the EditNodeDialog never mounts → PATCH /nodes/42 never fires →
@@ -676,8 +654,6 @@ describe('W2-Test 7 — rename flow', () => {
   });
 });
 
-// ─── W2-Test 8 — Markdown editor textarea has theme-aware classes ─────────────
-//
 // Substitution failure: remove any one of the `dark:` classes from the
 // textarea's className in WikiMarkdownEditor →
 // `expect(textarea).toHaveClass('dark:text-foreground')` fails with:

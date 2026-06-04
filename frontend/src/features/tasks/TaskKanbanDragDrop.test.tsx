@@ -37,8 +37,6 @@ import { BASE_URL } from '@/test/msw/handlers';
 import type { Page, NodeDetails } from '@/types/divoid';
 import React from 'react';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const taskFixtures: Page<NodeDetails> = {
   result: [
     { id: 30, type: 'task', name: 'Fix login', status: 'open' },
@@ -83,8 +81,6 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
@@ -133,8 +129,6 @@ vi.mock('sonner', () => ({
     info: vi.fn(),
   },
 }));
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeQC() {
   return new QueryClient({
@@ -270,8 +264,6 @@ function mockElementRect(
   };
 }
 
-// ─── Lazy imports ─────────────────────────────────────────────────────────────
-
 let TaskListView: typeof import('./TaskListView').TaskListView;
 
 beforeAll(async () => {
@@ -279,8 +271,6 @@ beforeAll(async () => {
   TaskListView = taskMod.TaskListView;
 });
 
-// ─── Test 11: Fix A — column header is a valid drop target ───────────────────
-//
 // Root cause: setNodeRef was on the inner drop-zone div (y=40..200), not the
 // outer column wrapper (y=0..200). Releasing over the header (y=0..40) meant
 // the pointer was outside the registered droppable rect → over===null → silent bail.
@@ -391,8 +381,6 @@ describe('Test 11 — Fix A: column header drop triggers PATCH', () => {
   });
 });
 
-// ─── Test 12: Fix B — dropped outside column shows toast.warning ─────────────
-//
 // Root cause: when over===null (pointer released outside any droppable rect),
 // handleDragEnd silently returned. No toast, no log. Users saw the card snap
 // back with no explanation.
@@ -507,8 +495,6 @@ describe('Test 12 — Fix B: missed drop shows toast.warning', () => {
   });
 });
 
-// ─── Test 13: Fix C — pointerWithin returns null between columns ──────────────
-//
 // Root cause: closestCenter picks the nearest droppable even when the cursor
 // is between columns, returning a column id instead of null. With pointerWithin,
 // a pointer released in the gap (not inside any droppable rect) returns null,
@@ -564,7 +550,6 @@ describe('Test 13 — Fix C: pointerWithin returns null in column gap', () => {
     // Pointer at x=290, y=100 — in the gap between the two columns.
     const gapPointer = { x: 290, y: 100 };
 
-    // --- pointerWithin: gap pointer → no collision ---
     const pwResult = pointerWithinFn({
       droppableContainers,
       droppableRects,

@@ -36,7 +36,6 @@ import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { BASE_URL } from '@/test/msw/handlers';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
 // Minimal surface: whoami (to gate the "New node" button + ensure write perms
 // so canWrite=true, maximising dialog mount surface) + empty node list.
 
@@ -60,7 +59,6 @@ beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 // NOTE: CreateNodeDialog is intentionally NOT mocked here.
 // The whole point of this test is that the real dialog mounts and
 // does NOT trigger an infinite render loop.
@@ -99,16 +97,12 @@ vi.mock('@/lib/constants', () => ({
 
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
-// ─── Import after mocks ───────────────────────────────────────────────────────
-
 let SearchPage: typeof import('./SearchPage').SearchPage;
 
 beforeAll(async () => {
   const mod = await import('./SearchPage');
   SearchPage = mod.SearchPage;
 });
-
-// ─── Helper ───────────────────────────────────────────────────────────────────
 
 function renderPage() {
   const qc = new QueryClient({
@@ -122,8 +116,6 @@ function renderPage() {
     </MemoryRouter>,
   );
 }
-
-// ─── Test ─────────────────────────────────────────────────────────────────────
 
 describe('SearchPage — render loop regression (real CreateNodeDialog)', () => {
   it('SearchPage_MountsWithoutInfiniteRenderLoop', async () => {

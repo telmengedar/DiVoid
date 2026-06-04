@@ -70,8 +70,6 @@ import {
 } from '@/test/msw/handlers';
 import type { Page, PositionedNodeDetails } from '@/types/divoid';
 
-// ─── MSW server — filter-aware handler ───────────────────────────────────────
-//
 // The handler simulates backend type/status filtering:
 //  - If ?type is present, only nodes with matching types are returned.
 //  - If ?status is present, only nodes with matching statuses are returned.
@@ -134,8 +132,6 @@ afterEach(() => {
 });
 afterAll(() => server.close());
 
-// ─── Mocks ────────────────────────────────────────────────────────────────────
-
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
     isAuthenticated: true,
@@ -176,8 +172,6 @@ vi.mock('next-themes', () => ({
   useTheme: vi.fn(() => ({ resolvedTheme: 'dark', setTheme: vi.fn() })),
 }));
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 function makeQC() {
   return new QueryClient({
     defaultOptions: {
@@ -204,8 +198,6 @@ function renderPage() {
     </MemoryRouter>,
   );
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('WorkspaceFilters — type filter wiring (load-bearing positive proof)', () => {
   /**
@@ -366,8 +358,6 @@ describe('WorkspaceFilters — sessionStorage persistence', () => {
   });
 });
 
-// ─── DiVoid task #486 — live type-filter load-bearing tests ───────────────────
-
 describe('WorkspaceFilters — live type catalog from /api/types (DiVoid #486)', () => {
   /**
    * POSITIVE PROOF — load-bearing test for DiVoid task #486.
@@ -487,8 +477,6 @@ describe('WorkspaceFilters — live type catalog from /api/types (DiVoid #486)',
   });
 });
 
-// ─── Jenny review #512 — known-types set preserves deselected types ───────────
-
 describe('WorkspaceFilters — known-types set preserves user-deselected types (Jenny #512)', () => {
   /**
    * POSITIVE PROOF — load-bearing test for Jenny QA review at DiVoid #512, Finding 1.
@@ -554,8 +542,6 @@ describe('WorkspaceFilters — known-types set preserves user-deselected types (
     expect(selectedTypes).toContain('documentation');
   });
 });
-
-// ─── Jenny re-review #514 — no-duplicate invariant on first visit ─────────────
 
 describe('WorkspaceFilters — no-duplicate invariant on first visit (Jenny #514)', () => {
   /**

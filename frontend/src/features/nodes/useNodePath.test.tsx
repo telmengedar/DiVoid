@@ -16,8 +16,6 @@ import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { BASE_URL, samplePage } from '@/test/msw/handlers';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const server = setupServer(
   http.get(`${BASE_URL}/nodes`, () => HttpResponse.json(samplePage)),
 );
@@ -25,8 +23,6 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
@@ -61,16 +57,12 @@ vi.mock('@/lib/constants', () => ({
   },
 }));
 
-// ─── Wrapper ──────────────────────────────────────────────────────────────────
-
 function createWrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
   );
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('useNodePath', () => {
   it('returns path traversal results on happy path', async () => {

@@ -33,8 +33,6 @@ import { BASE_URL } from '@/test/msw/handlers';
 import type { Page, NodeDetails } from '@/types/divoid';
 import React from 'react';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const taskFixtures: Page<NodeDetails> = {
   result: [
     { id: 30, type: 'task', name: 'Fix login', status: 'open' },
@@ -88,8 +86,6 @@ afterEach(() => {
 });
 afterAll(() => server.close());
 
-// ─── Mocks ────────────────────────────────────────────────────────────────────
-
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
     isAuthenticated: true,
@@ -136,8 +132,6 @@ vi.mock('sonner', () => ({
     info: vi.fn(),
   },
 }));
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeQC() {
   return new QueryClient({
@@ -194,8 +188,6 @@ function getDndContextOnDragEnd(
   return undefined;
 }
 
-// ─── Lazy imports ─────────────────────────────────────────────────────────────
-
 let TaskListView: typeof import('./TaskListView').TaskListView;
 let useKanbanColumns: typeof import('./useKanbanColumns').useKanbanColumns;
 
@@ -208,8 +200,6 @@ beforeAll(async () => {
   TaskListView = taskMod.TaskListView;
   useKanbanColumns = hookMod.useKanbanColumns;
 });
-
-// ─── Test 1: Board renders one column per visible status in TASK_STATUSES order ─
 
 describe('Test 1 — Board renders one column per visible status in TASK_STATUSES order', () => {
   it('positive: default filter (new, open, in-progress) → exactly 3 columns in array order', async () => {
@@ -265,8 +255,6 @@ describe('Test 1 — Board renders one column per visible status in TASK_STATUSE
   });
 });
 
-// ─── Test 2: Toggling a status pill adds/removes its column ──────────────────
-
 describe('Test 2 — Toggling a status pill adds/removes its column', () => {
   it('positive: clicking the closed pill adds a fourth column in the last array position', async () => {
     const user = userEvent.setup();
@@ -316,8 +304,6 @@ describe('Test 2 — Toggling a status pill adds/removes its column', () => {
     expect(container.querySelector('[data-testid="kanban-column-closed"]')).not.toBeInTheDocument();
   });
 });
-
-// ─── Test 3: Drag end fires PATCH with the column status ─────────────────────
 
 describe('Test 3 — Drag end fires PATCH with the column status', () => {
   it('positive: onDragEnd({active:{id:30}, over:{id:"in-progress"}}) fires PATCH with correct body', async () => {
@@ -385,8 +371,6 @@ describe('Test 3 — Drag end fires PATCH with the column status', () => {
   });
 });
 
-// ─── Test 4: Drop on same column is a no-op ──────────────────────────────────
-
 describe('Test 4 — Drop on same column is a no-op', () => {
   it('positive: dropping card 30 (open) onto column open does NOT call mutate', async () => {
     const user = userEvent.setup();
@@ -450,8 +434,6 @@ describe('Test 4 — Drop on same column is a no-op', () => {
     });
   });
 });
-
-// ─── Test 5: Optimistic local move is visible immediately ────────────────────
 
 describe('Test 5 — Optimistic local move is visible before PATCH resolves', () => {
   it('positive: card moves to target column before MSW responds', async () => {
@@ -520,8 +502,6 @@ describe('Test 5 — Optimistic local move is visible before PATCH resolves', ()
     expect(within(inProgressColumn as HTMLElement).queryByTestId('kanban-card-30')).not.toBeInTheDocument();
   });
 });
-
-// ─── Test 6: Optimistic state clears on success ──────────────────────────────
 
 describe('Test 6 — Optimistic state clears on PATCH success', () => {
   /**
@@ -593,8 +573,6 @@ describe('Test 6 — Optimistic state clears on PATCH success', () => {
   });
 });
 
-// ─── Test 7: Optimistic state reverts on PATCH error ────────────────────────
-
 describe('Test 7 — Optimistic state reverts on PATCH error + toast.error fires', () => {
   it('positive: on 500 error, card moves back to original column and toast fires', async () => {
     patchShouldFail = true;
@@ -659,8 +637,6 @@ describe('Test 7 — Optimistic state reverts on PATCH error + toast.error fires
   });
 });
 
-// ─── Test 8: View toggle persists to sessionStorage and survives remount ──────
-
 describe('Test 8 — View toggle persists to sessionStorage and survives remount', () => {
   it('positive: switching to board, unmounting, and remounting keeps board mode', async () => {
     const user = userEvent.setup();
@@ -713,8 +689,6 @@ describe('Test 8 — View toggle persists to sessionStorage and survives remount
   });
 });
 
-// ─── Test 9: API query identical between list and board mode ─────────────────
-
 describe('Test 9 — API query identical between list and board mode', () => {
   /**
    * Positive proof: Pre-seed sessionStorage to start directly in board mode, so
@@ -725,7 +699,6 @@ describe('Test 9 — API query identical between list and board mode', () => {
    * the invariant: "board does NOT add a query parameter".
    */
   it('positive: list mode and board mode emit byte-equal URLs for the path query', async () => {
-    // --- List mode render ---
     capturedUrls = [];
     const { unmount: unmount1 } = renderWithProviders(<TaskListView projectId={20} />);
 
@@ -739,7 +712,6 @@ describe('Test 9 — API query identical between list and board mode', () => {
     const listUrl = listUrls[listUrls.length - 1];
     unmount1();
 
-    // --- Board mode render: pre-seed sessionStorage to start in board mode ---
     sessionStorage.setItem('divoid.tasks.view.20', 'board');
     capturedUrls = [];
 
@@ -784,8 +756,6 @@ describe('Test 9 — API query identical between list and board mode', () => {
     expect(new URL(pathUrl!).searchParams.has('_view')).toBe(false);
   });
 });
-
-// ─── Test 10: PointerSensor activation distance respected ────────────────────
 
 describe('Test 10 — PointerSensor activation distance respected', () => {
   /**
@@ -857,8 +827,6 @@ describe('Test 10 — PointerSensor activation distance respected', () => {
   });
 });
 
-// ─── Test 14: PATCH success invalidates path-query cache (bug #411) ──────────
-//
 // Root cause: handleDragEnd invalidated ['nodes','list'] + ['nodes','linkedto']
 // after PATCH success, but the Kanban's task data comes from useNodePath whose
 // query key is ['nodes','path',...]. Neither invalidation matched → cache stale
@@ -1026,8 +994,6 @@ describe('Test 14 — PATCH success invalidates path-query cache: card stays in 
     expect(inProgressCol?.tasks).toHaveLength(0);
   });
 });
-
-// ─── renderHook helper (lightweight) ─────────────────────────────────────────
 
 /**
  * Minimal renderHook for pure hooks that need no providers.

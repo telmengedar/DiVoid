@@ -53,8 +53,6 @@ import '@xyflow/react/dist/style.css';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { BASE_URL, viewportPage } from '@/test/msw/handlers';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const server = setupServer(
   http.get(`${BASE_URL}/users/me`, () =>
     HttpResponse.json({
@@ -73,8 +71,6 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
@@ -115,12 +111,9 @@ vi.mock('next-themes', () => ({
   useTheme: vi.fn(() => ({ resolvedTheme: 'dark', setTheme: vi.fn() })),
 }));
 
-// ─── Safety cap ───────────────────────────────────────────────────────────────
 // The unstable component will be stopped at this render count to prevent OOM.
 const MAX_RENDERS = 30;
 
-// ─── Unstable component (NEGATIVE PROOF) ─────────────────────────────────────
-//
 // Real loop vector: useNodesState + useEffect([unmemoizedArray]) + setNodes.
 //
 // Loop path:
@@ -176,8 +169,6 @@ function UnstableCanvasRealLoopVector() {
   );
 }
 
-// ─── Stable component (POSITIVE PROOF COUNTERPART) ───────────────────────────
-//
 // useMemo gives sourceData a stable identity. The useEffect fires once (on mount)
 // and the loop is broken. Render count stays low.
 //
@@ -213,8 +204,6 @@ function StableCanvasWithMemoVector() {
     </div>
   );
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('WorkspaceCanvas — render-stability negative proof', () => {
   /**

@@ -56,8 +56,6 @@ import { BASE_URL } from '@/test/msw/handlers';
 import type { Page, NodeDetails } from '@/types/divoid';
 import { AppRoutes } from '@/app/routes';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const orgFixtures: Page<NodeDetails> = {
   result: [
     { id: 1, type: 'organization', name: 'Pooshit', status: null },
@@ -140,8 +138,6 @@ afterEach(() => {
 });
 afterAll(() => server.close());
 
-// ─── Mocks ────────────────────────────────────────────────────────────────────
-
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
     isAuthenticated: true,
@@ -180,8 +176,6 @@ vi.mock('@/lib/constants', () => ({
 }));
 
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeQC() {
   return new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -229,8 +223,6 @@ beforeAll(async () => {
   OrgPillRowComponent = orgMod.OrgPillRow;
   ProjectPillRowComponent = projMod.ProjectPillRow;
 });
-
-// ─── Test 1: OrgPillRow renders one pill per org ──────────────────────────────
 
 describe('Test 1 — OrgPillRow renders one pill per organisation', () => {
   /**
@@ -284,8 +276,6 @@ describe('Test 1 — OrgPillRow renders one pill per organisation', () => {
   });
 });
 
-// ─── Test 2: OrgPillRow defaults selection to the current project's org ───────
-
 describe('Test 2 — OrgPillRow defaults selection to the current project\'s org', () => {
   /**
    * Positive: render TasksPage at /tasks/projects/3 (DiVoid, linked to org 1 "Pooshit").
@@ -329,8 +319,6 @@ describe('Test 2 — OrgPillRow defaults selection to the current project\'s org
     expect(pooshitBtn).toHaveAttribute('aria-pressed', 'false');
   });
 });
-
-// ─── Test 3: ProjectPillRow filters by selected org ──────────────────────────
 
 describe('Test 3 — ProjectPillRow filters by selected org (linkedto=<orgId>&type=project)', () => {
   /**
@@ -398,8 +386,6 @@ describe('Test 3 — ProjectPillRow filters by selected org (linkedto=<orgId>&ty
   });
 });
 
-// ─── Test 4: Clicking a project pill navigates ────────────────────────────────
-
 describe('Test 4 — Clicking a project pill navigates to /tasks/projects/:id', () => {
   /**
    * Positive: render TasksPage at /tasks/projects/3 (Pooshit org selected), see
@@ -450,8 +436,6 @@ describe('Test 4 — Clicking a project pill navigates to /tasks/projects/:id', 
     expect(screen.getAllByTestId('task-list')).toHaveLength(1);
   });
 });
-
-// ─── Test 5: Org change does NOT auto-navigate ───────────────────────────────
 
 describe('Test 5 — Clicking an org pill does NOT auto-navigate', () => {
   /**
@@ -512,8 +496,6 @@ describe('Test 5 — Clicking an org pill does NOT auto-navigate', () => {
   });
 });
 
-// ─── Test 6: Org mismatch surfaces the inline message ────────────────────────
-
 describe('Test 6 — Org change with mismatched project surfaces inline message', () => {
   /**
    * Positive: /tasks/projects/3 (Pooshit). Click Mamgo org pill.
@@ -551,8 +533,6 @@ describe('Test 6 — Org change with mismatched project surfaces inline message'
     expect(screen.queryByTestId('org-mismatch-message')).not.toBeInTheDocument();
   });
 });
-
-// ─── Test 7: /tasks/orgs/:orgId redirects to /tasks ─────────────────────────
 
 describe('Test 7 — /tasks/orgs/:orgId redirects to /tasks', () => {
   /**
@@ -608,8 +588,6 @@ describe('Test 7 — /tasks/orgs/:orgId redirects to /tasks', () => {
   });
 });
 
-// ─── Test 8: /tasks empty state ──────────────────────────────────────────────
-
 describe('Test 8 — /tasks empty state: pill rows visible, task list absent', () => {
   /**
    * Positive: navigate to /tasks (no project param) → both pill rows present,
@@ -640,8 +618,6 @@ describe('Test 8 — /tasks empty state: pill rows visible, task list absent', (
     expect(screen.queryByTestId('tasks-empty-state')).not.toBeInTheDocument();
   });
 });
-
-// ─── Test 9: Status filter works on the new layout ───────────────────────────
 
 describe('Test 9 — Status filter still works on the new layout (regression guard PR #55)', () => {
   /**
@@ -704,8 +680,6 @@ describe('Test 9 — Status filter still works on the new layout (regression gua
     expect(screen.queryByTestId('status-filter-pills')).not.toBeInTheDocument();
   });
 });
-
-// ─── Test 10: List/Board toggle persists to sessionStorage ───────────────────
 
 describe('Test 10 — List/Board toggle persists to sessionStorage (regression guard PR #57)', () => {
   /**

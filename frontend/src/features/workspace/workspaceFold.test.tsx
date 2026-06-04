@@ -35,8 +35,6 @@ import { setupServer } from 'msw/node';
 import { BASE_URL } from '@/test/msw/handlers';
 import type { Page, PositionedNodeDetails } from '@/types/divoid';
 
-// ─── Part A: Pure-function unit tests ─────────────────────────────────────────
-//
 // This is the same pattern as nodesSyncMerge.test.ts: extract and test the pure
 // transformation so the invariants are verified without mounting React.
 
@@ -132,8 +130,6 @@ describe('buildEdgesFromInlineLinks — pure edge reconstruction', () => {
     expect(edges).toHaveLength(0);
   });
 });
-
-// ─── Part B: Network integration — fold proven at HTTP boundary ────────────────
 
 const nodeListCalls: string[] = [];
 

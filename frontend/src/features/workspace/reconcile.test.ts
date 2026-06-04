@@ -19,8 +19,6 @@ import { reconcileNodes, reconcileEdges } from './reconcile';
 import type { WorkspaceNode } from './NodeCardRenderer';
 import type { Edge } from '@xyflow/react';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 function makeNode(
   id: string,
   overrides?: Partial<WorkspaceNode> & { name?: string; status?: string | null; links?: number[] },
@@ -48,8 +46,6 @@ function makeNode(
 function makeEdge(id: string, source = 'a', target = 'b'): Edge {
   return { id, source, target, type: 'floating' };
 }
-
-// ─── reconcileNodes ───────────────────────────────────────────────────────────
 
 describe('reconcileNodes', () => {
   /**
@@ -177,8 +173,6 @@ describe('reconcileNodes', () => {
     expect(result[0]).toBe(node);
   });
 });
-
-// ─── reconcileEdges ───────────────────────────────────────────────────────────
 
 describe('reconcileEdges', () => {
   /**

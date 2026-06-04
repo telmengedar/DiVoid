@@ -20,7 +20,6 @@ import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { BASE_URL } from '@/test/msw/handlers';
 
-// ─── Hoisted mock refs ────────────────────────────────────────────────────────
 // vi.mock() is hoisted to before imports, so we use vi.hoisted() to define
 // mutable refs that both the mock factory and tests can access.
 
@@ -69,8 +68,6 @@ vi.mock('@/lib/constants', () => ({
   },
 }));
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const CONTENT_URL = `${BASE_URL}/nodes/:id/content`;
 
 const server = setupServer(
@@ -101,16 +98,12 @@ afterEach(() => {
 });
 afterAll(() => server.close());
 
-// ─── Wrapper ──────────────────────────────────────────────────────────────────
-
 function createWrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
   );
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('useNodeContent', () => {
   it('returns text content on happy path', async () => {

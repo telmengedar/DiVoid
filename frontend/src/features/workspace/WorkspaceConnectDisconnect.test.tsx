@@ -50,8 +50,6 @@ import { BASE_URL } from '@/test/msw/handlers';
 import { DivoidApiError } from '@/types/divoid';
 import { getIntersectionPoint, type NodeRect } from './FloatingEdge';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const server = setupServer(
   http.get(`${BASE_URL}/users/me`, () =>
     HttpResponse.json({
@@ -71,8 +69,6 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
@@ -124,8 +120,6 @@ vi.mock('sonner', () => ({
 vi.mock('next-themes', () => ({
   useTheme: vi.fn(() => ({ resolvedTheme: 'dark', setTheme: vi.fn() })),
 }));
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeQC() {
   return new QueryClient({
@@ -201,9 +195,7 @@ async function mountWorkspaceCanvas() {
   return { rfWrapper, qc };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Test 1: Drag-connect dispatches link mutation via JSX wiring
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe('Test 1: drag-connect dispatches link mutation via JSX wiring', () => {
   /**
@@ -266,9 +258,7 @@ describe('Test 1: drag-connect dispatches link mutation via JSX wiring', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Test 2: Self-link guard fires through the real onConnect handler
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe('Test 2: self-link guard fires through the real handleConnect', () => {
   /**
@@ -340,9 +330,7 @@ describe('Test 2: self-link guard fires through the real handleConnect', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Test 3: Edge delete dispatches unlink via JSX wiring
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe('Test 3: edge delete dispatches unlink via JSX wiring', () => {
   /**
@@ -404,9 +392,7 @@ describe('Test 3: edge delete dispatches unlink via JSX wiring', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Test 4: Undo toast re-links via JSX wiring
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe('Test 4: undo toast re-links via JSX wiring', () => {
   /**
@@ -495,9 +481,7 @@ describe('Test 4: undo toast re-links via JSX wiring', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Test 5: FloatingEdge intersection geometry (imported, not replicated)
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe('Test 5: FloatingEdge renders via intersection geometry (not center fallback)', () => {
   /**
@@ -569,9 +553,7 @@ describe('Test 5: FloatingEdge renders via intersection geometry (not center fal
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Test 6: Bug #317 graceful handling (unchanged — accepted by Jenny)
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe('Test 6: bug #317 — already-linked 500 treated as success', () => {
   /**

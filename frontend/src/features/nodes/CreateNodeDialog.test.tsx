@@ -19,8 +19,6 @@ import { setupServer } from 'msw/node';
 import { BASE_URL, sampleNode } from '@/test/msw/handlers';
 import { CreateNodeDialog } from './CreateNodeDialog';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const server = setupServer(
   http.post(`${BASE_URL}/nodes`, () => HttpResponse.json(sampleNode, { status: 201 })),
 );
@@ -28,8 +26,6 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
@@ -67,14 +63,10 @@ vi.mock('@/lib/constants', () => ({
 
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
-// ─── Wrapper factory ──────────────────────────────────────────────────────────
-
 function Wrapper({ children }: { children: ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('CreateNodeDialog', () => {
   it('renders the form when open', () => {
