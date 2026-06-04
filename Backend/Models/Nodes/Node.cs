@@ -21,6 +21,7 @@ public class Node
     [Index("type")]
     [Index("node")]
     [Index("nodestatus")]
+    [Index("typeseverity")]
     public long TypeId { get; set; }
 
     /// <summary>
@@ -53,6 +54,14 @@ public class Node
     [Index("status")]
     [Index("nodestatus")]
     public string Status { get; set; }
+
+    /// <summary>
+    /// abstract numeric priority/importance signal interpreted per node type by application clients; null means unset.
+    /// </summary>
+    [AllowPatch]
+    [Index("severity")]
+    [Index("typeseverity")]
+    public int? Severity { get; set; }
 
     /// <summary>
     /// X position of the node in the shared workspace canvas (world units).
