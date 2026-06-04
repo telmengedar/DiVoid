@@ -74,6 +74,41 @@ public class NodePatchHttpTests
         Assert.That((int) resp.StatusCode, Is.EqualTo(200));
     }
 
+    [Test]
+    public async Task Patch_ValidPath_Severity_Returns200AndPersistsValue()
+    {
+        long id = await CreateNodeAsync();
+        PatchOperation[] ops = [new() { Op = "replace", Path = "/severity", Value = 5 }];
+        HttpResponseMessage resp = await PatchAsync($"{TestSetup.BaseUrl}/api/nodes/{id}", ops);
+        Assert.That((int) resp.StatusCode, Is.EqualTo(200),
+            "PATCH replace /severity must succeed because Severity is [AllowPatch]");
+
+        NodeDetails fetched = await http.Get<NodeDetails>(
+            $"{TestSetup.BaseUrl}/api/nodes/{id}",
+            new HttpOptions());
+        Assert.That(fetched.Severity, Is.EqualTo(5),
+            "severity set via PATCH must survive a subsequent GET");
+    }
+
+    [Test]
+    public async Task Patch_Severity_ReplaceNull_ClearsValue()
+    {
+        long id = await CreateNodeAsync();
+        PatchOperation[] setOps = [new() { Op = "replace", Path = "/severity", Value = 3 }];
+        await PatchAsync($"{TestSetup.BaseUrl}/api/nodes/{id}", setOps);
+
+        PatchOperation[] clearOps = [new() { Op = "replace", Path = "/severity", Value = null }];
+        HttpResponseMessage clearResp = await PatchAsync($"{TestSetup.BaseUrl}/api/nodes/{id}", clearOps);
+        Assert.That((int) clearResp.StatusCode, Is.EqualTo(200),
+            "replace /severity with null must succeed because the column is nullable");
+
+        NodeDetails fetched = await http.Get<NodeDetails>(
+            $"{TestSetup.BaseUrl}/api/nodes/{id}",
+            new HttpOptions());
+        Assert.That(fetched.Severity, Is.Null,
+            "replace /severity -> null is the canonical clear verb; the column must round-trip to null");
+    }
+
     // -----------------------------------------------------------------------
     // 404 — node does not exist
     // -----------------------------------------------------------------------

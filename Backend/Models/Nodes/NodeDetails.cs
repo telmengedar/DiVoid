@@ -28,6 +28,11 @@ public class NodeDetails
     public string Status { get; set; }
 
     /// <summary>
+    /// abstract numeric priority/importance signal; null (or omitted on POST) means unset.
+    /// </summary>
+    public int? Severity { get; set; }
+
+    /// <summary>
     /// MIME content type of the node's blob content, if any (e.g. "text/markdown", "application/json", "image/png").
     /// Absent when the node has no content.
     /// </summary>

@@ -92,4 +92,27 @@ public class NodeCreateHttpTests
         Assert.That(fetched.Status, Is.Null.Or.Empty,
             "nodes created without a status must have null/empty status after GET");
     }
+
+    [Test]
+    public async Task CreateNode_WithSeverity_SeverityPersistedToDatabase()
+    {
+        NodeDetails created = await PostNodeAsync(new NodeDetails { Type = "task", Name = "SeverityRoundTrip", Severity = 7 });
+        Assert.That(created.Id, Is.GreaterThan(0), "POST must return a valid id");
+
+        NodeDetails fetched = await GetNodeAsync(created.Id);
+
+        Assert.That(fetched.Severity, Is.EqualTo(7),
+            "severity set on POST /api/nodes must survive a subsequent GET");
+    }
+
+    [Test]
+    public async Task CreateNode_WithoutSeverity_SeverityIsNullAfterGet()
+    {
+        NodeDetails created = await PostNodeAsync(new NodeDetails { Type = "task", Name = "NoSeverityNode" });
+
+        NodeDetails fetched = await GetNodeAsync(created.Id);
+
+        Assert.That(fetched.Severity, Is.Null,
+            "nodes created without a severity must have null severity after GET (no server-side default)");
+    }
 }
