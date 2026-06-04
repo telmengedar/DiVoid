@@ -22,7 +22,6 @@ import { setupServer } from 'msw/node';
 import { BASE_URL, sampleNode } from '@/test/msw/handlers';
 import { DivoidApiError } from '@/types/divoid';
 
-// ─── Hoisted mock refs ────────────────────────────────────────────────────────
 // vi.mock() is hoisted before imports; vi.hoisted() lets tests mutate the refs
 // at runtime so we can test the §6.3 retry path without re-importing the module.
 
@@ -32,8 +31,6 @@ const { mockSigninSilent, mockSigninRedirect, mockGetToken } = vi.hoisted(() => 
   const mockGetToken = vi.fn<() => string | undefined>(() => 'test-token');
   return { mockSigninSilent, mockSigninRedirect, mockGetToken };
 });
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
@@ -46,8 +43,6 @@ vi.mock('react-oidc-context', () => ({
     signinSilent: mockSigninSilent,
   })),
 }));
-
-// ─── MSW server ───────────────────────────────────────────────────────────────
 
 const server = setupServer(
   // Create node — happy path
@@ -118,8 +113,6 @@ vi.mock('sonner', () => ({
   },
 }));
 
-// ─── Wrapper factory ──────────────────────────────────────────────────────────
-
 function createWrapper() {
   const qc = new QueryClient({
     defaultOptions: {
@@ -131,8 +124,6 @@ function createWrapper() {
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
   )};
 }
-
-// ─── useCreateNode ────────────────────────────────────────────────────────────
 
 describe('useCreateNode', () => {
   it('returns node details on success', async () => {
@@ -189,8 +180,6 @@ describe('useCreateNode', () => {
   });
 });
 
-// ─── usePatchNode ─────────────────────────────────────────────────────────────
-
 describe('usePatchNode', () => {
   it('succeeds and returns void on 204', async () => {
     const { Wrapper } = createWrapper();
@@ -225,8 +214,6 @@ describe('usePatchNode', () => {
   });
 });
 
-// ─── useDeleteNode ────────────────────────────────────────────────────────────
-
 describe('useDeleteNode', () => {
   it('succeeds on 204', async () => {
     const { Wrapper } = createWrapper();
@@ -259,8 +246,6 @@ describe('useDeleteNode', () => {
     expect((result.current.error as DivoidApiError).status).toBe(404);
   });
 });
-
-// ─── useLinkNodes ─────────────────────────────────────────────────────────────
 
 describe('useLinkNodes', () => {
   it('succeeds on 204', async () => {
@@ -295,8 +280,6 @@ describe('useLinkNodes', () => {
   });
 });
 
-// ─── useUnlinkNodes ───────────────────────────────────────────────────────────
-
 describe('useUnlinkNodes', () => {
   it('succeeds on 204', async () => {
     const { Wrapper } = createWrapper();
@@ -329,8 +312,6 @@ describe('useUnlinkNodes', () => {
     expect((result.current.error as DivoidApiError).status).toBe(404);
   });
 });
-
-// ─── useUploadContent ─────────────────────────────────────────────────────────
 
 describe('useUploadContent', () => {
   it('succeeds on 204', async () => {
@@ -454,8 +435,6 @@ describe('useUploadContent', () => {
   });
 });
 
-// ─── Viewport invalidation (design §6.5, DiVoid #1253) ───────────────────────
-//
 // usePatchNode and useDeleteNode must invalidate ['nodes', 'viewport'] on success
 // so canvas cards update without a re-mount when mutations fire from inside the
 // peek modal.

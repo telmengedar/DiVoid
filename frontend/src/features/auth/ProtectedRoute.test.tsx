@@ -39,11 +39,8 @@ import { MemoryRouter } from 'react-router-dom';
 import { useState, useRef, type ReactNode, useCallback } from 'react';
 import { ProtectedRoute } from './ProtectedRoute';
 
-// ─── Safety cap (async loop sentinel) ─────────────────────────────────────────
 // Mirrors WorkspacePage.renderLoop.test.tsx:119
 const MAX_RENDERS = 30;
-
-// ─── Mock react-oidc-context ──────────────────────────────────────────────────
 
 // Controlled mock state — updated by re-render-inducing signinRedirect below
 let mockCallCount = 0;
@@ -57,8 +54,6 @@ afterEach(() => {
   mockCallCount = 0;
 });
 
-// ─── Re-render-inducing loop harness ─────────────────────────────────────────
-//
 // To test the blink-loop negative proof, we need signinRedirect() to CAUSE
 // re-renders (just like the real library does). We do this by giving ProtectedRoute
 // a parent component that has its own state. When signinRedirect() fires, it
@@ -99,8 +94,6 @@ function RenderCountWrapper({ children }: { children: ReactNode }) {
     </>
   );
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('ProtectedRoute_RefreshFailure_DoesNotLoop', () => {
   /**

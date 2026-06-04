@@ -30,8 +30,6 @@ import { renderHook, act } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 
-// ─── Test server ──────────────────────────────────────────────────────────────
-
 const BASE_URL = 'http://localhost:5007/api';
 
 const server = setupServer(
@@ -44,8 +42,6 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 const mockSigninRedirect = vi.fn();
 const mockSigninSilent = vi.fn().mockRejectedValue(new Error('refresh failed'));
@@ -94,8 +90,6 @@ vi.mock('@/features/auth/AuthProvider', () => ({
   useDiVoidAuthContext: vi.fn(() => ({ terminalAuthFailure: mockTerminalAuthFailure })),
   DiVoidAuthContext: { _currentValue: { terminalAuthFailure: false } },
 }));
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('useApiClient_ConcurrentQueries_OnTerminalAuthFailure_RedirectOnce', () => {
   /**

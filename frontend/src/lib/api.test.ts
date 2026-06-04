@@ -19,8 +19,6 @@ import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { createApiClient, buildQueryString } from './api';
 
-// ─── Test server ──────────────────────────────────────────────────────────────
-
 const BASE_URL = 'http://localhost:5007/api';
 
 const server = setupServer(
@@ -73,8 +71,6 @@ beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-// ─── buildQueryString ─────────────────────────────────────────────────────────
-
 describe('buildQueryString', () => {
   it('serialises scalar values', () => {
     expect(buildQueryString({ count: 20, sort: 'name' })).toBe('count=20&sort=name');
@@ -98,8 +94,6 @@ describe('buildQueryString', () => {
     expect(qs).toBe('name=hello%20world');
   });
 });
-
-// ─── createApiClient — basic behaviour ────────────────────────────────────────
 
 describe('createApiClient', () => {
   it('injects the Bearer token on GET requests', async () => {
@@ -140,8 +134,6 @@ describe('createApiClient', () => {
     expect(capturedUrl).toContain('count=10');
   });
 });
-
-// ─── createApiClient — §6.3 reactive-401 contract ────────────────────────────
 
 describe('createApiClient — reactive 401 retry (§6.3)', () => {
   it('calls signinSilent on 401, retries with new token, does not call signinRedirect', async () => {
@@ -213,8 +205,6 @@ describe('createApiClient — reactive 401 retry (§6.3)', () => {
   });
 });
 
-// ─── createApiClient — single-flight & dead-session (bug #403 v2) ─────────────
-//
 // These tests verify the three-part fix:
 //   1. Concurrent 401s share ONE signinSilent() call (single-flight coalescing).
 //   2. After signinSilent rejects, signinRedirect() fires exactly once, regardless
@@ -349,8 +339,6 @@ describe('createApiClient — single-flight & dead-session (§6.3 v2)', () => {
   });
 });
 
-// ─── createApiClient — fetchRaw ────────────────────────────────────────────────
-
 describe('createApiClient.fetchRaw', () => {
   it('returns raw Response on success', async () => {
     const client = createApiClient(() => 'test-token', undefined, undefined, BASE_URL);
@@ -408,8 +396,6 @@ describe('createApiClient.fetchRaw', () => {
     expect(callCount).toBe(2);
   });
 });
-
-// ─── createApiClient — postRaw ─────────────────────────────────────────────────
 
 describe('createApiClient.postRaw', () => {
   it('returns raw Response on success (200)', async () => {

@@ -16,8 +16,6 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { usePeekState } from './usePeekState';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 /** Harness component that renders peekId and exposes open/close buttons. */
 function PeekHarness() {
   const { peekId, openPeek, closePeek } = usePeekState();
@@ -40,8 +38,6 @@ function render_at(initialPath: string) {
     </MemoryRouter>,
   );
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('usePeekState — peekId derivation', () => {
   /**

@@ -25,8 +25,6 @@ import { setupServer } from 'msw/node';
 import { BASE_URL } from '@/test/msw/handlers';
 import type { Page, NodeDetails } from '@/types/divoid';
 
-// ─── Module mocks (hoisted) ───────────────────────────────────────────────────
-
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
     isAuthenticated: true,
@@ -86,8 +84,6 @@ vi.mock('@/features/nodes/ContentUploadZone', () => ({
   ContentUploadZone: () => null,
 }));
 
-// ─── Fixtures ─────────────────────────────────────────────────────────────────
-
 const nodeWithContent: NodeDetails = {
   id: 42,
   type: 'documentation',
@@ -127,8 +123,6 @@ const firstNodePage: Page<NodeDetails> = {
   result: [{ id: 42, type: 'documentation', name: 'First Node', status: null }],
   total: 1,
 };
-
-// ─── MSW server ───────────────────────────────────────────────────────────────
 
 const server = setupServer(
   http.get(`${BASE_URL}/users/me`, () =>
@@ -171,8 +165,6 @@ afterEach(() => {
   sessionStorage.clear();
 });
 afterAll(() => server.close());
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeQC() {
   return new QueryClient({
@@ -225,8 +217,6 @@ beforeAll(async () => {
   useWhoami = whoamiMod.useWhoami;
 });
 
-// ─── Test 1 — WikiPage redirects to home node ─────────────────────────────────
-
 describe('Test 1 — WikiPage redirects to home-node when homeNodeId is set', () => {
   it('positive: homeNodeId=10 → URL becomes /wiki/10', async () => {
     vi.mocked(useWhoami).mockReturnValue({
@@ -264,8 +254,6 @@ describe('Test 1 — WikiPage redirects to home-node when homeNodeId is set', ()
     expect(true).toBe(true);
   });
 });
-
-// ─── Test 2 — WikiPage falls back to first node when no home node ─────────────
 
 describe('Test 2 — WikiPage falls back to first node when homeNodeId is null', () => {
   it('positive: homeNodeId=null + firstNode.id=42 → URL becomes /wiki/42', async () => {
@@ -309,8 +297,6 @@ describe('Test 2 — WikiPage falls back to first node when homeNodeId is null',
   });
 });
 
-// ─── Test 3 — WikiPage shows empty state when graph is empty ──────────────────
-
 describe('Test 3 — WikiPage shows empty state when no nodes exist', () => {
   it('positive: homeNodeId=null + empty node list → "Graph is empty" message renders', async () => {
     vi.mocked(useWhoami).mockReturnValue({
@@ -352,8 +338,6 @@ describe('Test 3 — WikiPage shows empty state when no nodes exist', () => {
   });
 });
 
-// ─── Test 4 — WikiContentView does NOT fetch /content for empty-content nodes ─
-
 describe('Test 4 — WikiContentView does NOT fetch /content for empty-content nodes', () => {
   it('positive: node with contentType=null → no /content request, placeholder renders', async () => {
     const contentRequests: string[] = [];
@@ -393,8 +377,6 @@ describe('Test 4 — WikiContentView does NOT fetch /content for empty-content n
   });
 });
 
-// ─── Test 5 — WikiContentView DOES fetch and render for text-shaped content ───
-
 describe('Test 5 — WikiContentView DOES fetch and render for text-shaped content', () => {
   it('positive: contentType=text/markdown → /content fetched and rendered', async () => {
     render(
@@ -420,8 +402,6 @@ describe('Test 5 — WikiContentView DOES fetch and render for text-shaped conte
     expect(true).toBe(true);
   });
 });
-
-// ─── Test 6 — NodeDetailPage honours the gate (blast-radius regression) ───────
 
 describe('Test 6 — NodeDetailPage honours useNodeContent gate for empty-content nodes', () => {
   it('positive: NodeDetailPage for node with contentType=null → no /content request, no error alert', async () => {
@@ -488,8 +468,6 @@ describe('Test 6 — NodeDetailPage honours useNodeContent gate for empty-conten
   });
 });
 
-// ─── Test 7 — WikiSideNav shows neighbours when search is empty ───────────────
-
 describe('Test 7 — WikiSideNav shows neighbours when search input is empty', () => {
   it('positive: render with nodeId=3, three neighbours render with correct /wiki/:id hrefs', async () => {
     server.use(
@@ -530,8 +508,6 @@ describe('Test 7 — WikiSideNav shows neighbours when search input is empty', (
     expect(true).toBe(true);
   });
 });
-
-// ─── Test 8 — WikiSideNav switches to semantic results when query non-empty ────
 
 describe('Test 8 — WikiSideNav switches to semantic results when query non-empty', () => {
   it('positive: type "foo", debounce expires → ?query=foo in URL, semantic results render instead of neighbours', async () => {
@@ -587,8 +563,6 @@ describe('Test 8 — WikiSideNav switches to semantic results when query non-emp
   });
 });
 
-// ─── Test 9 — WikiSideNav "× clear" restores neighbours ──────────────────────
-
 describe('Test 9 — WikiSideNav "× clear" restores neighbours', () => {
   it('positive: type query, click clear → input is empty and neighbours are back', async () => {
     server.use(
@@ -643,8 +617,6 @@ describe('Test 9 — WikiSideNav "× clear" restores neighbours', () => {
     expect(true).toBe(true);
   });
 });
-
-// ─── Test 10 — StatusBadge renders with theme-aware classes ──────────────────
 
 describe('Test 10 — StatusBadge renders with theme-aware classes', () => {
   it('positive: status="open" → element has both bg-emerald-100 and dark:bg-emerald-900/30 classes', () => {

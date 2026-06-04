@@ -13,8 +13,6 @@ import { type ReactNode } from 'react';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 
-// ─── Fixtures ─────────────────────────────────────────────────────────────────
-
 const BASE_URL = 'http://localhost:5007/api';
 
 const defaultUser = {
@@ -26,8 +24,6 @@ const defaultUser = {
   permissions: ['read', 'write', 'admin'],
 };
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const server = setupServer(
   http.get(`${BASE_URL}/users/me`, () => HttpResponse.json(defaultUser)),
 );
@@ -35,8 +31,6 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 // Mock react-oidc-context so tests don't need a full OIDC provider setup.
 vi.mock('react-oidc-context', () => ({
@@ -77,8 +71,6 @@ vi.mock('@/lib/constants', () => ({
   },
 }));
 
-// ─── Test wrapper ─────────────────────────────────────────────────────────────
-
 function createWrapper() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -87,8 +79,6 @@ function createWrapper() {
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('useWhoami', () => {
   it('returns user data when authenticated', async () => {

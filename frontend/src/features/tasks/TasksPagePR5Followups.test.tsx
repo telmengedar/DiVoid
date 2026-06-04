@@ -47,8 +47,6 @@ import { setupServer } from 'msw/node';
 import { BASE_URL } from '@/test/msw/handlers';
 import type { Page, NodeDetails } from '@/types/divoid';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const taskFixtures: Page<NodeDetails> = {
   result: [
     { id: 30, type: 'task', name: 'Fix login', status: 'open' },
@@ -141,8 +139,6 @@ afterEach(() => {
 });
 afterAll(() => server.close());
 
-// ─── Mocks ────────────────────────────────────────────────────────────────────
-
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
     isAuthenticated: true,
@@ -199,8 +195,6 @@ vi.mock('@/features/nodes/ContentUploadZone', () => ({
   ContentUploadZone: () => <div data-testid="upload-zone">Upload zone</div>,
 }));
 
-// ─── Wrapper helpers ──────────────────────────────────────────────────────────
-
 function makeQC() {
   return new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 }
@@ -212,8 +206,6 @@ function renderWithProviders(ui: React.ReactElement, initialPath = '/') {
     </MemoryRouter>,
   );
 }
-
-// ─── Lazy imports (mocks must be registered before import) ────────────────────
 
 let TaskListView: typeof import('./TaskListView').TaskListView;
 let OrgPillRow: typeof import('./OrgPillRow').OrgPillRow;
@@ -232,8 +224,6 @@ beforeAll(async () => {
   ProjectPillRow = projPillMod.ProjectPillRow;
   NodeDetailPage = detailMod.NodeDetailPage;
 });
-
-// ─── Test 1: Status filter default hides closed/fixed ────────────────────────
 
 describe('Test 1 — Status filter default state hides closed/fixed', () => {
   it('positive: request URL contains status with new,open,in-progress and NOT closed or fixed', async () => {
@@ -279,8 +269,6 @@ describe('Test 1 — Status filter default state hides closed/fixed', () => {
   });
 });
 
-// ─── Test 2: Status filter selection persists to sessionStorage ───────────────
-
 describe('Test 2 — Status filter selection persists to sessionStorage', () => {
   it('positive: toggling a pill writes the new selection to sessionStorage', async () => {
     const user = userEvent.setup();
@@ -316,8 +304,6 @@ describe('Test 2 — Status filter selection persists to sessionStorage', () => 
     expect(sessionStorage.getItem('divoid.tasks.statusFilter')).toBeNull();
   });
 });
-
-// ─── Test 3: Empty selection omits the status parameter ─────────────────────
 
 describe('Test 3 — Empty selection omits the status= parameter', () => {
   it('positive: deselecting all pills causes the URL to have no status param', async () => {
@@ -374,8 +360,6 @@ describe('Test 3 — Empty selection omits the status= parameter', () => {
   });
 });
 
-// ─── Tests 4 & 5 (old theatre tests) → replaced by Tests 4–8 below ──────────
-//
 // The original tests 4 & 5 used window.history.state.idx + MemoryRouter initialEntries
 // to verify navigate(-1) / navigate('/search'). That approach was theatre:
 // MemoryRouter populates idx reliably in jsdom; BrowserRouter does NOT in the browser.
@@ -383,8 +367,6 @@ describe('Test 3 — Empty selection omits the status= parameter', () => {
 //
 // The five new tests below target sessionStorage — the same primitive in jsdom and
 // the browser — so they actually pin production behaviour (DiVoid #275, bug #388).
-
-// ─── Test 4 (new): Back uses sessionStorage when present ─────────────────────
 
 describe('Test 4 (new) — Back uses sessionStorage when present', () => {
   /**
@@ -457,8 +439,6 @@ describe('Test 4 (new) — Back uses sessionStorage when present', () => {
   });
 });
 
-// ─── Test 5 (new): Back falls back to /search when sessionStorage empty ───────
-
 describe('Test 5 (new) — Back falls back to /search when sessionStorage is empty', () => {
   /**
    * Positive: no sessionStorage entry → back navigates to /search.
@@ -518,8 +498,6 @@ describe('Test 5 (new) — Back falls back to /search when sessionStorage is emp
     expect(screen.queryByTestId('search-page')).not.toBeInTheDocument();
   });
 });
-
-// ─── Test 6 (new): Back does NOT navigate to itself (self-equality guard) ──────
 
 describe('Test 6 (new) — Back does NOT navigate to itself (self-equality guard)', () => {
   /**
@@ -590,8 +568,6 @@ describe('Test 6 (new) — Back does NOT navigate to itself (self-equality guard
     expect(screen.queryByTestId('search-page')).not.toBeInTheDocument();
   });
 });
-
-// ─── Test 7 (new): LocationTracker writes prevPath on every navigation ─────────
 
 describe('Test 7 (new) — LocationTracker writes previous location on navigation', () => {
   /**
@@ -687,8 +663,6 @@ describe('Test 7 (new) — LocationTracker writes previous location on navigatio
   });
 });
 
-// ─── Test 8 (new): Tracker preserves query string in the stored location ───────
-
 describe('Test 8 (new) — Tracker preserves ?query= in the stored location', () => {
   /**
    * Positive: navigate from /search?q=foo to /nodes/42.
@@ -760,8 +734,6 @@ describe('Test 8 (new) — Tracker preserves ?query= in the stored location', ()
   });
 });
 
-// ─── Test 6: + New task button is only on TaskListView ────────────────────────
-
 describe('Test 6 — + New task button is only on TaskListView', () => {
   it('positive: TaskListView has the New task button; OrgPillRow and ProjectPillRow do not', async () => {
     // TaskListView has the button.
@@ -803,8 +775,6 @@ describe('Test 6 — + New task button is only on TaskListView', () => {
     expect(screen.queryByTestId('new-task-button')).toBeNull();
   });
 });
-
-// ─── Test 7: Create-task dialog pre-populates type/status/links ───────────────
 
 describe('Test 7 — Create-task dialog pre-populates type=task, status=new, links=[tasksGroupId]', () => {
   it('positive: submitting the dialog POSTs type=task, status=new, then links to the Tasks group', async () => {
@@ -879,8 +849,6 @@ describe('Test 7 — Create-task dialog pre-populates type=task, status=new, lin
     expect(postBody.type).toBe('task');
   });
 });
-
-// ─── Test 8: Missing Tasks group surfaces blocking message ────────────────────
 
 describe('Test 8 — Missing Tasks group surfaces blocking message', () => {
   it('positive: empty linkedto+name=Tasks response → dialog shows the no-group message', async () => {

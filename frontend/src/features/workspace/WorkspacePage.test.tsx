@@ -35,8 +35,6 @@ import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { BASE_URL, viewportPage } from '@/test/msw/handlers';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const server = setupServer(
   http.get(`${BASE_URL}/users/me`, () =>
     HttpResponse.json({
@@ -68,8 +66,6 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
@@ -111,8 +107,6 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock('next-themes', () => ({
   useTheme: vi.fn(() => ({ resolvedTheme: 'dark', setTheme: vi.fn() })),
 }));
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeQC() {
   return new QueryClient({
@@ -174,17 +168,7 @@ function renderPageWithLocationCapture() {
   return { ...result, locationRef };
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 describe('WorkspacePage — viewport render', () => {
-  /**
-   * Test 1 (load-bearing positive proof):
-   * Mount WorkspacePage with a known MSW response and assert the nodes
-   * and at least one visible element from the mocked data appear.
-   *
-   * xyflow renders nodes as DOM elements. We look for the node names
-   * that appear in the NodeCardRenderer output.
-   */
   it('renders visible nodes from viewport query', async () => {
     renderPage();
 
@@ -203,13 +187,6 @@ describe('WorkspacePage — viewport render', () => {
 });
 
 describe('WorkspacePage — drag-end PATCH', () => {
-  /**
-   * Test 2 (load-bearing positive proof):
-   * Verify that a PATCH request with the correct /X and /Y values is dispatched
-   * when a drag-end event fires on a node.
-   *
-   * We capture the PATCH request body via MSW and assert on its contents.
-   */
   it('dispatches PATCH /X and /Y on node drag-end', async () => {
     const patchRequests: { id: string; body: unknown }[] = [];
 
@@ -257,12 +234,6 @@ describe('WorkspacePage — drag-end PATCH', () => {
 });
 
 describe('WorkspacePage — click empty space → CreateNodeDialog', () => {
-  /**
-   * Test 4 (load-bearing positive proof):
-   * Click on the xyflow pane (empty canvas) and assert:
-   *  - CreateNodeDialog opens.
-   *  - The position pre-population text is present in the dialog.
-   */
   it('opens CreateNodeDialog with position when empty space is clicked', async () => {
     renderPage();
 
@@ -373,14 +344,6 @@ describe('WorkspacePage — create node opens peek modal (DiVoid #1606)', () => 
 });
 
 describe('WorkspacePage — render stability', () => {
-  /**
-   * Test 3 positive proof:
-   * Mount WorkspacePage with seeded data; the console.error → throw harness
-   * from setup.ts must NOT fire during the full lifecycle.
-   *
-   * The negative proof (showing the harness DOES fire when stability is
-   * broken) is captured in WorkspacePage.renderLoop.test.tsx.
-   */
   it('WorkspacePage_MountsWithoutInfiniteRenderLoop', async () => {
     renderPage();
 

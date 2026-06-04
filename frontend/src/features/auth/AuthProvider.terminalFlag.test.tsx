@@ -25,7 +25,6 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, act, waitFor } from '@testing-library/react';
 import { useContext } from 'react';
 
-// ─── Event callback registry ──────────────────────────────────────────────────
 // We expose refs to the registered callbacks so tests can trigger them manually.
 
 type EventCallback = () => void;
@@ -110,7 +109,6 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-// ─── Consumer component ───────────────────────────────────────────────────────
 // Reads DiVoidAuthContext and exposes it via data attributes for assertions.
 
 async function renderConsumer() {
@@ -139,8 +137,6 @@ function getTerminalFlag(): boolean {
   const el = screen.getByTestId('ctx-consumer');
   return el.getAttribute('data-terminal') === 'true';
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('AuthProvider_TerminalFailureFlag_TogglesOnEvents', () => {
   /**

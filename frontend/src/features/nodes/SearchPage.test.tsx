@@ -24,8 +24,6 @@ import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { BASE_URL, semanticPage, samplePage } from '@/test/msw/handlers';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const server = setupServer(
   http.get(`${BASE_URL}/users/me`, () =>
     HttpResponse.json({
@@ -45,8 +43,6 @@ beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 beforeEach(() => navigateSpy.mockClear());
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
@@ -88,8 +84,6 @@ vi.mock('./CreateNodeDialog', () => ({
     open ? <div role="dialog" aria-label="Create node"><button onClick={() => onOpenChange(false)}>Close</button></div> : null,
 }));
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -100,8 +94,6 @@ function renderPage() {
     </MemoryRouter>,
   );
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 // Import lazily so mocks are registered first
 let SearchPage: typeof import('./SearchPage').SearchPage;

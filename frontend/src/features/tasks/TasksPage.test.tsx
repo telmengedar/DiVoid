@@ -28,8 +28,6 @@ import { setupServer } from 'msw/node';
 import { BASE_URL } from '@/test/msw/handlers';
 import type { Page, NodeDetails } from '@/types/divoid';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const taskFixtures: Page<NodeDetails> = {
   result: [
     { id: 30, type: 'task', name: 'Fix login', status: 'open' },
@@ -65,8 +63,6 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
@@ -106,8 +102,6 @@ vi.mock('@/lib/constants', () => ({
 
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() } }));
 
-// ─── Wrapper helpers ──────────────────────────────────────────────────────────
-
 function renderWithProviders(ui: React.ReactElement, initialPath = '/tasks') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -116,8 +110,6 @@ function renderWithProviders(ui: React.ReactElement, initialPath = '/tasks') {
     </MemoryRouter>,
   );
 }
-
-// ─── Lazy imports (mocks must be registered before import) ────────────────────
 
 let TaskListView: typeof import('./TaskListView').TaskListView;
 let TaskBreadcrumb: typeof import('./TaskBreadcrumb').TaskBreadcrumb;
@@ -133,8 +125,6 @@ beforeAll(async () => {
   TaskBreadcrumb = bcMod.TaskBreadcrumb;
   NodeResultTable = tableMod.NodeResultTable;
 });
-
-// ─── Test 3: TaskListView uses path query ─────────────────────────────────────
 
 describe('Test 3 — TaskListView uses path=[id:N]/[name:Tasks]/[type:task]', () => {
   it('positive: request URL contains the expected path parameter (URL-encoded)', async () => {
@@ -183,8 +173,6 @@ describe('Test 3 — TaskListView uses path=[id:N]/[name:Tasks]/[type:task]', ()
   });
 });
 
-// ─── Test 4: Topology-empty signal ───────────────────────────────────────────
-
 describe('Test 4 — TaskListView topology-empty signal', () => {
   it('positive: empty path result renders topology-specific message, not generic "No results"', async () => {
     server.use(
@@ -221,8 +209,6 @@ describe('Test 4 — TaskListView topology-empty signal', () => {
   });
 });
 
-// ─── Test 5: TaskBreadcrumb resolves org and project names ───────────────────
-
 describe('Test 5 — TaskBreadcrumb resolves names via useNode', () => {
   it('positive: with orgId=10 and projectId=20, renders "Tasks › Mamgo › Backend"', async () => {
     renderWithProviders(<TaskBreadcrumb orgId={10} projectId={20} />);
@@ -254,8 +240,6 @@ describe('Test 5 — TaskBreadcrumb resolves names via useNode', () => {
     expect(screen.queryByText('Backend')).not.toBeInTheDocument();
   });
 });
-
-// ─── Test 6: NodeResultTable default getRowHref preserved ────────────────────
 
 describe('Test 6 — NodeResultTable getRowHref default behaviour preserved', () => {
   it('positive: when getRowHref is not passed, row links to /nodes/:id', () => {

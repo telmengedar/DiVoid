@@ -26,7 +26,6 @@ import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { BASE_URL } from '@/test/msw/handlers';
 
-// ─── Hoisted prop-capture refs ────────────────────────────────────────────────
 // vi.hoisted runs before vi.mock factory calls so the refs are available inside
 // the xyflow mock factory. On each ReactFlow render the mock writes the current
 // nodes/edges props; the test body reads them after each refetch settles.
@@ -35,8 +34,6 @@ const { lastNodesRef, lastEdgesRef } = vi.hoisted(() => ({
   lastNodesRef: { current: null as readonly unknown[] | null },
   lastEdgesRef: { current: null as readonly unknown[] | null },
 }));
-
-// ─── MSW server ───────────────────────────────────────────────────────────────
 
 // Two identical viewport responses — simulates a refetch with no data change.
 const SAMPLE_VIEWPORT_NODES = [
@@ -81,8 +78,6 @@ afterEach(() => {
   viewportRequestCount = 0;
 });
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
@@ -184,8 +179,6 @@ vi.mock('./WorkspaceFilterPopover', () => ({
   WorkspaceFilterPopover: () => null,
 }));
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 beforeEach(() => {
   lastNodesRef.current = null;
   lastEdgesRef.current = null;
@@ -227,8 +220,6 @@ function renderCanvas() {
     ),
   };
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('Viewport refetch render-stability (DiVoid #1261)', () => {
   /**

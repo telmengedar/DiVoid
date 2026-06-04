@@ -26,8 +26,6 @@ import { setupServer } from 'msw/node';
 import type { NodeDetails } from '@/types/divoid';
 import { BASE_URL, sampleNode, samplePage } from '@/test/msw/handlers';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const writeUser = {
   id: 1, name: 'Toni', email: 'toni@mamgo.io', enabled: true,
   createdAt: '2026-01-01T00:00:00Z', permissions: ['read', 'write'],
@@ -78,8 +76,6 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
@@ -173,8 +169,6 @@ vi.mock('./MarkdownEditorSurface', () => ({
   },
 }));
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 function renderAtId(id: number | string) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -191,16 +185,12 @@ function renderAtId(id: number | string) {
   );
 }
 
-// ─── Import lazily so mocks are registered first ──────────────────────────────
-
 let NodeDetailPage: typeof import('./NodeDetailPage').NodeDetailPage;
 
 beforeAll(async () => {
   const mod = await import('./NodeDetailPage');
   NodeDetailPage = mod.NodeDetailPage;
 });
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('NodeDetailPage — read regions', () => {
   it('renders metadata region with id, type, name, status, contentType', async () => {
@@ -337,8 +327,6 @@ describe('NodeDetailPage — write affordances', () => {
   });
 });
 
-// ─── Task #294: empty-state for nodes with no contentType ────────────────────
-//
 // Root cause: nodes with contentType=null had no content fetch (enabled:false),
 // but ContentRegion had no empty-state branch — it fell through to "No content."
 // with no affordances to create content. The fix adds a distinct EmptyContentCard
@@ -452,8 +440,6 @@ describe('NodeDetailPage — empty-state (task #294)', () => {
   });
 });
 
-// ─── Regression: infinite-render loop (DiVoid #257) ──────────────────────────
-//
 // Prior to useApiClient() being introduced, every hook called createApiClient()
 // inline on every render. This created a new client object each render, which
 // changed queryFn identity, which caused TanStack Query to refetch, which

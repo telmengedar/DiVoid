@@ -16,8 +16,6 @@
 import { describe, it, expect } from 'vitest';
 import type { WorkspaceNode } from './NodeCardRenderer';
 
-// ─── Extracted pure function ──────────────────────────────────────────────────
-//
 // This is the exact logic from the setNodes updater in WorkspaceCanvas, pulled
 // into a testable function. If the component logic changes, this function must
 // be kept in sync.
@@ -41,8 +39,6 @@ function mergeNodes(
   );
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 function makeNode(
   id: string,
   x: number,
@@ -57,8 +53,6 @@ function makeNode(
     ...overrides,
   };
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('nodesSyncMerge — Map-based prev-merge (win #6)', () => {
   it('updates positions of non-dragging nodes from incoming', () => {

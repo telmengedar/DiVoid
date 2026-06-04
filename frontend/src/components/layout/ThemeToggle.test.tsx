@@ -34,8 +34,6 @@ import { setupServer } from 'msw/node';
 import { ThemeToggle } from './ThemeToggle';
 import { BASE_URL } from '@/test/msw/handlers';
 
-// ─── jsdom compatibility: window.matchMedia polyfill ─────────────────────────
-//
 // next-themes calls window.matchMedia('(prefers-color-scheme: dark)') to detect
 // system preference. jsdom does not implement matchMedia; without this mock the
 // ThemeProvider throws "window.matchMedia is not a function".
@@ -57,8 +55,6 @@ Object.defineProperty(window, 'matchMedia', {
   })),
 });
 
-// ─── MSW ─────────────────────────────────────────────────────────────────────
-
 const server = setupServer(
   http.get(`${BASE_URL}/users/me`, () =>
     HttpResponse.json({
@@ -73,8 +69,6 @@ beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => { server.resetHandlers(); document.documentElement.className = ''; });
 afterAll(() => server.close());
 
-// ─── Mock react-oidc-context ─────────────────────────────────────────────────
-
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
     isAuthenticated: true,
@@ -83,8 +77,6 @@ vi.mock('react-oidc-context', () => ({
     signinSilent: vi.fn().mockResolvedValue(undefined),
   })),
 }));
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function makeQC() {
   return new QueryClient({
@@ -115,8 +107,6 @@ function ThemeTestWrapper({
   );
 }
 
-// ─── Inline markdown preview fixture ─────────────────────────────────────────
-
 /**
  * Simulates the read-path markdown wrapper used in NodeDetailPage and
  * MarkdownEditorSurface. The className must be "prose prose-sm dark:prose-invert max-w-none"
@@ -134,8 +124,6 @@ function MarkdownPreview({ content }: { content: string }) {
     </div>
   );
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('ThemeProvider wiring + ThemeToggle', () => {
   it('applies "dark" class to <html> when defaultTheme="dark"', async () => {
@@ -257,8 +245,6 @@ describe('ThemeProvider wiring + ThemeToggle', () => {
   });
 });
 
-// ─── NEGATIVE PROOF DOCUMENTATION ────────────────────────────────────────────
-//
 // To reproduce the negative proof manually:
 //
 //  1. Remove <ThemeProvider> from ThemeTestWrapper (replace with a plain Fragment).
