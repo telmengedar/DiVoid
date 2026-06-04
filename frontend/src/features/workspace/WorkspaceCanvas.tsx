@@ -49,7 +49,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useTheme } from 'next-themes';
-import { useNavigate } from 'react-router-dom';
+// react-router-dom navigate no longer needed here — peek opens in modal (DiVoid #1606)
 import { toast } from 'sonner';
 
 import {
@@ -242,7 +242,6 @@ interface WorkspaceCanvasProps {
 
 export function WorkspaceCanvas({ onPeek }: WorkspaceCanvasProps) {
   const { resolvedTheme } = useTheme();
-  const navigate          = useNavigate();
   const client            = useApiClient();
   const moveNode          = useMoveNode();
   const createNode        = useCreateNode();
@@ -490,12 +489,14 @@ export function WorkspaceCanvas({ onPeek }: WorkspaceCanvasProps) {
   );
 
   // ── After create-node from dialog ─────────────────────────────────────────
+  // Opens the newly-created node in the peek modal rather than navigating away,
+  // so the user stays on /workspace. See DiVoid #1606.
   const handleNodeCreated = useCallback(
     (id: number) => {
       setCreateDialogOpen(false);
-      navigate(`/nodes/${id}`);
+      onPeek(id);
     },
-    [navigate],
+    [onPeek],
   );
 
   // ── Drag-to-connect (#287) ────────────────────────────────────────────────

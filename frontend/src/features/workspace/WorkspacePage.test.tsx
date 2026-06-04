@@ -27,8 +27,9 @@
  */
 
 import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
+import { useEffect, type MutableRefObject } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
@@ -138,6 +139,39 @@ function renderPage() {
       </QueryClientProvider>
     </MemoryRouter>,
   );
+}
+
+/**
+ * LocationCapture — writes the current location to the provided ref on every
+ * render. Pattern from #420 §13.10 — cleaner than navigation spies.
+ */
+function LocationCapture({ locationRef }: { locationRef: MutableRefObject<ReturnType<typeof useLocation> | null> }) {
+  const location = useLocation();
+  useEffect(() => {
+    locationRef.current = location;
+  });
+  return null;
+}
+
+/**
+ * renderPageWithLocationCapture — renders WorkspacePage inside a MemoryRouter
+ * that also mounts a LocationCapture child so tests can assert on the URL
+ * after user interactions.
+ */
+function renderPageWithLocationCapture() {
+  const qc = makeQC();
+  const locationRef: MutableRefObject<ReturnType<typeof useLocation> | null> = { current: null };
+
+  const result = render(
+    <MemoryRouter initialEntries={['/workspace']}>
+      <QueryClientProvider client={qc}>
+        <WorkspacePage />
+        <LocationCapture locationRef={locationRef} />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+
+  return { ...result, locationRef };
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -255,6 +289,122 @@ describe('WorkspacePage — click empty space → CreateNodeDialog', () => {
 
     // The dialog should show "New node" heading.
     expect(screen.getByRole('heading', { name: /new node/i })).toBeInTheDocument();
+  });
+});
+
+describe('WorkspacePage — create node opens peek modal (DiVoid #1606)', () => {
+  /**
+   * Test 5 — load-bearing proof for DiVoid #1606:
+   *
+   * After the user creates a node via the workspace CreateNodeDialog:
+   *   (a) The URL gains ?peek=<newId> — peek modal opens with the new node.
+   *   (b) The peek modal element is present in the DOM.
+   *   (c) The pathname remains /workspace — no navigation to /nodes/<id>.
+   *
+   * Substitution proof: reverting handleNodeCreated back to
+   * `navigate(\`/nodes/\${id}\`)` causes (a) and (b) to fail (URL stays bare,
+   * no peek modal) and would cause (c) to fail (pathname changes to /nodes/99).
+   *
+   * DiVoid #1606. Contract §13.1 load-bearing, §13.4 real DOM events.
+   */
+  it('opens peek modal with the new node id and stays on /workspace after dialog success', async () => {
+    // MSW: GET /nodes/99 — needed by NodeDetailView when peek opens.
+    server.use(
+      http.get(`${BASE_URL}/nodes/99`, () =>
+        HttpResponse.json({ id: 99, type: 'task', name: 'New node', status: 'open' }),
+      ),
+      http.get(`${BASE_URL}/nodes/99/content`, () =>
+        new HttpResponse(null, { status: 404 }),
+      ),
+    );
+
+    const { locationRef } = renderPageWithLocationCapture();
+
+    // Wait for canvas to be ready.
+    await waitFor(() => {
+      expect(screen.getByTestId('rf__wrapper')).toBeInTheDocument();
+    }, { timeout: 5000 });
+
+    // Click on the xyflow pane to open CreateNodeDialog.
+    const pane = document.querySelector('.react-flow__pane');
+    if (!pane) return; // xyflow pane not found — DOM not hydrated, skip.
+
+    await act(async () => {
+      fireEvent.click(pane, { clientX: 300, clientY: 400 });
+    });
+
+    // Wait for dialog to open.
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeInTheDocument();
+    }, { timeout: 3000 });
+
+    // Fill in type and name. Use element id selectors to avoid ambiguity with
+    // the filter-toolbar buttons that also have text "Type" / "Status".
+    await act(async () => {
+      fireEvent.change(document.getElementById('create-type')!, { target: { value: 'task' } });
+      fireEvent.change(document.getElementById('create-name')!, { target: { value: 'Peek node' } });
+    });
+
+    // Submit the form.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /create/i }));
+    });
+
+    // (a) URL must have ?peek=99 — peek state opened with the new node.
+    await waitFor(() => {
+      expect(locationRef.current?.search).toContain('peek=99');
+    }, { timeout: 3000 });
+
+    // (b) Peek modal element must be in the DOM.
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-peek-modal')).toBeInTheDocument();
+    }, { timeout: 3000 });
+
+    // (c) Pathname must still be /workspace — no navigation away occurred.
+    expect(locationRef.current?.pathname).toBe('/workspace');
+  });
+
+  /**
+   * Test 6 — dialog cancel still works (edge case):
+   * Clicking Cancel on the CreateNodeDialog does not open the peek modal and
+   * does not change the URL.
+   *
+   * Substitution proof: removing the Cancel button wiring causes the dialog to
+   * stay open and this test to fail on the dialog-absence assertion.
+   */
+  it('cancel on CreateNodeDialog does not open peek modal', async () => {
+    const { locationRef } = renderPageWithLocationCapture();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('rf__wrapper')).toBeInTheDocument();
+    }, { timeout: 5000 });
+
+    const pane = document.querySelector('.react-flow__pane');
+    if (!pane) return;
+
+    await act(async () => {
+      fireEvent.click(pane, { clientX: 300, clientY: 400 });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeInTheDocument();
+    }, { timeout: 3000 });
+
+    // Click Cancel.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    });
+
+    // Dialog should close.
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    }, { timeout: 3000 });
+
+    // No peek param in URL.
+    expect(locationRef.current?.search ?? '').not.toContain('peek=');
+
+    // No peek modal in DOM.
+    expect(screen.queryByTestId('workspace-peek-modal')).not.toBeInTheDocument();
   });
 });
 
