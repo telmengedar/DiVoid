@@ -8,10 +8,17 @@
  *  - Tab switching renders correct panel.
  */
 
-import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterEach, afterAll, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+
+const { navigateSpy } = vi.hoisted(() => ({ navigateSpy: vi.fn() }));
+
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return { ...actual, useNavigate: () => navigateSpy };
+});
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
@@ -35,6 +42,7 @@ const server = setupServer(
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
+beforeEach(() => navigateSpy.mockClear());
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
@@ -104,11 +112,12 @@ beforeAll(async () => {
 });
 
 describe('SearchPage', () => {
-  it('renders the three tab buttons', () => {
+  it('renders the four tab buttons', () => {
     renderPage();
     expect(screen.getByRole('tab', { name: /semantic/i })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /linked/i })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /path/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /by id/i })).toBeInTheDocument();
   });
 
   it('semantic tab shows results after submitting a query', async () => {
@@ -145,6 +154,52 @@ describe('SearchPage', () => {
     await waitFor(() => {
       expect(screen.getByText('First task')).toBeInTheDocument();
     });
+  });
+
+  it('ST1: switching to By ID tab renders the input and a disabled Open button', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole('tab', { name: /by id/i }));
+
+    expect(screen.getByRole('spinbutton', { name: /node id to open/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /open/i })).toBeDisabled();
+  });
+
+  it('ST2: typing a positive id enables Open and submitting navigates to /nodes/{id}', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole('tab', { name: /by id/i }));
+    const input = screen.getByRole('spinbutton', { name: /node id to open/i });
+    await user.type(input, '1462');
+
+    const openBtn = screen.getByRole('button', { name: /open/i });
+    expect(openBtn).toBeEnabled();
+
+    await user.click(openBtn);
+
+    expect(navigateSpy).toHaveBeenCalledWith('/nodes/1462');
+  });
+
+  it('ST3: typing 0 keeps Open disabled (non-positive guard)', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole('tab', { name: /by id/i }));
+    const input = screen.getByRole('spinbutton', { name: /node id to open/i });
+    await user.type(input, '0');
+
+    expect(screen.getByRole('button', { name: /open/i })).toBeDisabled();
+  });
+
+  it('ST4: Open stays disabled when input is empty', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole('tab', { name: /by id/i }));
+    expect(screen.getByRole('button', { name: /open/i })).toBeDisabled();
+    expect(navigateSpy).not.toHaveBeenCalledWith(expect.stringMatching(/^\/nodes\//));
   });
 
   it('path tab shows column-pointing error message on 400', async () => {

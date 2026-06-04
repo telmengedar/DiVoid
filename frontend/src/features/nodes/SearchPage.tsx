@@ -15,7 +15,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Search, Link2, GitBranch, Plus } from 'lucide-react';
+import { Search, Link2, GitBranch, Plus, Hash } from 'lucide-react';
 import { useNodeSemantic } from './useNodeSemantic';
 import { useNodeListLinkedTo } from './useNodeListLinkedTo';
 import { useNodePath } from './useNodePath';
@@ -28,7 +28,7 @@ import { useWhoami } from '@/features/auth/useWhoami';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Tab = 'semantic' | 'linked' | 'path';
+type Tab = 'semantic' | 'linked' | 'path' | 'by-id';
 
 // ─── Tab bar ──────────────────────────────────────────────────────────────────
 
@@ -41,6 +41,7 @@ const TABS: { id: Tab; label: string; Icon: React.ElementType }[] = [
   { id: 'semantic', label: 'Semantic', Icon: Search },
   { id: 'linked', label: 'Linked', Icon: Link2 },
   { id: 'path', label: 'Path', Icon: GitBranch },
+  { id: 'by-id', label: 'By ID', Icon: Hash },
 ];
 
 function TabBar({ active, onChange }: TabBarProps) {
@@ -355,6 +356,60 @@ function PathPanel() {
   );
 }
 
+/**
+ * Open-by-ID panel: numeric input + Open button that navigates to /nodes/{id}.
+ * Validation: positive integer only; Open disabled otherwise. Design DiVoid #1604.
+ */
+function ByIdPanel() {
+  const [inputId, setInputId] = useState('');
+  const navigate = useNavigate();
+
+  const parsed = parseInt(inputId.trim(), 10);
+  const isValid = !isNaN(parsed) && parsed > 0;
+
+  const handleSubmit = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      if (isValid) {
+        navigate(ROUTES.NODE_DETAIL(parsed));
+      }
+    },
+    [isValid, parsed, navigate],
+  );
+
+  return (
+    <div
+      id="panel-by-id"
+      role="tabpanel"
+      aria-labelledby="tab-by-id"
+      className="flex flex-col gap-4"
+    >
+      <form onSubmit={handleSubmit} className="flex gap-2">
+        <input
+          type="number"
+          min={1}
+          value={inputId}
+          onChange={(e) => setInputId(e.target.value)}
+          placeholder="Node ID to open…"
+          aria-label="Node ID to open"
+          className="w-44 h-9 rounded-md border border-border bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+        <button
+          type="submit"
+          disabled={!isValid}
+          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
+        >
+          <Hash size={14} aria-hidden="true" />
+          Open
+        </button>
+      </form>
+      <p className="text-xs text-muted-foreground">
+        Enter a positive numeric node id to jump straight to its detail view.
+      </p>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function SearchPage() {
@@ -397,6 +452,7 @@ export function SearchPage() {
           {activeTab === 'semantic' && <SemanticPanel />}
           {activeTab === 'linked' && <LinkedPanel />}
           {activeTab === 'path' && <PathPanel />}
+          {activeTab === 'by-id' && <ByIdPanel />}
         </div>
       </div>
 
