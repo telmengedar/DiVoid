@@ -23,10 +23,8 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState } from 'react';
 import { BASE_URL } from '@/test/msw/handlers';
-
-// ─── MSW server ───────────────────────────────────────────────────────────────
 
 const semanticFixture = {
   result: [
@@ -57,8 +55,6 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => { server.resetHandlers(); vi.clearAllMocks(); });
 afterAll(() => server.close());
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
@@ -99,8 +95,6 @@ vi.mock('next-themes', () => ({
   useTheme: vi.fn(() => ({ resolvedTheme: 'dark', setTheme: vi.fn() })),
 }));
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 function makeQC() {
   return new QueryClient({
     defaultOptions: {
@@ -124,8 +118,6 @@ function renderBar(onOpenPeek: (id: number) => void) {
     );
   });
 }
-
-// ─── WT3 — classifyInput unit test ───────────────────────────────────────────
 
 describe('classifyInput', () => {
   /**
@@ -161,8 +153,6 @@ describe('classifyInput', () => {
   });
 });
 
-// ─── WT1 — id-mode Enter calls onOpenPeek ────────────────────────────────────
-
 describe('WorkspaceSearchBar — id-mode submit', () => {
   /**
    * WT1 (load-bearing positive proof).
@@ -195,8 +185,6 @@ describe('WorkspaceSearchBar — id-mode submit', () => {
     expect((input as HTMLInputElement).value).toBe('');
   });
 });
-
-// ─── WT2 — semantic-mode: Enter is no-op; debounced query fires ───────────────
 
 describe('WorkspaceSearchBar — semantic-mode debounce', () => {
   /**
@@ -260,8 +248,6 @@ describe('WorkspaceSearchBar — semantic-mode debounce', () => {
   });
 });
 
-// ─── WT5 — row click calls onOpenPeek and clears input ───────────────────────
-
 describe('WorkspaceSearchBar — dropdown row click', () => {
   /**
    * WT5 (load-bearing positive proof).
@@ -309,107 +295,62 @@ describe('WorkspaceSearchBar — dropdown row click', () => {
   });
 });
 
-// ─── WT4 — render-stability sentinel ─────────────────────────────────────────
-
 describe('WorkspaceSearchBar — render stability (WT4)', () => {
   /**
    * WT4 (load-bearing render-stability test).
    *
-   * Mounting WorkspaceSearchBar next to a canvas-proxy component must NOT cause
-   * the canvas-proxy to re-render beyond the expected initial settlement.
+   * Design §13.2: mounting WorkspaceSearchBar next to WorkspaceCanvas (represented
+   * here by MockWorkspaceCanvas) must NOT cause the canvas to re-render when the
+   * search bar's local input state changes.
    *
-   * This follows the MAX_RENDERS=30 sentinel pattern from
-   * WorkspacePage.renderLoop.test.tsx (§13.7 / DiVoid #271).
+   * MockWorkspaceCanvas is a vi.fn() component; mock.calls.length is the render count.
+   * The wrapper does NOT pass any input-derived prop to MockWorkspaceCanvas — exactly
+   * the production topology (WorkspacePage mounts both as siblings without threading
+   * input state to the canvas, per design §9 / DiVoid #271).
    *
-   * The canvas-proxy is a minimal functional component that counts renders.
-   * If the search bar's local state change triggers a parent re-render that
-   * flows into the canvas props, the proxy render count exceeds the LOW_THRESHOLD.
+   * Substitution proof (§13.2): lift searchInput to the wrapper and pass it to
+   * MockWorkspaceCanvas as a prop → render count exceeds initial settle count →
+   * assertion `mock.calls.length === initialRenderCount` fails.
+   * Verbatim failure from substitution run recorded in PR body.
    *
-   * Negative proof: make the search bar lift its input state to the parent and
-   * pass it as a prop to the canvas-proxy → the proxy render count spikes past
-   * LOW_THRESHOLD (typically 5+) and the assertion fails.
+   * Negative proof (render-loop guard): component does not loop to MAX_RENDERS on mount.
    */
 
   const MAX_RENDERS = 30;
-  const LOW_THRESHOLD = 5;
 
-  function CanvasRenderProxy({ renderCountRef }: { renderCountRef: React.MutableRefObject<number> }) {
-    renderCountRef.current += 1;
-    if (renderCountRef.current >= MAX_RENDERS) {
-      return <div data-testid="loop-capped" data-renders={renderCountRef.current} />;
-    }
-    return <div data-testid="canvas-proxy" data-renders={renderCountRef.current} />;
-  }
+  const MockWorkspaceCanvas = vi.fn(() => <div data-testid="mock-canvas" />);
 
-  function SearchBarWithSiblingCanvas() {
-    const renderCountRef = useRef(0);
-    const [searchInput, setSearchInput] = useState('');
-    void searchInput;
-    void setSearchInput;
-
+  function TestWrapper({ onOpenPeek }: { onOpenPeek: (id: number) => void }) {
     return (
       <div className="relative h-full w-full">
-        <CanvasRenderProxy renderCountRef={renderCountRef} />
-        <div data-testid="search-bar-wrapper">
-          {(function SearchBarInner() {
-            const [input, setInput] = useState('');
-            const mode = input.trim().length === 0 ? 'empty'
-              : /^\d+$/.test(input.trim()) && parseInt(input.trim(), 10) > 0 ? 'id'
-              : 'query';
-            const [debouncedQuery, setDebouncedQuery] = useState('');
-            const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-            useEffect(() => {
-              if (mode !== 'query') { setDebouncedQuery(''); return; }
-              if (debounceRef.current) clearTimeout(debounceRef.current);
-              debounceRef.current = setTimeout(() => setDebouncedQuery(input.trim()), 250);
-              return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-            }, [input, mode]);
-
-            void debouncedQuery;
-
-            return (
-              <input
-                data-testid="sb-input"
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                aria-label="test search"
-              />
-            );
-          })()}
-        </div>
+        <MockWorkspaceCanvas />
+        <WorkspaceSearchBarUnderTest onOpenPeek={onOpenPeek} />
       </div>
     );
   }
 
-  it('WorkspaceSearchBar typing does NOT cause canvas sibling to re-render excessively', async () => {
-    const renderCountRef = { current: 0 };
+  let WorkspaceSearchBarUnderTest: typeof import('./WorkspaceSearchBar').WorkspaceSearchBar;
 
-    const qc = makeQC();
+  beforeAll(async () => {
+    const mod = await import('./WorkspaceSearchBar');
+    WorkspaceSearchBarUnderTest = mod.WorkspaceSearchBar;
+  });
 
-    function RenderCountSentinel() {
-      const localRef = useRef(0);
-      localRef.current += 1;
-      renderCountRef.current = localRef.current;
-      return <div data-testid="sentinel" data-renders={localRef.current} />;
-    }
+  it('typing into WorkspaceSearchBar does NOT cause MockWorkspaceCanvas to re-render', async () => {
+    MockWorkspaceCanvas.mockClear();
 
     const onOpenPeek = vi.fn();
-    const { WorkspaceSearchBar } = await import('./WorkspaceSearchBar');
+    const qc = makeQC();
 
     render(
       <MemoryRouter initialEntries={['/workspace']}>
         <QueryClientProvider client={qc}>
-          <div className="relative h-full w-full">
-            <RenderCountSentinel />
-            <WorkspaceSearchBar onOpenPeek={onOpenPeek} />
-          </div>
+          <TestWrapper onOpenPeek={onOpenPeek} />
         </QueryClientProvider>
       </MemoryRouter>,
     );
 
-    const sentinelBefore = renderCountRef.current;
+    const initialRenderCount = MockWorkspaceCanvas.mock.calls.length;
 
     const input = screen.getByRole('textbox', { name: /search by id or query/i });
     fireEvent.change(input, { target: { value: 'type something' } });
@@ -420,30 +361,25 @@ describe('WorkspaceSearchBar — render stability (WT4)', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
 
-    const sentinelAfter = renderCountRef.current;
-
-    expect(sentinelAfter - sentinelBefore).toBeLessThan(LOW_THRESHOLD);
+    expect(MockWorkspaceCanvas.mock.calls.length).toBe(initialRenderCount);
   });
 
-  it('unstable sibling (lifting search state to parent) causes re-renders', async () => {
-    const canvasRenderCount = { current: 0 };
+  it('substitution proof: lifting search state to wrapper and passing to MockWorkspaceCanvas causes re-renders', async () => {
+    const SubstitutionMockCanvas = vi.fn((_props: { searchInput?: string }) => (
+      <div data-testid="substitution-mock-canvas" />
+    ));
 
-    function UnstableParent() {
-      const [inputValue, setInputValue] = useState('');
-      const renderRef = useRef(0);
-      renderRef.current += 1;
-      canvasRenderCount.current = renderRef.current;
-
-      void inputValue;
-
+    function UnstableWrapper() {
+      const [searchInput, setSearchInput] = useState('');
       return (
-        <div>
-          <div data-testid="canvas-child" data-renders={renderRef.current} />
+        <div className="relative h-full w-full">
+          <SubstitutionMockCanvas searchInput={searchInput} />
           <input
-            data-testid="unstable-input"
+            data-testid="unstable-search-input"
             type="text"
-            onChange={(e) => setInputValue(e.target.value)}
-            aria-label="unstable input"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            aria-label="lifted search input"
           />
         </div>
       );
@@ -451,32 +387,26 @@ describe('WorkspaceSearchBar — render stability (WT4)', () => {
 
     const qc = makeQC();
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/workspace']}>
         <QueryClientProvider client={qc}>
-          <UnstableParent />
+          <UnstableWrapper />
         </QueryClientProvider>
       </MemoryRouter>,
     );
 
-    const before = canvasRenderCount.current;
+    const initialRenderCount = SubstitutionMockCanvas.mock.calls.length;
 
-    const unstableInput = screen.getByTestId('unstable-input');
+    const unstableInput = screen.getByTestId('unstable-search-input');
     fireEvent.change(unstableInput, { target: { value: 'a' } });
     fireEvent.change(unstableInput, { target: { value: 'ab' } });
     fireEvent.change(unstableInput, { target: { value: 'abc' } });
 
-    const after = canvasRenderCount.current;
-
-    expect(after - before).toBeGreaterThanOrEqual(3);
+    expect(SubstitutionMockCanvas.mock.calls.length).toBeGreaterThan(initialRenderCount);
   });
 
   it('WorkspaceSearchBar does not loop to MAX_RENDERS on mount', async () => {
-    void MAX_RENDERS;
-    void SearchBarWithSiblingCanvas;
-
     const qc = makeQC();
     const onOpenPeek = vi.fn();
-    const { WorkspaceSearchBar } = await import('./WorkspaceSearchBar');
 
     let loopDetected = false;
     const renderCount = { current: 0 };
@@ -486,9 +416,7 @@ describe('WorkspaceSearchBar — render stability (WT4)', () => {
       if (renderCount.current >= MAX_RENDERS) {
         loopDetected = true;
       }
-      const stableCount = useMemo(() => renderCount.current, []);
-      void stableCount;
-      return <WorkspaceSearchBar {...props} />;
+      return <WorkspaceSearchBarUnderTest {...props} />;
     }
 
     render(

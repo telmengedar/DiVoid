@@ -29,11 +29,7 @@ import { cn } from '@/lib/cn';
 import { useNodeSemantic } from '@/features/nodes/useNodeSemantic';
 import type { NodeDetails } from '@/types/divoid';
 
-// ─── Debounce constant ────────────────────────────────────────────────────────
-// 250 ms per design §8.2. Documented so the choice is traceable; see §10 trade-offs.
 const DEBOUNCE_MS = 250;
-
-// ─── classifyInput (exported for WT3 unit test) ───────────────────────────────
 
 /**
  * Classifies a raw input string into one of three modes.
@@ -57,8 +53,6 @@ export function classifyInput(raw: string): 'id' | 'query' | 'empty' {
   return 'query';
 }
 
-// ─── Props ────────────────────────────────────────────────────────────────────
-
 interface WorkspaceSearchBarProps {
   /**
    * Stable callback from `usePeekState.openPeek` (via WorkspacePage).
@@ -70,8 +64,6 @@ interface WorkspaceSearchBarProps {
    */
   onOpenPeek: (id: number) => void;
 }
-
-// ─── Component ────────────────────────────────────────────────────────────────
 
 /**
  * Floating in-canvas search bar positioned in the top-right of the canvas
@@ -89,9 +81,6 @@ export function WorkspaceSearchBar({ onOpenPeek }: WorkspaceSearchBarProps) {
 
   const mode = classifyInput(input);
 
-  // ── Debounced semantic query update ───────────────────────────────────────
-  // Effect guards: only update when mode is 'query' so we never pass a digit
-  // string to useNodeSemantic (§6.6: gate on enabled).
   useEffect(() => {
     if (mode !== 'query') {
       setDebouncedQuery('');
@@ -107,11 +96,9 @@ export function WorkspaceSearchBar({ onOpenPeek }: WorkspaceSearchBarProps) {
     };
   }, [input, mode]);
 
-  // ── Semantic query ────────────────────────────────────────────────────────
   const { data: semanticPage } = useNodeSemantic(debouncedQuery, { count: 8 });
   const semanticRows: NodeDetails[] = semanticPage?.result ?? [];
 
-  // Open dropdown when semantic results arrive
   useEffect(() => {
     if (semanticRows.length > 0 && mode === 'query') {
       setDropdownOpen(true);
@@ -120,7 +107,6 @@ export function WorkspaceSearchBar({ onOpenPeek }: WorkspaceSearchBarProps) {
     }
   }, [semanticRows, mode]);
 
-  // ── Outside-click dismissal ───────────────────────────────────────────────
   useEffect(() => {
     function handlePointerDown(e: PointerEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
@@ -132,8 +118,6 @@ export function WorkspaceSearchBar({ onOpenPeek }: WorkspaceSearchBarProps) {
       document.removeEventListener('pointerdown', handlePointerDown);
     };
   }, []);
-
-  // ── Handlers ──────────────────────────────────────────────────────────────
 
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setInput(e.target.value);
@@ -157,8 +141,6 @@ export function WorkspaceSearchBar({ onOpenPeek }: WorkspaceSearchBarProps) {
           setInput('');
           setDropdownOpen(false);
         }
-        // 'query' mode: Enter is a no-op; dropdown handles selection.
-        // 'empty' mode: no-op.
       }
     },
     [mode, input, onOpenPeek],
@@ -174,7 +156,6 @@ export function WorkspaceSearchBar({ onOpenPeek }: WorkspaceSearchBarProps) {
     [onOpenPeek],
   );
 
-  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div
       ref={containerRef}
