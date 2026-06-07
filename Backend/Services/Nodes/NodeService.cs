@@ -220,7 +220,10 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     public async Task<(string, Stream)> GetNodeData(long nodeId, long callerId, bool isAdmin, long[] accessibleOrgs = null)
     {
         PredicateExpression<Node> gate = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write: false);
+        PredicateExpression<Node> orgGate = OrganizationAuthorization.BuildOrgVisibilityPredicate(accessibleOrgs, isAdmin);
         PredicateExpression<Node> predicate = new PredicateExpression<Node>(n => n.Id == nodeId);
+        if (orgGate != null)
+            predicate &= orgGate;
         if (gate != null)
             predicate &= gate;
 
@@ -243,7 +246,10 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             throw new InvalidOperationException("Unable to link node to itself");
 
         PredicateExpression<Node> gate = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write: true);
+        PredicateExpression<Node> orgGate = OrganizationAuthorization.BuildOrgVisibilityPredicate(accessibleOrgs, isAdmin);
         PredicateExpression<Node> sourcePredicate = new PredicateExpression<Node>(n => n.Id == sourceNodeId);
+        if (orgGate != null)
+            sourcePredicate &= orgGate;
         if (gate != null)
             sourcePredicate &= gate;
 
@@ -899,7 +905,10 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             gatePredicate = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write: true);
         }
 
+        PredicateExpression<Node> orgGate = OrganizationAuthorization.BuildOrgVisibilityPredicate(accessibleOrgs, isAdmin);
         PredicateExpression<Node> predicate = new PredicateExpression<Node>(n => n.Id == nodeId);
+        if (orgGate != null)
+            predicate &= orgGate;
         if (gatePredicate != null)
             predicate &= gatePredicate;
 
@@ -1033,7 +1042,10 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     public async Task UnlinkNodes(long sourceNodeId, long targetNodeId, long callerId, bool isAdmin, long[] accessibleOrgs = null)
     {
         PredicateExpression<Node> gate = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write: true);
+        PredicateExpression<Node> orgGate = OrganizationAuthorization.BuildOrgVisibilityPredicate(accessibleOrgs, isAdmin);
         PredicateExpression<Node> sourcePredicate = new PredicateExpression<Node>(n => n.Id == sourceNodeId);
+        if (orgGate != null)
+            sourcePredicate &= orgGate;
         if (gate != null)
             sourcePredicate &= gate;
 
@@ -1051,7 +1063,10 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         byte[] blob = await data.ToByteArray();
 
         PredicateExpression<Node> gate = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write: true);
+        PredicateExpression<Node> orgGate = OrganizationAuthorization.BuildOrgVisibilityPredicate(accessibleOrgs, isAdmin);
         PredicateExpression<Node> predicate = new PredicateExpression<Node>(n => n.Id == nodeId);
+        if (orgGate != null)
+            predicate &= orgGate;
         if (gate != null)
             predicate &= gate;
 
@@ -1090,18 +1105,29 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     }
 
     /// <inheritdoc />
-    public Task<AsyncPageResponseWriter<NodeLink>> ListLinks(long[] ids, ListFilter filter, CancellationToken ct)
+    public Task<AsyncPageResponseWriter<NodeLink>> ListLinks(long[] ids, ListFilter filter, long callerId, bool isAdmin, long[] accessibleOrgs, CancellationToken ct)
     {
         filter ??= new();
         if (filter.Count is null or > 500)
             filter.Count = 500;
 
+        PredicateExpression<Node> visiblePredicate = new PredicateExpression<Node>(n => n.Id.In(ids));
+        PredicateExpression<Node> orgGate = OrganizationAuthorization.BuildOrgVisibilityPredicate(accessibleOrgs, isAdmin);
+        if (orgGate != null)
+            visiblePredicate &= orgGate;
+        PredicateExpression<Node> nodeVisibility = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write: false);
+        if (nodeVisibility != null)
+            visiblePredicate &= nodeVisibility;
+
+        LoadOperation<Node> visibleIdsOp = database.Load<Node>(n => n.Id)
+                                                   .Where(visiblePredicate.Content);
+
         LoadOperation<NodeLink> operation = database.Load<NodeLink>(l => l.SourceId, l => l.TargetId)
-                                                    .Where(l => l.SourceId.In(ids) || l.TargetId.In(ids));
+                                                    .Where(l => l.SourceId.In(visibleIdsOp) || l.TargetId.In(visibleIdsOp));
         operation.ApplyFilter(filter);
 
         LoadOperation<NodeLink> countOp = database.Load<NodeLink>(DB.Count())
-                                                  .Where(l => l.SourceId.In(ids) || l.TargetId.In(ids));
+                                                  .Where(l => l.SourceId.In(visibleIdsOp) || l.TargetId.In(visibleIdsOp));
 
         return Task.FromResult(new AsyncPageResponseWriter<NodeLink>(
             operation.ExecuteEntitiesAsync(),

@@ -154,4 +154,123 @@ public class OrganizationVisibilityHttpTests
         Assert.That(adminResp.StatusCode, Is.EqualTo(HttpStatusCode.OK),
             "admin must see nodes in orgs they are not a member of");
     }
+
+    async Task<(long otherUser, NodeDetails otherNode)> SeedCrossOrgNodeAsync(string label)
+    {
+        long orgA = await CreateOrgAsync($"org-a-{label}");
+        long orgB = await CreateOrgAsync($"org-b-{label}");
+        long userA = await CreateUserAsync($"a-{label}", ["read", "write"]);
+        long userB = await CreateUserAsync($"b-{label}", ["read", "write"]);
+        await LinkMembershipAsync(userA, orgA);
+        await LinkMembershipAsync(userB, orgB);
+
+        HttpClient clientA = AuthClient(userA);
+        NodeDetails created = await PostNodeAsync(clientA,
+            new NodeDetails { Type = "task", Name = $"cross-org-{label}-{Guid.NewGuid():N}", OrganizationId = orgA });
+        return (userB, created);
+    }
+
+    [Test]
+    public async Task CrossOrgUser_CannotPatchTargetInOtherOrg_Returns404()
+    {
+        (long otherUser, NodeDetails created) = await SeedCrossOrgNodeAsync("patch");
+
+        HttpClient clientB = AuthClient(otherUser);
+        string patch = "[{\"op\":\"replace\",\"path\":\"/name\",\"value\":\"cross-org-hijack\"}]";
+        using StringContent body = new(patch, Encoding.UTF8, "application/json");
+        HttpResponseMessage resp = await clientB.PatchAsync($"/api/nodes/{created.Id}", body);
+        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.NotFound),
+            "PATCH on an invisible-org node must 404 (fail-CLOSED on cross-org)");
+    }
+
+    [Test]
+    public async Task CrossOrgUser_CannotUploadContentToTargetInOtherOrg_Returns404()
+    {
+        (long otherUser, NodeDetails created) = await SeedCrossOrgNodeAsync("upload");
+
+        HttpClient clientB = AuthClient(otherUser);
+        using ByteArrayContent body = new(Encoding.UTF8.GetBytes("attacker-payload"));
+        body.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
+        HttpResponseMessage resp = await clientB.PostAsync($"/api/nodes/{created.Id}/content", body);
+        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.NotFound),
+            "content upload on an invisible-org node must 404 (fail-CLOSED on cross-org)");
+    }
+
+    [Test]
+    public async Task CrossOrgUser_CannotReadContentOfTargetInOtherOrg_Returns404()
+    {
+        (long otherUser, NodeDetails created) = await SeedCrossOrgNodeAsync("getdata");
+
+        HttpClient clientB = AuthClient(otherUser);
+        HttpResponseMessage resp = await clientB.GetAsync($"/api/nodes/{created.Id}/content");
+        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.NotFound),
+            "content GET on an invisible-org node must 404 (fail-CLOSED on cross-org)");
+    }
+
+    [Test]
+    public async Task CrossOrgUser_CannotCreateLinkToTargetInOtherOrg_Returns404()
+    {
+        (long otherUser, NodeDetails crossOrgNode) = await SeedCrossOrgNodeAsync("link");
+        long otherOrg = await CreateOrgAsync("link-own-org");
+        await LinkMembershipAsync(otherUser, otherOrg);
+        HttpClient clientB = AuthClient(otherUser);
+        NodeDetails own = await PostNodeAsync(clientB,
+            new NodeDetails { Type = "task", Name = $"link-own-{Guid.NewGuid():N}", OrganizationId = otherOrg });
+
+        string targetJson = own.Id.ToString();
+        using StringContent body = new(targetJson, Encoding.UTF8, "application/json");
+        HttpResponseMessage resp = await clientB.PostAsync($"/api/nodes/{crossOrgNode.Id}/links", body);
+        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.NotFound),
+            "LinkNodes with an invisible-org source must 404 (fail-CLOSED on cross-org)");
+    }
+
+    [Test]
+    public async Task CrossOrgUser_CannotRemoveLinkInOtherOrg_Returns404()
+    {
+        (long otherUser, NodeDetails crossOrgNode) = await SeedCrossOrgNodeAsync("unlink");
+
+        HttpClient clientB = AuthClient(otherUser);
+        HttpResponseMessage resp = await clientB.DeleteAsync($"/api/nodes/{crossOrgNode.Id}/links/{crossOrgNode.Id + 1}");
+        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.NotFound),
+            "UnlinkNodes with an invisible-org source must 404 (fail-CLOSED on cross-org)");
+    }
+
+    [Test]
+    public async Task CrossOrgUser_ListLinksFiltersToVisibleAdjacencyOnly()
+    {
+        long orgA = await CreateOrgAsync("org-a-links");
+        long orgB = await CreateOrgAsync("org-b-links");
+        long userA = await CreateUserAsync("a-links", ["read", "write"]);
+        long userB = await CreateUserAsync("b-links", ["read", "write"]);
+        await LinkMembershipAsync(userA, orgA);
+        await LinkMembershipAsync(userB, orgB);
+
+        HttpClient clientA = AuthClient(userA);
+        NodeDetails aNode1 = await PostNodeAsync(clientA,
+            new NodeDetails { Type = "task", Name = $"links-a1-{Guid.NewGuid():N}", OrganizationId = orgA });
+        NodeDetails aNode2 = await PostNodeAsync(clientA,
+            new NodeDetails { Type = "task", Name = $"links-a2-{Guid.NewGuid():N}", OrganizationId = orgA });
+        HttpResponseMessage linkResp = await clientA.PostAsync($"/api/nodes/{aNode1.Id}/links",
+            new StringContent(aNode2.Id.ToString(), Encoding.UTF8, "application/json"));
+        linkResp.EnsureSuccessStatusCode();
+
+        HttpClient clientB = AuthClient(userB);
+        HttpResponseMessage resp = await clientB.GetAsync($"/api/nodes/links?ids={aNode1.Id},{aNode2.Id}");
+        resp.EnsureSuccessStatusCode();
+        JsonDocument doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+
+        bool sawAdjacency = false;
+        if (doc.RootElement.TryGetProperty("result", out JsonElement resultEl))
+            foreach (JsonElement row in resultEl.EnumerateArray())
+            {
+                long source = row.GetProperty("sourceId").GetInt64();
+                long target = row.GetProperty("targetId").GetInt64();
+                if ((source == aNode1.Id && target == aNode2.Id) ||
+                    (source == aNode2.Id && target == aNode1.Id))
+                    sawAdjacency = true;
+            }
+
+        Assert.That(sawAdjacency, Is.False,
+            "ListLinks must filter supplied ids through caller's visibility before returning adjacency");
+    }
 }

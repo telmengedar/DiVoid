@@ -12,9 +12,7 @@ public class Organization
 {
 
     /// <summary>
-    /// stable id of the bootstrap "DiVoid" organization, seeded on first boot by
-    /// <see cref="Backend.Init.DatabaseModelService"/>. used as the column default for
-    /// <see cref="Backend.Models.Nodes.Node.OrganizationId"/> so existing nodes back-fill cleanly.
+    /// stable id of the bootstrap "DiVoid" org seeded on first boot; doubles as the column default for back-fill.
     /// </summary>
     public const long BootstrapOrgIdConst = 1;
 

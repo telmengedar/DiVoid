@@ -25,17 +25,13 @@ public static class ClaimsExtensions {
     public const string DivoidUserIdClaimType = "divoid.user_id";
 
     /// <summary>
-    /// the claim type emitted by both authentication schemes to carry the caller's
-    /// accessible organization-ids as a comma-separated list of decimal longs
-    /// (e.g. <c>"1,5,12"</c>). absence means admin-equivalent (no org filter).
-    /// see <c>docs/architecture/organizations.md</c> §8.
+    /// claim carrying the caller's accessible organization-ids as a CSV of longs;
+    /// absence = admin-equivalent (no org filter). See organizations.md §8.
     /// </summary>
     public const string OrganizationIdsClaimType = "divoid.organization_ids";
 
     /// <summary>
-    /// returns the caller's accessible org-ids, parsed from the CSV claim.
-    /// returns null when the claim is absent (admin-equivalent, e.g. <c>Auth:Enabled=false</c>).
-    /// returns an empty array when the claim is present but empty (authenticated user with zero memberships).
+    /// parses the org-ids CSV claim; null = absent (admin-equivalent), empty array = present-but-empty (zero memberships).
     /// </summary>
     /// <param name="principal">authenticated principal from the current request</param>
     /// <returns>parsed org-ids or null when the claim is absent</returns>

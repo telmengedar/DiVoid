@@ -13,10 +13,7 @@ static class OrganizationAuthorization
 {
 
     /// <summary>
-    /// returns a predicate gating the caller's view of nodes by organization membership.
-    /// returns null when the caller is admin OR <paramref name="accessibleOrgs"/> is null
-    /// (auth-disabled / admin-equivalent posture). returns an always-false predicate when
-    /// the caller has an empty membership set (authenticated but in zero orgs).
+    /// returns the org-membership predicate; null = admin / no-filter, always-false predicate when membership is empty.
     /// </summary>
     /// <param name="accessibleOrgs">orgs the caller is a member of; null = no filter (admin-equivalent)</param>
     /// <param name="isAdmin">true when the caller holds the admin permission</param>

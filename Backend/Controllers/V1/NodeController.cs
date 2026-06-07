@@ -115,7 +115,8 @@ namespace Backend.Controllers.V1
         public Task<AsyncPageResponseWriter<NodeLink>> ListLinks([FromQuery] long[] ids, [FromQuery] ListFilter filter, CancellationToken ct)
         {
             logger.LogInformation("Listing links for {Count} nodes", ids?.Length ?? 0);
-            return nodeService.ListLinks(ids ?? [], filter, ct);
+            (long callerId, bool isAdmin, long[] accessibleOrgs) = ResolveCaller();
+            return nodeService.ListLinks(ids ?? [], filter, callerId, isAdmin, accessibleOrgs, ct);
         }
 
 

@@ -1389,7 +1389,8 @@ public class NodeServiceTests
         using CancellationTokenSource cts = new();
 
         AsyncPageResponseWriter<NodeLink> writer = await spySvc.ListLinks(
-            [a.Id, b.Id], new Pooshit.AspNetCore.Services.Data.ListFilter { Count = 100 }, cts.Token);
+            [a.Id, b.Id], new Pooshit.AspNetCore.Services.Data.ListFilter { Count = 100 },
+            callerId: 0, isAdmin: true, accessibleOrgs: null, cts.Token);
 
         // Consuming the writer triggers the actual ExecuteEntitiesAsync call.
         // The spy throws if it sees a CancellationToken as a SQL parameter.

@@ -90,14 +90,16 @@ public interface INodeService
     Task UploadContent(long nodeId, string contentType, Stream data, long callerId, bool isAdmin, long[] accessibleOrgs = null, CancellationToken ct = default);
 
     /// <summary>
-    /// lists link adjacency rows where either endpoint is in <paramref name="ids"/>.
-    /// used by the workspace viewport to fetch edges incident to visible nodes in a single round-trip.
+    /// lists adjacency rows whose endpoints are visible to the caller; supplied ids are filtered through the org+access gate first.
     /// </summary>
     /// <param name="ids">node ids whose incident links are requested</param>
     /// <param name="filter">paging/sort filter</param>
+    /// <param name="callerId">DiVoid user-id of the caller; used for per-node access check on supplied ids</param>
+    /// <param name="isAdmin">true when the caller holds the admin permission</param>
+    /// <param name="accessibleOrgs">caller's accessible organization-ids; null = admin-equivalent (no filter)</param>
     /// <param name="ct">cancellation token</param>
     /// <returns>page of link adjacency pairs</returns>
-    Task<AsyncPageResponseWriter<NodeLink>> ListLinks(long[] ids, ListFilter filter, CancellationToken ct);
+    Task<AsyncPageResponseWriter<NodeLink>> ListLinks(long[] ids, ListFilter filter, long callerId, bool isAdmin, long[] accessibleOrgs, CancellationToken ct);
 
     /// <summary>
     /// lists all node types that are currently in use (i.e. have at least one referencing node),
