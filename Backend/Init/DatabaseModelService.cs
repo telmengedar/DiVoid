@@ -58,10 +58,8 @@ public class DatabaseModelService : IHostedService {
     }
 
     /// <summary>
-    /// seeds the bootstrap "DiVoid" organization at id 1 on first boot and
-    /// backfills membership for every existing user. idempotent — guarded by
-    /// the empty-table check so re-running on a populated DB is a no-op.
-    /// runs inside <paramref name="transaction"/> alongside schema reconciliation.
+    /// seeds the bootstrap "DiVoid" organization at id 1 and backfills membership
+    /// for existing users; idempotent — see <c>docs/architecture/organizations.md</c> §10.
     /// </summary>
     async Task SeedBootstrapOrganizationIfMissing(Transaction transaction, DateTime now) {
         long orgCount = await database.Load<Organization>(DB.Count()).ExecuteScalarAsync<long>(transaction);

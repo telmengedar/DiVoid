@@ -147,10 +147,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     }
 
     /// <summary>
-    /// resolves the <c>OrganizationId</c> the new node will receive.
-    /// honours an explicit body value when the caller is a member (or admin);
-    /// otherwise picks the smallest accessible org per the design doc §7
-    /// (single-membership users get their one org; multi-membership users get the lowest id).
+    /// resolves the <c>OrganizationId</c> for a new node; honours an explicit body value when the caller is a member
+    /// or admin, otherwise picks the smallest accessible org per <c>docs/architecture/organizations.md</c> §7.
     /// </summary>
     /// <param name="bodyOrgId">organization-id from the request body; null means "service decides"</param>
     /// <param name="accessibleOrgs">caller's accessible org-ids; null = admin-equivalent</param>
