@@ -19,8 +19,7 @@ namespace Backend.tests.Tests;
 
 /// <summary>
 /// verifies the first-boot bootstrap block in <see cref="DatabaseModelService"/>
-/// seeds the "DiVoid" organization at id 1 and backfills membership for every
-/// existing user.
+/// seeds the "DiVoid" org at id 1 and backfills membership for every existing user.
 /// </summary>
 [TestFixture]
 public class OrganizationBootstrapTests

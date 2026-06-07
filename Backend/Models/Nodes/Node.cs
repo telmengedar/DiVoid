@@ -101,9 +101,8 @@ public class Node
     public NodeAccess Access { get; set; }
 
     /// <summary>
-    /// id of the <see cref="Backend.Models.Organizations.Organization"/> that owns this node.
-    /// non-null; defaults to <see cref="Backend.Models.Organizations.Organization.BootstrapOrgIdConst"/>
-    /// so existing rows back-fill cleanly. PATCHable by admin only (visibility predicate enforces the rest).
+    /// id of the owning <see cref="Backend.Models.Organizations.Organization"/>; non-null,
+    /// defaults to <see cref="Backend.Models.Organizations.Organization.BootstrapOrgIdConst"/>, admin-only PATCH.
     /// </summary>
     [AllowPatch]
     [Index("organization")]
