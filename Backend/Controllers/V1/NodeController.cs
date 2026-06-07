@@ -29,18 +29,20 @@ namespace Backend.Controllers.V1
 
         /// <summary>
         /// resolves caller identity from the current principal.
-        /// returns (0, true) when auth is disabled or the principal carries no identity — admin-equivalent posture.
+        /// returns (0, true, null) when auth is disabled or the principal carries no identity — admin-equivalent posture.
+        /// the third tuple element is the caller's accessible org-ids: null = no filter, empty array = visible nothing.
         /// </summary>
-        (long callerId, bool isAdmin) ResolveCaller()
+        (long callerId, bool isAdmin, long[] accessibleOrgs) ResolveCaller()
         {
             if (User.Identity?.IsAuthenticated != true)
-                return (0L, true);
+                return (0L, true, null);
             long callerId = 0L;
             string idValue = User.FindFirst(ClaimsExtensions.DivoidUserIdClaimType)?.Value;
             if (idValue != null)
                 long.TryParse(idValue, out callerId);
             bool isAdmin = User.HasClaim("permission", "admin");
-            return (callerId, isAdmin);
+            long[] accessibleOrgs = User.GetAccessibleOrgs();
+            return (callerId, isAdmin, accessibleOrgs);
         }
 
 
@@ -55,8 +57,8 @@ namespace Backend.Controllers.V1
         public Task<NodeDetails> CreateNode([FromBody] NodeDetails node)
         {
             logger.LogInformation("Creating node '{name}'", node.Name);
-            (long callerId, bool _) = ResolveCaller();
-            return nodeService.CreateNode(node, callerId);
+            (long callerId, bool isAdmin, long[] accessibleOrgs) = ResolveCaller();
+            return nodeService.CreateNode(node, callerId, accessibleOrgs, isAdmin);
         }
 
         /// <summary>
@@ -68,8 +70,8 @@ namespace Backend.Controllers.V1
         [Authorize(Policy = "read")]
         public Task<NodeDetails> GetNodeById(long nodeId)
         {
-            (long callerId, bool isAdmin) = ResolveCaller();
-            return nodeService.GetNodeById(nodeId, callerId, isAdmin);
+            (long callerId, bool isAdmin, long[] accessibleOrgs) = ResolveCaller();
+            return nodeService.GetNodeById(nodeId, callerId, isAdmin, accessibleOrgs);
         }
 
         /// <summary>
@@ -91,13 +93,13 @@ namespace Backend.Controllers.V1
         [Authorize(Policy = "read")]
         public Task<AsyncPageResponseWriter<NodeDetails>> ListPaged([FromQuery] NodePathFilter filter, CancellationToken ct)
         {
-            (long callerId, bool isAdmin) = ResolveCaller();
+            (long callerId, bool isAdmin, long[] accessibleOrgs) = ResolveCaller();
             if (!string.IsNullOrEmpty(filter?.Path))
             {
                 logger.LogInformation("Path query: {Path}", filter.Path);
-                return nodeService.ListPagedByPath(filter, callerId, isAdmin, ct);
+                return nodeService.ListPagedByPath(filter, callerId, isAdmin, ct, accessibleOrgs);
             }
-            return nodeService.ListPaged(filter, callerId, isAdmin, ct);
+            return nodeService.ListPaged(filter, callerId, isAdmin, accessibleOrgs, ct);
         }
 
         /// <summary>
@@ -126,8 +128,8 @@ namespace Backend.Controllers.V1
         [Authorize(Policy = "read")]
         public async Task<IActionResult> GetNodeData(long nodeId)
         {
-            (long callerId, bool isAdmin) = ResolveCaller();
-            (string contentType, Stream data) = await nodeService.GetNodeData(nodeId, callerId, isAdmin);
+            (long callerId, bool isAdmin, long[] accessibleOrgs) = ResolveCaller();
+            (string contentType, Stream data) = await nodeService.GetNodeData(nodeId, callerId, isAdmin, accessibleOrgs);
             return File(data, contentType);
         }
 
@@ -165,8 +167,8 @@ namespace Backend.Controllers.V1
         public Task<NodeDetails> Patch(long nodeId, [FromBody] PatchOperation[] patches, CancellationToken ct)
         {
             logger.LogInformation("Patching node '{nodeId}'", nodeId);
-            (long callerId, bool isAdmin) = ResolveCaller();
-            return nodeService.Patch(nodeId, patches, callerId, isAdmin, ct);
+            (long callerId, bool isAdmin, long[] accessibleOrgs) = ResolveCaller();
+            return nodeService.Patch(nodeId, patches, callerId, isAdmin, ct, accessibleOrgs);
         }
 
         /// <summary>
@@ -182,8 +184,8 @@ namespace Backend.Controllers.V1
         public Task UploadContent(long nodeId, CancellationToken ct)
         {
             logger.LogInformation("Updating content of node '{nodeId}'", nodeId);
-            (long callerId, bool isAdmin) = ResolveCaller();
-            return nodeService.UploadContent(nodeId, Request.ContentType, Request.Body, callerId, isAdmin, ct);
+            (long callerId, bool isAdmin, long[] accessibleOrgs) = ResolveCaller();
+            return nodeService.UploadContent(nodeId, Request.ContentType, Request.Body, callerId, isAdmin, accessibleOrgs, ct);
         }
 
         /// <summary>
@@ -195,8 +197,8 @@ namespace Backend.Controllers.V1
         public Task Delete(long nodeId)
         {
             logger.LogInformation("Deleting node '{nodeId}'", nodeId);
-            (long callerId, bool isAdmin) = ResolveCaller();
-            return nodeService.Delete(nodeId, callerId, isAdmin);
+            (long callerId, bool isAdmin, long[] accessibleOrgs) = ResolveCaller();
+            return nodeService.Delete(nodeId, callerId, isAdmin, accessibleOrgs);
         }
 
         /// <summary>
@@ -209,8 +211,8 @@ namespace Backend.Controllers.V1
         public Task LinkNodes(long sourceNodeId, [FromBody] long targetNodeId)
         {
             logger.LogInformation("Linking node '{targetNodeId}' to '{sourceNodeId}'", targetNodeId, sourceNodeId);
-            (long callerId, bool isAdmin) = ResolveCaller();
-            return nodeService.LinkNodes(sourceNodeId, targetNodeId, callerId, isAdmin);
+            (long callerId, bool isAdmin, long[] accessibleOrgs) = ResolveCaller();
+            return nodeService.LinkNodes(sourceNodeId, targetNodeId, callerId, isAdmin, accessibleOrgs);
         }
 
         /// <summary>
@@ -223,8 +225,8 @@ namespace Backend.Controllers.V1
         public Task UnlinkNodes(long sourceNodeId, long targetNodeId)
         {
             logger.LogInformation("Unlinking '{targetNodeId}' from '{sourceNodeId}'", targetNodeId, sourceNodeId);
-            (long callerId, bool isAdmin) = ResolveCaller();
-            return nodeService.UnlinkNodes(sourceNodeId, targetNodeId, callerId, isAdmin);
+            (long callerId, bool isAdmin, long[] accessibleOrgs) = ResolveCaller();
+            return nodeService.UnlinkNodes(sourceNodeId, targetNodeId, callerId, isAdmin, accessibleOrgs);
         }
 
     }

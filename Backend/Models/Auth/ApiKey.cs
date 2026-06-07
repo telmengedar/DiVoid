@@ -41,6 +41,16 @@ public class ApiKey {
     public string Permissions { get; set; }
 
     /// <summary>
+    /// JSON-encoded array of organization ids snapshotted at key-mint time.
+    /// drives the <c>divoid.organization_ids</c> claim emitted by
+    /// <see cref="Backend.Auth.ApiKeyAuthenticationHandler"/> without re-reading membership.
+    /// stale by design: rotate the key to pick up membership changes.
+    /// </summary>
+    [AllowPatch]
+    [JsonColumn]
+    public string OrganizationIds { get; set; }
+
+    /// <summary>
     /// whether the key is enabled and may authenticate requests
     /// </summary>
     [AllowPatch]

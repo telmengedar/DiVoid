@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Backend.Extensions;
 using Backend.Models.Auth;
 using Backend.Models.Users;
+using Backend.Services.Organizations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Pooshit.AspNetCore.Services.Data;
@@ -22,6 +23,7 @@ namespace Backend.Services.Auth;
 public class ApiKeyService : IApiKeyService {
     readonly IEntityManager database;
     readonly IKeyGenerator keyGenerator;
+    readonly IOrganizationService organizationService;
     readonly ILogger<ApiKeyService> logger;
     readonly byte[] pepper;
 
@@ -30,11 +32,13 @@ public class ApiKeyService : IApiKeyService {
     /// </summary>
     /// <param name="database">access to database</param>
     /// <param name="keyGenerator">generator for random keys</param>
+    /// <param name="organizationService">service used to snapshot the user's organization memberships at mint time</param>
     /// <param name="configuration">application configuration (reads DIVOID_KEY_PEPPER)</param>
     /// <param name="logger">logger</param>
-    public ApiKeyService(IEntityManager database, IKeyGenerator keyGenerator, IConfiguration configuration, ILogger<ApiKeyService> logger) {
+    public ApiKeyService(IEntityManager database, IKeyGenerator keyGenerator, IOrganizationService organizationService, IConfiguration configuration, ILogger<ApiKeyService> logger) {
         this.database = database;
         this.keyGenerator = keyGenerator;
+        this.organizationService = organizationService;
         this.logger = logger;
 
         string pepperValue = configuration["DIVOID_KEY_PEPPER"];
@@ -89,20 +93,27 @@ public class ApiKeyService : IApiKeyService {
         string fullKey = $"{keyId}.{secret}";
         byte[] hash = ComputeHmac(fullKey);
         DateTime now = DateTime.UtcNow;
+        long ownerUserId = apiKey.UserId ?? 0;
+
+        long[] orgIds = ownerUserId == 0
+            ? []
+            : await organizationService.GetUserOrganizationIds(ownerUserId);
+        string orgIdsJson = Json.WriteString(orgIds);
 
         long id = await database.Insert<ApiKey>()
-                                .Columns(k => k.UserId, k => k.KeyId, k => k.KeyHash, k => k.Permissions, k => k.Enabled, k => k.CreatedAt)
-                                .Values(apiKey.UserId ?? 0, keyId, hash, Json.WriteString(apiKey.Permissions), true, now)
+                                .Columns(k => k.UserId, k => k.KeyId, k => k.KeyHash, k => k.Permissions, k => k.OrganizationIds, k => k.Enabled, k => k.CreatedAt)
+                                .Values(ownerUserId, keyId, hash, Json.WriteString(apiKey.Permissions), orgIdsJson, true, now)
                                 .ReturnID()
                                 .ExecuteAsync();
 
-        logger.LogInformation("event=apikey.created keyId={KeyId} userId={UserId} permissions={Permissions}",
-            keyId, apiKey.UserId, string.Join(",", apiKey.Permissions ?? []));
+        logger.LogInformation("event=apikey.created keyId={KeyId} userId={UserId} permissions={Permissions} organizationIds={OrganizationIds}",
+            keyId, apiKey.UserId, string.Join(",", apiKey.Permissions ?? []), string.Join(",", orgIds));
 
         return new() {
             Id = id,
             KeyId = keyId,
             Permissions = apiKey.Permissions,
+            OrganizationIds = orgIds,
             Enabled = true,
             CreatedAt = now,
             UserId = apiKey.UserId,
@@ -217,6 +228,7 @@ public class ApiKeyService : IApiKeyService {
             KeyId = row.KeyId,
             UserId = row.UserId,
             Permissions = string.IsNullOrEmpty(row.Permissions) ? [] : Json.Read<string[]>(row.Permissions),
+            OrganizationIds = string.IsNullOrEmpty(row.OrganizationIds) ? [] : Json.Read<long[]>(row.OrganizationIds) ?? [],
             Enabled = row.Enabled,
             CreatedAt = row.CreatedAt,
             LastUsedAt = row.LastUsedAt,

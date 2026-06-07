@@ -93,6 +93,12 @@ public class NodeDetails
     public NodeAccess? Access { get; set; }
 
     /// <summary>
+    /// id of the organization that owns this node; populated on every read, optional on POST
+    /// (omitted = service picks the caller's primary org per the rule in organizations.md §7).
+    /// </summary>
+    public long? OrganizationId { get; set; }
+
+    /// <summary>
     /// UTC timestamp when this node was created.
     /// </summary>
     public DateTime? Created { get; set; }

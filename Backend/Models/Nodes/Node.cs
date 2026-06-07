@@ -101,6 +101,16 @@ public class Node
     public NodeAccess Access { get; set; }
 
     /// <summary>
+    /// id of the <see cref="Backend.Models.Organizations.Organization"/> that owns this node.
+    /// non-null; defaults to <see cref="Backend.Models.Organizations.Organization.BootstrapOrgIdConst"/>
+    /// so existing rows back-fill cleanly. PATCHable by admin only (visibility predicate enforces the rest).
+    /// </summary>
+    [AllowPatch]
+    [Index("organization")]
+    [DefaultValue(Backend.Models.Organizations.Organization.BootstrapOrgIdConst)]
+    public long OrganizationId { get; set; }
+
+    /// <summary>
     /// UTC timestamp when this node was created.
     /// </summary>
     [Index("created")]

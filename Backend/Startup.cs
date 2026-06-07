@@ -9,6 +9,7 @@ using Backend.Services.Auth;
 using Backend.Services.Embeddings;
 using Backend.Services.Messages;
 using Backend.Services.Nodes;
+using Backend.Services.Organizations;
 using Backend.Services.Users;
 using mamgo.services.Binding;
 using Microsoft.AspNetCore.Authentication;
@@ -110,6 +111,7 @@ public class Startup
         services.AddTransient<IKeyGenerator, KeyGenerator>();
         services.AddTransient<IUserService, UserService>();
         services.AddTransient<IApiKeyService, ApiKeyService>();
+        services.AddTransient<IOrganizationService, OrganizationService>();
         services.AddTransient<IMessageService, MessageService>();
         services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
 

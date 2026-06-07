@@ -49,4 +49,10 @@ public class ApiKeyDetails {
     /// full key string returned exactly once on creation; null on all subsequent reads
     /// </summary>
     public string PlaintextKey { get; set; }
+
+    /// <summary>
+    /// snapshot of the user's organization memberships at key-mint time;
+    /// emitted as the <c>divoid.organization_ids</c> claim on every authenticate call.
+    /// </summary>
+    public long[] OrganizationIds { get; set; }
 }

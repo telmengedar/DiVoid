@@ -3,6 +3,7 @@ using System.Text;
 using System.Security.Cryptography;
 using Backend.Models.Auth;
 using Backend.Services.Auth;
+using Backend.Services.Organizations;
 using Backend.tests.Fixtures;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -29,7 +30,7 @@ public class ApiKeyServiceTests
                 ["Auth:Enabled"] = "true"
             })
             .Build();
-        return new(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance);
+        return new(fixture.EntityManager, new KeyGenerator(), new OrganizationService(fixture.EntityManager), config, NullLogger<ApiKeyService>.Instance);
     }
 
     // -----------------------------------------------------------------------
@@ -164,7 +165,7 @@ public class ApiKeyServiceTests
             .Build();
 
         Assert.Throws<MissingPepperException>(() =>
-            new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance));
+            new ApiKeyService(fixture.EntityManager, new KeyGenerator(), new OrganizationService(fixture.EntityManager), config, NullLogger<ApiKeyService>.Instance));
     }
 
     [Test]
@@ -179,7 +180,7 @@ public class ApiKeyServiceTests
             .Build();
 
         Assert.Throws<MissingPepperException>(() =>
-            new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance));
+            new ApiKeyService(fixture.EntityManager, new KeyGenerator(), new OrganizationService(fixture.EntityManager), config, NullLogger<ApiKeyService>.Instance));
     }
 
     [Test]
@@ -194,7 +195,7 @@ public class ApiKeyServiceTests
             .Build();
 
         Assert.DoesNotThrow(() =>
-            new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance));
+            new ApiKeyService(fixture.EntityManager, new KeyGenerator(), new OrganizationService(fixture.EntityManager), config, NullLogger<ApiKeyService>.Instance));
     }
 
     // -----------------------------------------------------------------------
