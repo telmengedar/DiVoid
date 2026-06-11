@@ -11,15 +11,17 @@ the Hivemind Protocol (DiVoid #435) is:
   2. Call divoid_resolve_user with that node_id.
   3. Use the returned user_id as recipientId in divoid_send_message.
 
-Quick reference:
-  Selene (main agent, node #11) -> user_id 2
-  Toni (human, node #9-ish)     -> user_id 1  (but never message the human directly)
+Routing pattern (per #435): find the human responsible for the work, then find
+the notifier agent linked to that human (type=agent, linked to the person node),
+then call this tool with the agent's node-id. The returned user-id is the
+messaging recipient. A human's own user-id is never the recipient — humans do
+not poll the inbox.
 
 The 404 response is collapsed by the API: it means either the node does not exist
 OR the node exists but has no User record linked to it via User.HomeNodeId. If you
 need to distinguish, call divoid_get_node first — 200 there + 404 here means
-"node exists, no user binding yet." Surface a binding-gap to the human; never
-fall back to guessing or using the human's user-id as a substitute.
+"node exists, no user binding yet." Surface that as a binding-gap rather than
+falling back to addressing a human's user-id or guessing.
 """
 
 from __future__ import annotations
@@ -39,13 +41,14 @@ _TOOL_DESCRIPTION = """\
 Resolve an agent or person node-id to its DiVoid user-id via \
 GET /api/nodes/{id}/user. \
 Returns {user_id: long} on success. \
-Use this when you have a node-id (e.g. Selene's agent node #11) and need the \
-user-id for messaging (divoid_send_message) or other user-scoped operations. \
-Selene's node #11 resolves to user_id=2 — the canonical messaging recipient for \
-all DiVoid-project sessions in this deployment. \
+Use this to obtain the user-id needed by divoid_send_message or other \
+user-scoped operations. Typical routing per DiVoid #435: find the human \
+responsible for the topic, find the notifier agent linked to that human, \
+resolve THAT agent's node-id here, then send to the resolved user-id. A \
+human's own user-id is never the right messaging recipient — humans do not \
+poll the inbox. \
 A 404 means either the node doesn't exist or it has no User binding yet (the API \
-collapses both); surface a binding-gap to the human rather than falling back to the \
-human's user-id (user 1), which is never the correct messaging recipient.\
+collapses both); surface that as a binding-gap rather than falling back to a guess.\
 """
 
 
@@ -104,7 +107,6 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
 
         Args:
             node_id: The graph node id of the agent or person whose user-id you need.
-                     Example: 11 resolves to user_id=2 (Selene, the main agent).
                      Enforcement: node_id must be a positive integer; FastMCP exposes
                      it as plain {"type": "integer"} in the JSON Schema — the invariant
                      guard (positive-int check) is the sole enforcement layer.
