@@ -13,9 +13,9 @@ Auth rules (server-enforced, per DiVoid #426 §4):
   - Senders cannot recall: a 403 is returned if a non-recipient, non-admin
     tries to delete (existence is not revealed — server returns 403, not 404,
     to prevent probing).
-  - In this deployment, the admin API key authenticates as Selene (user_id=2),
-    who is also the canonical recipient for self-messages, so the admin key
-    can delete any message it is the recipient of OR any message at all.
+  - If the API key carries the admin permission, the caller can delete any
+    message regardless of recipient. Otherwise only messages addressed to the
+    caller's own user-id can be deleted.
 
 Error shapes:
   - 404: message does not exist (or: exists but caller has no right to know).
@@ -43,8 +43,7 @@ read -> act -> delete. There is no archive; an undeleted message is a bug \
 and will be re-processed by every future inbox scan. \
 Auth: only the recipient or an admin can delete. Senders cannot recall — \
 a 403 is returned for non-recipients (the no-recall guarantee is structural, \
-not just policy). In this deployment the admin API key (Selene, user_id=2) \
-can delete any message it received or any message at all (admin right). \
+not just policy). \
 Returns {success: true, id: N} on success; isError on 404/403/5xx.\
 """
 

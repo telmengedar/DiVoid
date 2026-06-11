@@ -3,9 +3,10 @@ divoid_list_messages -- primitive: list the inbox for the calling identity.
 
 Thin wrapper around GET /api/messages with paging support.
 
-The admin API key authenticates as the admin user (Selene, user_id=2 in this
-deployment). The endpoint returns all messages where the caller is the author
-OR the recipient — for the admin key that is the full inbox/outbox.
+The endpoint returns all messages where the calling user is the author OR the
+recipient — that is the caller's full inbox/outbox. The calling user is
+whichever user the API key authenticates as; it differs per deployment, per
+operator, and per agent identity. Do not assume a specific identity here.
 
 Paging follows the same {result, total, continue} shape as GET /api/nodes:
   - count:    max items per page (server clamps to <=500).
@@ -14,7 +15,8 @@ Paging follows the same {result, total, continue} shape as GET /api/nodes:
 Per DiVoid #435 lifecycle: scan the inbox at task start, task end, and idle.
 For each message in your project's scope: act on it, then DELETE it
 (use divoid_delete_message or call DELETE /api/messages/{id} directly).
-Messages NOT in your session's project scope: leave untouched.
+Messages NOT in your session's project scope: leave untouched — a different
+session matching that scope will pick them up.
 
 There is no archive. An undeleted read message is a bug.
 """
@@ -33,13 +35,13 @@ from ..errors import make_error_content, map_http_error, map_unreachable
 logger = logging.getLogger(__name__)
 
 _TOOL_DESCRIPTION = """\
-List the DiVoid message inbox for the calling identity (Selene, user_id=2 in \
-this deployment). Returns messages where the caller is author or recipient, \
-paged by count/continue. \
+List the DiVoid message inbox for the calling identity. Returns messages where \
+the caller is author or recipient, paged by count/continue. \
 Scan at task start, task end, and when idle — per DiVoid #435 scanning discipline. \
 For each message in your current project's scope (check the subject tag): act on \
 it, then delete it (there is no archive; undeleted messages are bugs). Leave \
-messages outside your project scope untouched — another session will match. \
+messages outside your project scope untouched — a different session matching that \
+scope will pick them up. \
 Response shape: {result: [{id, authorId, recipientId, subject, body, createdAt}], \
 total, continue} where continue is the offset for the next page (null when exhausted).\
 """

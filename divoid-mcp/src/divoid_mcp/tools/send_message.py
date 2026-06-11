@@ -7,11 +7,15 @@ Two-step atomic operation from the caller's perspective:
 
 Step 1 is skipped when recipient_user_id is supplied directly.
 
-Per DiVoid #435 (Hivemind Protocol messaging), the intended recipient is always
-an AGENT's user identity — not a human's. The canonical recipient in this
-deployment is Selene (node #11, user_id=2). Self-messaging (authorId==recipientId)
-is the dominant pattern: a session of the main agent sends a message to itself so
-a different project-scoped session picks it up on its next inbox scan.
+Per DiVoid #435 (Messaging Protocol), the intended recipient is always an
+AGENT's user identity — not a human's. The recipient varies by topic: route by
+which human owns the work, then by which agent notifies that human. See #435
+for the operator → notifier-agent roster and the GET /api/nodes/{id}/user
+resolver. Self-messaging (authorId == recipientId) is one common pattern: an
+agent addresses its own user-id so a different project-scoped session of the
+same agent identity picks it up on its next inbox scan. Cross-operator
+messaging (authorId != recipientId) addresses a different operator's notifier
+agent.
 
 Partial failure semantics: if step 1 succeeds but step 2 fails, the error
 envelope names the resolved user_id so the caller can retry POST without
@@ -40,14 +44,17 @@ logger = logging.getLogger(__name__)
 _TOOL_DESCRIPTION = """\
 Send a message to an agent in the DiVoid hivemind. Atomically resolves the \
 recipient (if given as a node-id) and POSTs to /api/messages. \
-Recipients are agents, not humans — use Selene's node #11 (user_id=2) as \
-the canonical recipient for DiVoid-project sessions (per DiVoid #435). \
-Self-messaging (sending from Selene to Selene) is the dominant pattern: \
-a DiVoid-backend session sends to itself so a different project-scoped session \
-picks it up at its next inbox scan. Never address the human (user_id=1) — \
-Toni does not poll the inbox and the message will sit as an orphan. \
-Supply recipient_node_id to resolve the user-id automatically (graph-friendly), \
-or recipient_user_id to skip resolution (use when you already know it). \
+Recipients are always agents (type=agent), never humans — humans do not poll \
+the inbox and a message addressed to a human's user-id orphans. \
+Per DiVoid #435, route by topic-ownership: find the human responsible for the \
+work, find that human's notifier agent (an agent node linked to the person \
+node), then use THAT agent's user-id as recipient. Self-messaging \
+(author == recipient) is the pattern for handing work to a different \
+project-scoped session of your own agent identity; cross-operator messaging \
+addresses a different operator's notifier agent. \
+Supply recipient_node_id to resolve via GET /api/nodes/{id}/user \
+(graph-friendly — use when you walked the roster and have the agent's \
+node-id), or recipient_user_id when you already know it. \
 Subject convention: '[<ProjectName>] short punchline' so the receiving session \
 can gate by project scope (DiVoid #435 scope discipline).\
 """
@@ -79,8 +86,9 @@ def _check_invariants(
         raise InvariantViolation(
             "no_recipient",
             "Either recipient_node_id or recipient_user_id is required. "
-            "For most cases, use recipient_node_id=11 (Selene's agent node, "
-            "resolves to user_id=2). Never use user_id=1 (Toni, the human).",
+            "Address the notifier agent of the human responsible for the work "
+            "(see DiVoid #435 for the routing protocol). Never address a "
+            "human's user-id directly — humans do not poll the inbox.",
         )
 
     # Subject must be non-empty and non-whitespace.
@@ -266,14 +274,15 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                   what the recipient needs to do, and reference relevant node ids.
                   Enforcement is by the invariant guard — FastMCP exposes body as
                   plain string, not minLength.
-            recipient_node_id: Graph node-id of the recipient agent or person.
+            recipient_node_id: Graph node-id of the recipient agent (type=agent).
                                The tool resolves this to a user-id via
-                               GET /api/nodes/{id}/user before sending.
-                               Use 11 for Selene (main agent, user_id=2).
+                               GET /api/nodes/{id}/user before sending. Use this
+                               when you walked the graph from a person node to
+                               their notifier agent and have its node-id.
                                Mutually exclusive with recipient_user_id
                                (invariant guard).
-            recipient_user_id: Direct user-id of the recipient. Use when you already
-                               know it (e.g. 2 for Selene) to skip the resolution step.
+            recipient_user_id: Direct user-id of the recipient agent. Use when you
+                               already know it, to skip the resolution step.
                                Mutually exclusive with recipient_node_id
                                (invariant guard).
         """
