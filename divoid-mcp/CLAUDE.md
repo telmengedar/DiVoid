@@ -8,13 +8,11 @@ A Python MCP server that wraps the DiVoid REST API. It is **a pure client wrappe
 
 Architecture document: `docs/architecture/phase-1.md` and DiVoid node **#695** (canonical, read both).
 
-## Phase
+## Tool surface
 
-Currently: **Phase 1 complete** (read-side tools + link helper + composite write tools). All six Phase 1 tools have shipped:
-- PR1 (#82): `divoid_search`, `divoid_get_node`, `divoid_get_content`, `divoid_link_nodes`
-- PR2 (#83): `divoid_create_task`, `divoid_create_documentation`
+17 tools currently registered (see `src/divoid_mcp/tools/__init__.py`). Read-side: `divoid_search`, `divoid_get_node`, `divoid_get_content`, `divoid_get_links`, `divoid_list_nodes`. Mutate: `divoid_link_nodes`, `divoid_unlink_nodes`, `divoid_patch_node`, `divoid_set_status`, `divoid_set_content`. Composite create: `divoid_create_task`, `divoid_create_documentation`, `divoid_create_session_log`. Messaging: `divoid_send_message`, `divoid_list_messages`, `divoid_delete_message`, `divoid_resolve_user`.
 
-Do not implement Phase 2 tools (`divoid_list`, `divoid_patch_node`, `divoid_set_status`, `divoid_set_content`, `divoid_send_message`, etc.) without explicit sign-off from Toni.
+New tools require human sign-off from the repo owner before implementation — this is a generic-purpose tool used outside this deployment, so the surface evolves deliberately.
 
 ## Key invariants
 
@@ -22,7 +20,7 @@ Do not implement Phase 2 tools (`divoid_list`, `divoid_patch_node`, `divoid_set_
 
 2. **All logs go to stderr.** stdout is reserved for the JSON-RPC stream. A `print()` to stdout corrupts the MCP session.
 
-3. **No retries.** Phase 1 is no-retries by design — see architecture §9.3. Adding retries for non-idempotent calls (POST node, POST link) without idempotency keys creates duplicates.
+3. **No retries.** The MCP layer is no-retries by design — see architecture §9.3. Adding retries for non-idempotent calls (POST node, POST link) without idempotency keys creates duplicates.
 
 4. **Content is posted as `bytes`, not strings.** The UTF-8 mangling trap is in DiVoid node #187. `httpx` encodes the string to `bytes` before sending — this is done in `http_client.py`, not in tool dispatchers.
 
@@ -39,14 +37,7 @@ src/divoid_mcp/        # installable package
   drift.py             # startup canary against node #8 hash
   resources.py         # MCP resources for canonical DiVoid docs
   version.py           # __version__ + PINNED_API_REF_HASH
-  tools/
-    __init__.py        # registers all tools with MCP runtime
-    search.py
-    get_node.py
-    get_content.py
-    link_nodes.py
-    create_task.py
-    create_documentation.py
+  tools/               # one module per registered tool; __init__.py wires them
 tests/smoke/           # live integration scripts (not pytest); run with pip install -e .
 docs/architecture/     # architecture docs committed here
 examples/              # .mcp.json registration examples
@@ -73,4 +64,4 @@ python tests/smoke/run_all.py # run smoke tests against live DiVoid
 - Structural conventions: node **#493** (Tasks/Docs groups, content-required types)
 - Hivemind Protocol: node **#190**
 - Onboarding: node **#9**
-- Messaging (Phase 2): node **#435**
+- Messaging Protocol: node **#435**

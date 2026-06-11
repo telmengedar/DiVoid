@@ -52,4 +52,4 @@ def register_tools(mcp_server: fastmcp.FastMCP) -> None:
     register_set_content(mcp_server)
     register_get_links(mcp_server)
 
-    logger.info("Registered 17 MCP tools (Phase 1 + Phase 2 + unlink_nodes: read-side + link/unlink + composite writes + messaging (send/list/delete) + list + primitives).")
+    logger.info("Registered 17 MCP tools: read-side + link/unlink + composite writes + messaging + list + primitives.")

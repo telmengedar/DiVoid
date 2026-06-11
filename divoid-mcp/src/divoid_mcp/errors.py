@@ -1,7 +1,7 @@
 """
 Error types and HTTP-to-MCP error mapping for divoid-mcp.
 
-InvariantViolation is raised by the invariant guard (Phase 2 composites)
+InvariantViolation is raised by the invariant guard in composite tools
 before any HTTP call. The tool dispatcher catches it and returns a
 structured MCP error envelope.
 

@@ -874,7 +874,7 @@ async def smoke_create_documentation_happy_path(config: Any) -> None:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-# Phase 2: divoid_create_session_log
+# divoid_create_session_log
 # ---------------------------------------------------------------------------
 
 async def smoke_create_session_log_invariant_violation(config: Any) -> None:
@@ -1104,25 +1104,27 @@ async def smoke_create_session_log_happy_path(config: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 PR2: messaging tools
+# Messaging tools
 # ---------------------------------------------------------------------------
 
-# Selene's agent node id and expected user id (pinned).
-_SELENE_NODE_ID = 11
-_SELENE_USER_ID = 2
+# Agent node id and expected user id pinned against this deployment's actual
+# data. These are the calling identity's own agent node — the smoke covers the
+# resolve_user happy path and exercises self-messaging.
+_PINNED_AGENT_NODE_ID = 11
+_PINNED_AGENT_USER_ID = 2
 
 
 async def smoke_resolve_user_happy_path(config: Any) -> None:
     """
-    divoid_resolve_user: Selene's agent node (#11) resolves to user_id=2.
+    divoid_resolve_user: the pinned agent node resolves to the pinned user-id.
 
-    Pins the node->user mapping so we catch any change to Selene's User binding.
-    Uses _execute directly — deleting the function breaks the import at the top
-    of this file, making this load-bearing in the correct direction.
+    Pins the node->user mapping so we catch any change to the agent's User
+    binding. Uses _execute directly — deleting the function breaks the import
+    at the top of this file, making this load-bearing in the correct direction.
     """
-    print("\n--- divoid_resolve_user (happy path: node #11 -> user_id=2) ---")
+    print(f"\n--- divoid_resolve_user (happy path: node #{_PINNED_AGENT_NODE_ID} -> user_id={_PINNED_AGENT_USER_ID}) ---")
 
-    result = await _execute_resolve_user(node_id=_SELENE_NODE_ID, config=config)
+    result = await _execute_resolve_user(node_id=_PINNED_AGENT_NODE_ID, config=config)
 
     _assert(
         "_execute returns no isError",
@@ -1138,8 +1140,8 @@ async def smoke_resolve_user_happy_path(config: Any) -> None:
         f"keys={list(result.keys())}",
     )
     _assert(
-        f"user_id == {_SELENE_USER_ID} (Selene, pinned)",
-        result.get("user_id") == _SELENE_USER_ID,
+        f"user_id == {_PINNED_AGENT_USER_ID} (pinned)",
+        result.get("user_id") == _PINNED_AGENT_USER_ID,
         f"user_id={result.get('user_id')!r}",
     )
 
@@ -1186,7 +1188,7 @@ async def smoke_send_message_invariant_violations(config: Any) -> None:
         _check_send_message_invariants(
             subject="",
             body="Some body.",
-            recipient_node_id=_SELENE_NODE_ID,
+            recipient_node_id=_PINNED_AGENT_NODE_ID,
             recipient_user_id=None,
         )
     except InvariantViolation as exc:
@@ -1200,7 +1202,7 @@ async def smoke_send_message_invariant_violations(config: Any) -> None:
         _check_send_message_invariants(
             subject="[DiVoid] test",
             body="   ",
-            recipient_node_id=_SELENE_NODE_ID,
+            recipient_node_id=_PINNED_AGENT_NODE_ID,
             recipient_user_id=None,
         )
     except InvariantViolation as exc:
@@ -1214,8 +1216,8 @@ async def smoke_send_message_invariant_violations(config: Any) -> None:
         _check_send_message_invariants(
             subject="[DiVoid] test",
             body="Some body.",
-            recipient_node_id=_SELENE_NODE_ID,
-            recipient_user_id=_SELENE_USER_ID,
+            recipient_node_id=_PINNED_AGENT_NODE_ID,
+            recipient_user_id=_PINNED_AGENT_USER_ID,
         )
     except InvariantViolation as exc:
         raised, code = True, exc.code
@@ -1243,11 +1245,11 @@ async def smoke_send_message_invariant_violations(config: Any) -> None:
 
 async def smoke_send_message_happy_path(config: Any) -> None:
     """
-    divoid_send_message: self-message to Selene via recipient_node_id, verify inbox, DELETE.
+    divoid_send_message: self-message via recipient_node_id, verify inbox, DELETE.
 
     Uses _execute directly (load-bearing: deleting _execute breaks the import).
-    Sends a self-message (Selene -> Selene, the canonical pattern), verifies it
-    appears in the inbox via divoid_list_messages, then DELETEs it to clean up.
+    Sends a self-message (author == recipient, per #435), verifies it appears in
+    the inbox via divoid_list_messages, then DELETEs it to clean up.
     """
     print("\n--- divoid_send_message (happy path self-message + verify + cleanup) ---")
 
@@ -1262,7 +1264,7 @@ async def smoke_send_message_happy_path(config: Any) -> None:
         subject=subject,
         body=body,
         config=config,
-        recipient_node_id=_SELENE_NODE_ID,
+        recipient_node_id=_PINNED_AGENT_NODE_ID,
     )
 
     _assert(
@@ -1279,13 +1281,13 @@ async def smoke_send_message_happy_path(config: Any) -> None:
         return
 
     _assert(
-        "result recipient_user_id == 2 (Selene)",
-        result.get("recipient_user_id") == _SELENE_USER_ID,
+        f"result recipient_user_id == {_PINNED_AGENT_USER_ID} (resolved)",
+        result.get("recipient_user_id") == _PINNED_AGENT_USER_ID,
         f"recipient_user_id={result.get('recipient_user_id')!r}",
     )
     _assert(
-        "result recipient_node_id == 11 (Selene node, echoed back)",
-        result.get("recipient_node_id") == _SELENE_NODE_ID,
+        f"result recipient_node_id == {_PINNED_AGENT_NODE_ID} (echoed back)",
+        result.get("recipient_node_id") == _PINNED_AGENT_NODE_ID,
         f"recipient_node_id={result.get('recipient_node_id')!r}",
     )
     _assert(
@@ -1379,7 +1381,7 @@ async def smoke_list_messages_happy_path(config: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 PR4: divoid_delete_message
+# divoid_delete_message
 # ---------------------------------------------------------------------------
 
 async def smoke_delete_message_lifecycle(config: Any) -> None:
@@ -1402,12 +1404,12 @@ async def smoke_delete_message_lifecycle(config: Any) -> None:
     subject = f"[DiVoid] smoke-test ephemeral delete-me {timestamp}"
     body = "Smoke test message for divoid_delete_message. Delete me."
 
-    # Step 1: Send a self-message (Selene -> Selene, the canonical pattern per #435).
+    # Step 1: Send a self-message (author == recipient, per #435).
     send_result = await _execute_send_message(
         subject=subject,
         body=body,
         config=config,
-        recipient_node_id=_SELENE_NODE_ID,
+        recipient_node_id=_PINNED_AGENT_NODE_ID,
     )
 
     _assert(
@@ -1499,7 +1501,7 @@ async def smoke_delete_message_lifecycle(config: Any) -> None:
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Phase 2 PR3: divoid_list
+# divoid_list
 # ---------------------------------------------------------------------------
 
 async def smoke_list_bare(config: Any) -> None:
@@ -2249,7 +2251,7 @@ async def smoke_search_include_links(config: Any) -> None:
 
 
 ### -----------------------------------------------------------------------
-### Phase 2 polish: patch_node, set_status, set_content, get_links
+### Primitives: patch_node, set_status, set_content, get_links
 ### -----------------------------------------------------------------------
 
 async def smoke_patch_node_invariant_no_fields(config: Any) -> None:
@@ -2893,18 +2895,18 @@ async def _run_all(config: Any) -> None:
         smoke_create_task_missing_project,
         smoke_create_task_happy_path,
         smoke_create_documentation_happy_path,
-        # Phase 2: create_session_log composite
+        # create_session_log composite
         smoke_create_session_log_invariant_violation,
         smoke_create_session_log_missing_project,
         smoke_create_session_log_happy_path,
-        # Phase 2 PR2: messaging tools
+        # messaging tools
         smoke_resolve_user_happy_path,
         smoke_resolve_user_not_found,
         smoke_send_message_invariant_violations,
         smoke_send_message_happy_path,
         smoke_list_messages_happy_path,
         smoke_delete_message_lifecycle,
-        # Phase 2 PR3: divoid_list
+        # divoid_list
         smoke_list_bare,
         smoke_list_type_filter,
         smoke_list_linkedto_filter,
@@ -2924,7 +2926,7 @@ async def _run_all(config: Any) -> None:
         smoke_search_include_content,
         smoke_list_include_links,
         smoke_search_include_links,
-        # Phase 2 polish: patch_node, set_status, set_content, get_links primitives
+        # primitives: patch_node, set_status, set_content, get_links
         smoke_patch_node_invariant_no_fields,
         smoke_patch_node_not_found,
         smoke_patch_node_happy_path,
@@ -2957,7 +2959,7 @@ async def _run_all(config: Any) -> None:
 
 
 def main() -> None:
-    print("divoid-mcp smoke tests (Phase 1 + Phase 2: read-side + composites + messaging + list + primitives + bootstrap)")
+    print("divoid-mcp smoke tests: read-side + composites + messaging + list + primitives + bootstrap")
     print("=" * 60)
 
     config = _setup()

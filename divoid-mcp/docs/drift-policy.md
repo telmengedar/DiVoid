@@ -69,8 +69,8 @@ the canary even when no tool-relevant change occurred. These are safe to
 bump without further investigation, but always inspect before bumping — even
 a "trivial" edit can be accompanied by a substantive one.
 
-## Phase 2
+## Future enhancements
 
-Phase 2 may replace the raw-bytes hash with a structural hash (parsed section
-headings + parameter names) to reduce false positives from cosmetic edits.
+A future iteration may replace the raw-bytes hash with a structural hash (parsed
+section headings + parameter names) to reduce false positives from cosmetic edits.
 Until then, the manual loop above is the correct procedure.

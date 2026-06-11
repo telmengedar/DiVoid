@@ -32,7 +32,7 @@ CANONICAL_RESOURCES: list[tuple[int, str, str]] = [
     (190, "Hivemind Protocol", "Operating contract: query-first, file-always, work-in-the-graph"),
     (8, "DiVoid API Reference", "REST API reference for the DiVoid backend"),
     (493, "Structural Conventions", "Project/group topology, content-required types, status lifecycle"),
-    (435, "Messaging System", "DiVoid messaging system design (Phase 2 relevance)"),
+    (435, "Messaging System", "DiVoid messaging system: routing protocol, scope discipline, lifecycle"),
 ]
 
 
