@@ -15,6 +15,16 @@
  */
 
 import { z } from 'zod';
+import type { NodeAccess } from '@/types/divoid';
+
+// ─── Access vocabulary ────────────────────────────────────────────────────────
+
+/**
+ * The four canonical per-node access values, in display order.
+ * Mirrors the backend NodeAccess enum serialized by JsonStringEnumConverter.
+ * See NodeAccess.cs and DiVoid #1370 / PR #130.
+ */
+export const ACCESS_OPTIONS: NodeAccess[] = ['None', 'Read', 'Write', 'Read, Write'];
 
 // ─── Status vocabulary ────────────────────────────────────────────────────────
 
@@ -61,6 +71,12 @@ export const editNodeSchema = z.object({
   name: z.string().min(1, 'Name is required').max(255, 'Name must be 255 characters or fewer'),
   /** Status is kept as a string (can be empty string to represent "no status"). */
   status: z.string().optional(),
+  /**
+   * Per-node access value. Only submitted when the caller is owner or admin
+   * (the `canEditAccess` gate in EditNodeDialog prevents the field rendering otherwise).
+   * Backend rejects the PATCH with 403 if the caller lacks owner/admin permission.
+   */
+  access: z.enum(['None', 'Read', 'Write', 'Read, Write']).optional(),
 });
 
 export type EditNodeFormValues = z.infer<typeof editNodeSchema>;

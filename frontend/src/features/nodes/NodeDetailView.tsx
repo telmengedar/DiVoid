@@ -524,6 +524,26 @@ export function NodeDetailView({ nodeId, onClose, onNeighbourClick }: NodeDetail
               </span>
             }
           />
+          <MetadataRow
+            label="Owner"
+            value={
+              <span className="tabular-nums">
+                {node?.ownerId === undefined || node.ownerId === 0 ? '—' : node.ownerId}
+              </span>
+            }
+          />
+          <MetadataRow
+            label="Access"
+            value={
+              node?.access ? (
+                <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-muted text-muted-foreground">
+                  {node.access}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">—</span>
+              )
+            }
+          />
         </div>
       </section>
 
