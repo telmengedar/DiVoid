@@ -209,10 +209,8 @@ describe('EditNodeDialog — Access field', () => {
       http.get(`${BASE_URL}/users/me`, () => HttpResponse.json(nonOwnerNonAdminUser)),
     );
 
-    // Render with a node owned by a different user (ownerId: 99 ≠ nonOwnerNonAdminUser.id: 3).
     renderDialog(otherOwnerNode);
 
-    // Wait for whoami to resolve so canEditAccess is computed with real data.
     // We assert something else IS visible (the Name field) so the absence of
     // the Access selector is a real absence, not a load-timing false negative.
     await waitFor(() => {
