@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Backend.Models.Auth;
 using Backend.Models.Users;
 using Backend.Services.Auth;
+using Backend.Services.Organizations;
 using Backend.Services.Users;
 using Backend.tests.Fixtures;
 using Microsoft.Extensions.Configuration;
@@ -34,7 +35,7 @@ public class CliCreateAdminTests
                 ["Auth:Enabled"] = pepper != null ? "true" : "false"
             })
             .Build();
-        return new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance);
+        return new ApiKeyService(fixture.EntityManager, new KeyGenerator(), new OrganizationService(fixture.EntityManager), config, NullLogger<ApiKeyService>.Instance);
     }
 
     static IUserService MakeUserService(DatabaseFixture fixture)
@@ -131,7 +132,7 @@ public class CliCreateAdminTests
             .Build();
 
         Assert.Throws<MissingPepperException>(() =>
-            new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance));
+            new ApiKeyService(fixture.EntityManager, new KeyGenerator(), new OrganizationService(fixture.EntityManager), config, NullLogger<ApiKeyService>.Instance));
     }
 
     // -----------------------------------------------------------------------

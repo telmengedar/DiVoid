@@ -10,6 +10,7 @@ using Backend.Auth;
 using Backend.Models.Auth;
 using Backend.Models.Users;
 using Backend.Services.Auth;
+using Backend.Services.Organizations;
 using Backend.tests.Fixtures;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -42,7 +43,7 @@ public class AuthHandlerTests
                 ["Auth:Enabled"] = "true"
             })
             .Build();
-        return new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance);
+        return new ApiKeyService(fixture.EntityManager, new KeyGenerator(), new OrganizationService(fixture.EntityManager), config, NullLogger<ApiKeyService>.Instance);
     }
 
     static async Task<long> CreateUser(DatabaseFixture fixture, bool enabled = true)

@@ -6,6 +6,7 @@ using System.Security.Claims;
 using System.Threading.Tasks;
 using Backend.Auth;
 using Backend.Models.Users;
+using Backend.Services.Organizations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using NUnit.Framework;
@@ -52,7 +53,7 @@ public class KeycloakClaimsTransformationTests {
     public async Task TransformAsync_EnabledUser_EmitsExactlyOneDivoidUserIdClaim() {
         using DatabaseFixture db = new();
         long userId = await InsertEnabledUserAsync(db.EntityManager, "transform-emit");
-        KeycloakClaimsTransformation t = new(db.EntityManager, BuildConfig(), NullLogger<KeycloakClaimsTransformation>.Instance);
+        KeycloakClaimsTransformation t = new(db.EntityManager, new OrganizationService(db.EntityManager), BuildConfig(), NullLogger<KeycloakClaimsTransformation>.Instance);
         ClaimsPrincipal principal = BuildJwtPrincipal(sub: "some-sub", divoidUserId: userId);
         ClaimsPrincipal augmented = await t.TransformAsync(principal);
         IEnumerable<Claim> claims = augmented.FindAll(ClaimsExtensions.DivoidUserIdClaimType);
@@ -67,7 +68,7 @@ public class KeycloakClaimsTransformationTests {
     public async Task TransformAsync_EnabledUser_DoesNotAddExtraNameIdentifierClaim() {
         using DatabaseFixture db = new();
         long userId = await InsertEnabledUserAsync(db.EntityManager, "transform-no-ni");
-        KeycloakClaimsTransformation t = new(db.EntityManager, BuildConfig(), NullLogger<KeycloakClaimsTransformation>.Instance);
+        KeycloakClaimsTransformation t = new(db.EntityManager, new OrganizationService(db.EntityManager), BuildConfig(), NullLogger<KeycloakClaimsTransformation>.Instance);
         string originalSub = "original-sub-uuid";
         ClaimsPrincipal principal = BuildJwtPrincipal(sub: originalSub, divoidUserId: userId);
         ClaimsPrincipal augmented = await t.TransformAsync(principal);
@@ -83,7 +84,7 @@ public class KeycloakClaimsTransformationTests {
     public async Task TransformAsync_NumericSub_DivoidUserIdClaimCarriesCorrectId() {
         using DatabaseFixture db = new();
         long userId = await InsertEnabledUserAsync(db.EntityManager, "transform-numeric-sub");
-        KeycloakClaimsTransformation t = new(db.EntityManager, BuildConfig(), NullLogger<KeycloakClaimsTransformation>.Instance);
+        KeycloakClaimsTransformation t = new(db.EntityManager, new OrganizationService(db.EntityManager), BuildConfig(), NullLogger<KeycloakClaimsTransformation>.Instance);
         ClaimsPrincipal principal = BuildJwtPrincipal(sub: "42", divoidUserId: userId);
         ClaimsPrincipal augmented = await t.TransformAsync(principal);
         IEnumerable<Claim> claims = augmented.FindAll(ClaimsExtensions.DivoidUserIdClaimType);
@@ -98,7 +99,7 @@ public class KeycloakClaimsTransformationTests {
     public async Task TransformAsync_CalledTwice_DoesNotDuplicateDivoidUserIdClaim() {
         using DatabaseFixture db = new();
         long userId = await InsertEnabledUserAsync(db.EntityManager, "transform-idempotent");
-        KeycloakClaimsTransformation t = new(db.EntityManager, BuildConfig(), NullLogger<KeycloakClaimsTransformation>.Instance);
+        KeycloakClaimsTransformation t = new(db.EntityManager, new OrganizationService(db.EntityManager), BuildConfig(), NullLogger<KeycloakClaimsTransformation>.Instance);
         ClaimsPrincipal principal = BuildJwtPrincipal(sub: "some-sub", divoidUserId: userId);
         ClaimsPrincipal first  = await t.TransformAsync(principal);
         ClaimsPrincipal second = await t.TransformAsync(first);
@@ -111,7 +112,7 @@ public class KeycloakClaimsTransformationTests {
     [Test, Parallelizable]
     public async Task TransformAsync_ApiKeyPrincipal_PassesThroughUnchanged() {
         using DatabaseFixture db = new();
-        KeycloakClaimsTransformation t = new(db.EntityManager, BuildConfig(), NullLogger<KeycloakClaimsTransformation>.Instance);
+        KeycloakClaimsTransformation t = new(db.EntityManager, new OrganizationService(db.EntityManager), BuildConfig(), NullLogger<KeycloakClaimsTransformation>.Instance);
         ClaimsIdentity identity = new("ApiKey");
         identity.AddClaim(new Claim("divoid.user_id", "10"));
         ClaimsPrincipal principal = new(identity);
@@ -129,7 +130,7 @@ public class KeycloakClaimsTransformationTests {
                               .Values("transform-disabled", "disabled@test.com", false, null, DateTime.UtcNow)
                               .ReturnID()
                               .ExecuteAsync();
-        KeycloakClaimsTransformation t = new(db.EntityManager, BuildConfig(), NullLogger<KeycloakClaimsTransformation>.Instance);
+        KeycloakClaimsTransformation t = new(db.EntityManager, new OrganizationService(db.EntityManager), BuildConfig(), NullLogger<KeycloakClaimsTransformation>.Instance);
         ClaimsPrincipal principal = BuildJwtPrincipal(sub: "some-sub", divoidUserId: userId);
         ClaimsPrincipal result = await t.TransformAsync(principal);
         IEnumerable<Claim> claims = result.FindAll(ClaimsExtensions.DivoidUserIdClaimType);

@@ -76,6 +76,8 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
             identity.AddClaim(new Claim("divoid.user_id", userIdString));
             foreach (string permission in details.Permissions ?? [])
                 identity.AddClaim(new Claim("permission", permission));
+            identity.AddClaim(new Claim(ClaimsExtensions.OrganizationIdsClaimType,
+                string.Join(",", details.OrganizationIds ?? [])));
 
             ClaimsPrincipal principal = new(identity);
             AuthenticationTicket ticket = new(principal, SchemeName);

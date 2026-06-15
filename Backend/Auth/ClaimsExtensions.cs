@@ -24,6 +24,29 @@ public static class ClaimsExtensions {
     /// </summary>
     public const string DivoidUserIdClaimType = "divoid.user_id";
 
+    /// <summary>
+    /// claim carrying the caller's accessible organization-ids as a CSV of longs;
+    /// absence = admin-equivalent (no org filter). See organizations.md §8.
+    /// </summary>
+    public const string OrganizationIdsClaimType = "divoid.organization_ids";
+
+    /// <summary>
+    /// parses the org-ids CSV claim; null = absent (admin-equivalent), empty array = present-but-empty (zero memberships).
+    /// </summary>
+    /// <param name="principal">authenticated principal from the current request</param>
+    /// <returns>parsed org-ids or null when the claim is absent</returns>
+    public static long[] GetAccessibleOrgs(this ClaimsPrincipal principal)
+    {
+        string raw = principal.FindFirstValue(OrganizationIdsClaimType);
+        if (raw == null) return null;
+        if (raw.Length == 0) return [];
+        string[] parts = raw.Split(',', System.StringSplitOptions.RemoveEmptyEntries);
+        long[] ids = new long[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+            ids[i] = long.Parse(parts[i]);
+        return ids;
+    }
+
 
     /// <summary>
     /// extracts the DiVoid user id from the principal's claims.

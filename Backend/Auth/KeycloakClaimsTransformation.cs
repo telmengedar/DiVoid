@@ -2,6 +2,7 @@ using System;
 using System.Security.Claims;
 using System.Threading.Tasks;
 using Backend.Models.Users;
+using Backend.Services.Organizations;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Configuration;
@@ -22,6 +23,7 @@ namespace Backend.Auth;
 /// </summary>
 public class KeycloakClaimsTransformation : IClaimsTransformation {
     readonly IEntityManager database;
+    readonly IOrganizationService organizationService;
     readonly string userIdClaimName;
     readonly ILogger<KeycloakClaimsTransformation> logger;
 
@@ -31,13 +33,16 @@ public class KeycloakClaimsTransformation : IClaimsTransformation {
     /// creates a new <see cref="KeycloakClaimsTransformation"/>
     /// </summary>
     /// <param name="database">access to database</param>
+    /// <param name="organizationService">service used to load the caller's organization memberships per request</param>
     /// <param name="configuration">application configuration</param>
     /// <param name="logger">logger</param>
     public KeycloakClaimsTransformation(
         IEntityManager database,
+        IOrganizationService organizationService,
         IConfiguration configuration,
         ILogger<KeycloakClaimsTransformation> logger) {
         this.database = database;
+        this.organizationService = organizationService;
         this.logger = logger;
         userIdClaimName = configuration["Keycloak:UserIdClaimName"] ?? "userId";
     }
@@ -102,6 +107,9 @@ public class KeycloakClaimsTransformation : IClaimsTransformation {
 
         foreach (string permission in permissions)
             identity.AddClaim(new Claim("permission", permission));
+
+        long[] orgIds = await organizationService.GetUserOrganizationIds(user.Id);
+        identity.AddClaim(new Claim(ClaimsExtensions.OrganizationIdsClaimType, string.Join(",", orgIds)));
 
         logger.LogInformation("event=auth.jwt.success userId={UserId}", userId);
 

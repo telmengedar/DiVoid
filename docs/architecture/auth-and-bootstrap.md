@@ -455,3 +455,7 @@ For readers who saw the first version of this document:
 ## Per-node access
 
 Each `Node` row carries an `OwnerId` (creator's DiVoid user-id) and an `Access` flags field (`NodeAccess` enum: `None=0`, `Read=1`, `Write=2`). Owner and admin always override these flags. Introduced in `feature/node-access-layer-1370`. See `docs/architecture/node-access-layer.md` for the full design.
+
+## Organization layer
+
+Each `Node` row also carries an `OrganizationId` scalar FK, and both authentication schemes emit a `divoid.organization_ids` CSV claim carrying the caller's accessible org-ids. The org gate is the outermost visibility predicate, composing **before** the per-node access bits above. Introduced in `feature/organizations-1725`. See `docs/architecture/organizations.md` for the full design.

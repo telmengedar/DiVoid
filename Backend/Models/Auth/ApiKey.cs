@@ -41,6 +41,14 @@ public class ApiKey {
     public string Permissions { get; set; }
 
     /// <summary>
+    /// JSON-encoded snapshot of organization ids at key-mint time; drives the
+    /// <c>divoid.organization_ids</c> claim. Stale by design — rotate the key to refresh.
+    /// </summary>
+    [AllowPatch]
+    [JsonColumn]
+    public string OrganizationIds { get; set; }
+
+    /// <summary>
     /// whether the key is enabled and may authenticate requests
     /// </summary>
     [AllowPatch]

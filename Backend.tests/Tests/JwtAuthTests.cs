@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Backend.Models.Auth;
 using Backend.Models.Users;
 using Backend.Services.Auth;
+using Backend.Services.Organizations;
 using Backend.tests.Fixtures;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -249,6 +250,7 @@ public class JwtAuthTests
         ApiKeyService svc = new(
             db,
             new KeyGenerator(),
+            new OrganizationService(db),
             config,
             NullLogger<ApiKeyService>.Instance);
 
