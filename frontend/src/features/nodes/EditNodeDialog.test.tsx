@@ -33,8 +33,6 @@ import { setupServer } from 'msw/node';
 import type { NodeDetails, PatchOperation } from '@/types/divoid';
 import { BASE_URL } from '@/test/msw/handlers';
 
-// ─── Fixtures ─────────────────────────────────────────────────────────────────
-
 /** Node owned by user id 1 (matches the owner fixture user). */
 const ownerNode: NodeDetails = {
   id: 42,
@@ -82,8 +80,6 @@ const nonOwnerNonAdminUser = {
   permissions: ['read', 'write'],
 };
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 const server = setupServer(
   http.get(`${BASE_URL}/users/me`, () => HttpResponse.json(ownerUser)),
   http.patch(`${BASE_URL}/nodes/:id`, () => new HttpResponse(null, { status: 204 })),
@@ -96,8 +92,6 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 afterAll(() => server.close());
-
-// ─── Module mocks ─────────────────────────────────────────────────────────────
 
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
@@ -133,8 +127,6 @@ vi.mock('@/lib/constants', () => ({
 
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
 
-// ─── Render helper ────────────────────────────────────────────────────────────
-
 function renderDialog(node: NodeDetails) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -153,8 +145,6 @@ beforeAll(async () => {
   EditNodeDialog = mod.EditNodeDialog;
 });
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 describe('EditNodeDialog — Access field', () => {
   it('T1: owner sees the Access selector and submitted PATCH body contains /access op', async () => {
     const user = userEvent.setup();
@@ -170,12 +160,10 @@ describe('EditNodeDialog — Access field', () => {
 
     renderDialog(ownerNode);
 
-    // Wait for whoami to load so canEditAccess is computed with real data.
     await waitFor(() => {
       expect(screen.getByLabelText('Access')).toBeInTheDocument();
     });
 
-    // Change the select from 'Read, Write' → 'None'.
     await user.selectOptions(screen.getByLabelText('Access'), 'None');
 
     await user.click(screen.getByRole('button', { name: /^save$/i }));
@@ -199,7 +187,6 @@ describe('EditNodeDialog — Access field', () => {
       }),
     );
 
-    // Render with a node NOT owned by adminUser (ownerId: 99).
     renderDialog(otherOwnerNode);
 
     await waitFor(() => {

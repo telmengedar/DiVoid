@@ -213,7 +213,6 @@ describe('NodeDetailPage — read regions', () => {
       expect(screen.getByText('Test Document')).toBeInTheDocument();
     });
 
-    // sampleNode has ownerId: 1 — the row renders the numeric id.
     // Load-bearing: revert the Owner MetadataRow from NodeDetailView.tsx and this fails.
     expect(screen.getByText('1')).toBeInTheDocument();
   });
@@ -225,7 +224,6 @@ describe('NodeDetailPage — read regions', () => {
       expect(screen.getByText('Test Document')).toBeInTheDocument();
     });
 
-    // sampleNode has access: 'Read, Write' — the badge renders that string.
     // Load-bearing: revert the Access MetadataRow from NodeDetailView.tsx and this fails.
     expect(screen.getByText('Read, Write')).toBeInTheDocument();
   });
