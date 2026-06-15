@@ -33,6 +33,8 @@ export const sampleNode: NodeDetails = {
   name: 'Test Document',
   status: 'open',
   contentType: 'text/markdown; charset=utf-8',
+  ownerId: 1,
+  access: 'Read, Write',
 };
 
 /** Fixture: a page of nodes for listing endpoints. */

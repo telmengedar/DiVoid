@@ -7,6 +7,13 @@
 
 // ─── Node ─────────────────────────────────────────────────────────────────────
 
+/**
+ * The four canonical access values serialized by the backend NodeAccess enum.
+ * `"Read, Write"` is the flags-combined string produced by JsonStringEnumConverter
+ * for NodeAccess.Read | NodeAccess.Write (value 3). See NodeAccess.cs.
+ */
+export type NodeAccess = 'None' | 'Read' | 'Write' | 'Read, Write';
+
 /** Mirrors the backend NodeDetails DTO. */
 export interface NodeDetails {
   id: number;
@@ -16,6 +23,19 @@ export interface NodeDetails {
   /** Only present on semantic search results. 0–1, higher = more relevant. */
   similarity?: number;
   contentType?: string;
+  /**
+   * DiVoid user-id of the node's owner. 0 is a sentinel for pre-#1370 backfilled rows
+   * (created before ownership tracking existed). Display as `—` when 0.
+   * Optional in the type to remain forward-compatible with field selectors that omit it;
+   * the backend always populates it on `GET /api/nodes/:id`.
+   */
+  ownerId?: number;
+  /**
+   * Per-node access flags controlling what non-owner non-admin callers may do.
+   * Optional in the type to remain forward-compatible with field selectors that omit it;
+   * the backend always populates it on `GET /api/nodes/:id`. See DiVoid #1370 / PR #130.
+   */
+  access?: NodeAccess;
 }
 
 /** Paginated response envelope from GET /api/nodes (including path-query via ?path=). */

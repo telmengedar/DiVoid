@@ -72,7 +72,9 @@ vi.mock('sonner', () => ({
   toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 
-vi.mock('@/features/auth/useWhoami');
+vi.mock('@/features/auth/useWhoami', () => ({
+  useWhoami: vi.fn(() => ({ data: undefined })),
+}));
 
 const nodeWithMarkdown: NodeDetails = {
   id: 42,

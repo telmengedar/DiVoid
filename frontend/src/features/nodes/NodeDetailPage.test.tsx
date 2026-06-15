@@ -206,6 +206,30 @@ describe('NodeDetailPage — read regions', () => {
     expect(screen.getByText('text/markdown; charset=utf-8')).toBeInTheDocument();
   });
 
+  it('renders Owner metadata row with ownerId from fixture', async () => {
+    renderAtId(42);
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Document')).toBeInTheDocument();
+    });
+
+    // sampleNode has ownerId: 1 — the row renders the numeric id.
+    // Load-bearing: revert the Owner MetadataRow from NodeDetailView.tsx and this fails.
+    expect(screen.getByText('1')).toBeInTheDocument();
+  });
+
+  it('renders Access metadata row with access badge from fixture', async () => {
+    renderAtId(42);
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Document')).toBeInTheDocument();
+    });
+
+    // sampleNode has access: 'Read, Write' — the badge renders that string.
+    // Load-bearing: revert the Access MetadataRow from NodeDetailView.tsx and this fails.
+    expect(screen.getByText('Read, Write')).toBeInTheDocument();
+  });
+
   it('renders markdown content (not raw source)', async () => {
     renderAtId(42);
 
