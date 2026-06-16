@@ -4,9 +4,9 @@
  * Responsibilities (this component only):
  *  - Own the ReactFlow instance and viewport state (local pan/zoom).
  *  - Compute padded bounds from the current viewport and pass to hooks.
- *  - Apply type and status filters via useNodesInViewport / useUntypedNodesInViewport.
- *  - Merge typed + untyped node sets when "untyped" is selected.
+ *  - Apply type and status filters via useNodesInViewport (single server-side query).
  *  - Convert NodeDetails[] (with inline links[]) → xyflow Node[] / Edge[] (DiVoid #310 / #1213).
+ *  - Surface a truncation badge when nodesPage.total > MAX_VIEWPORT_NODES (DiVoid #1976).
  *  - Dispatch useMoveNode on drag-end.
  *  - Dispatch useLinkNodes on xyflow onConnect (drag-to-connect, #287).
  *  - Dispatch useUnlinkNodes on Delete key via onEdgesDelete, with undo toast (#266).
@@ -21,7 +21,7 @@
  *
  * Design: docs/architecture/workspace-mode.md §5.7 /
  *         docs/architecture/workspace-modal-preview.md §5.5 / §5.6
- * Task: DiVoid node #230 / #318 / #352 / #1253
+ * Task: DiVoid node #230 / #318 / #352 / #1253 / #1976
  */
 
 import {
@@ -53,13 +53,12 @@ import { toast } from 'sonner';
 
 import {
   useNodesInViewport,
-  useUntypedNodesInViewport,
+  MAX_VIEWPORT_NODES,
   type ViewportBounds,
 } from './useNodesInViewport';
 import { useMoveNode } from './useMoveNode';
 import {
   useWorkspaceFilters,
-  UNTYPED_VALUE,
   ALL_STATUS_VALUES,
   NO_STATUS_VALUE,
 } from './useWorkspaceFilters';
@@ -270,12 +269,6 @@ export function WorkspaceCanvas({ onPeek }: WorkspaceCanvasProps) {
     [selectedTypes, selectedStatuses],
   );
 
-  // Derive whether real types are selected (to decide if typed query runs).
-  const hasRealTypes = useMemo(
-    () => selectedTypes.some((t) => t !== UNTYPED_VALUE),
-    [selectedTypes],
-  );
-
   const selectedTypesSet    = useMemo(() => new Set(selectedTypes),    [selectedTypes]);
   const selectedStatusesSet = useMemo(() => new Set(selectedStatuses), [selectedStatuses]);
 
@@ -301,38 +294,12 @@ export function WorkspaceCanvas({ onPeek }: WorkspaceCanvasProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentional: run once on mount
 
-  // ── Data queries ──────────────────────────────────────────────────────────
   const { data: nodesPage } = useNodesInViewport(
     debouncedBounds ?? DEFAULT_VIEWPORT_BOUNDS,
     filterParams,
-    hasRealTypes,
   );
 
-  // Untyped fetch (option b from #318): only when UNTYPED_VALUE is selected.
-  const includesUntyped = selectedTypes.includes(UNTYPED_VALUE);
-  const { data: untypedPage } = useUntypedNodesInViewport(
-    debouncedBounds ?? DEFAULT_VIEWPORT_BOUNDS,
-    filterParams,
-  );
-
-  // Merge typed + untyped results. Deduplicate by id (a node cannot be both
-  // typed and untyped, but guard anyway).
-  const visibleDetails = useMemo<PositionedNodeDetails[]>(() => {
-    const typed   = nodesPage?.result ?? [];
-    const untyped = includesUntyped ? (untypedPage?.result ?? []) : [];
-
-    if (untyped.length === 0) return typed;
-
-    const seen = new Set(typed.map((n) => n.id));
-    const merged = [...typed];
-    for (const n of untyped) {
-      if (!seen.has(n.id)) {
-        merged.push(n);
-        seen.add(n.id);
-      }
-    }
-    return merged;
-  }, [nodesPage, untypedPage, includesUntyped]);
+  const visibleDetails = nodesPage?.result ?? [];
 
   // ── Build xyflow nodes / edges (memoised) ─────────────────────────────────
   // onPeek is stable (useCallback with [setSearchParams] in usePeekState) so
@@ -599,6 +566,19 @@ export function WorkspaceCanvas({ onPeek }: WorkspaceCanvasProps) {
             onToggle={toggleStatus}
             active={statusFilterActive}
           />
+          {/* Truncation badge — shown when the viewport holds more than MAX_VIEWPORT_NODES
+              matching nodes. Reads nodesPage.total directly (not result.length) to avoid
+              a false positive when the viewport happens to contain exactly 250 rows.
+              See DiVoid #1976. */}
+          {nodesPage && nodesPage.total > MAX_VIEWPORT_NODES && (
+            <span
+              className="rounded px-2 py-0.5 text-xs font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-900 dark:text-amber-100"
+              role="status"
+              aria-label={`Showing ${MAX_VIEWPORT_NODES} of ${nodesPage.total} nodes`}
+            >
+              Showing {MAX_VIEWPORT_NODES} of {nodesPage.total} — zoom in to see all
+            </span>
+          )}
         </div>
       </div>
 
