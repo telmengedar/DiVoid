@@ -19,6 +19,11 @@ public class NodeFilter : ListFilter
     public string[] Type { get; set; }
 
     /// <summary>
+    /// when true, only return nodes with no type set (null or empty string)
+    /// </summary>
+    public bool NoType { get; set; }
+
+    /// <summary>
     /// name of node to filter for
     /// </summary>
     public string[] Name { get; set; }

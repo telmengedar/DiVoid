@@ -900,6 +900,94 @@ public class NodeServiceTests
         Assert.That(results.Single().Status, Is.EqualTo("open"));
     }
 
+    /// <summary>
+    /// Load-bearing: <c>?notype=true</c> must return only nodes whose associated
+    /// <c>NodeType.Type</c> is null.
+    ///
+    /// POSITIVE PROOF: with the predicate this test passes — the null-type node is included.
+    ///
+    /// NEGATIVE PROOF: remove the <c>else if (filter.NoType)</c> branch from
+    /// <c>GenerateFilter</c> (replace with a no-op). The null-type node is no longer
+    /// filtered for; it may or may not appear depending on other nodes in the fixture, so
+    /// the <c>results.All(n =&gt; n.Type == null)</c> assertion fails the moment any typed
+    /// node bleeds through.
+    /// </summary>
+    [Test]
+    public async Task ListPaged_NoTypeFilter_ReturnsOnlyNullTypeNodes()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails nullType = await Create(svc, type: null!, name: "NullTypeNode");
+        await Create(svc, type: "task", name: "TaskNode");
+
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { NoType = true, Count = 100 }, callerId: 0, isAdmin: true);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(nullType.Id), "null-type node must be included");
+            Assert.That(results.All(n => n.Type == null), Is.True, "every returned node must have a null type");
+        });
+    }
+
+    /// <summary>
+    /// Load-bearing: when both <c>?type=task</c> and <c>?notype=true</c> are supplied the
+    /// predicate must be <c>(TypeId IN (task-ids)) OR (TypeId IN (null-type-ids))</c> —
+    /// union semantics, matching the <c>nostatus</c> precedent.
+    ///
+    /// POSITIVE PROOF: with the OR branch this test passes — both the task node and the
+    /// null-type node are returned; the bug node is excluded.
+    ///
+    /// NEGATIVE PROOF: replace the union branch with a plain <c>predicate &amp;= typeOp</c>
+    /// (no OR for null types). The null-type node drops out, so
+    /// <c>Does.Contain(nullType.Id)</c> fails.
+    /// </summary>
+    [Test]
+    public async Task ListPaged_TypeAndNoType_UsesOrSemantics()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails taskNode = await Create(svc, type: "task", name: "TaskNode");
+        NodeDetails bugNode  = await Create(svc, type: "bug",  name: "BugNode");
+        NodeDetails nullType = await Create(svc, type: null!,   name: "NullTypeNode");
+
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { Type = ["task"], NoType = true, Count = 100 }, callerId: 0, isAdmin: true);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(taskNode.Id), "task node must be included (matches Type list)");
+            Assert.That(ids, Does.Contain(nullType.Id), "null-type node must be included (matches NoType)");
+            Assert.That(ids, Does.Not.Contain(bugNode.Id), "bug node must be excluded");
+        });
+    }
+
+    /// <summary>
+    /// Regression: when <c>?notype</c> is absent (default false) and a type filter is
+    /// active, null-type nodes are excluded — the absence of the flag must not widen the
+    /// result set.
+    /// </summary>
+    [Test]
+    public async Task ListPaged_TypeOnly_ExcludesNullTypeNodes()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails taskNode = await Create(svc, type: "task", name: "TaskNode");
+        NodeDetails nullType = await Create(svc, type: null!,   name: "NullTypeNode");
+
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { Type = ["task"], Count = 100 }, callerId: 0, isAdmin: true);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(taskNode.Id),       "task node must be included");
+            Assert.That(ids, Does.Not.Contain(nullType.Id),   "null-type node must be excluded when only type filter is set");
+        });
+    }
+
     // -----------------------------------------------------------------------
     // ListPaged — severity filter
     // -----------------------------------------------------------------------

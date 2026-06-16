@@ -322,7 +322,21 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         {
             LoadOperation<NodeType> typeOp = database.Load<NodeType>(t => t.Id)
                                                      .Where(t => t.Type.In(filter.Type));
-            predicate &= n => n.TypeId.In(typeOp);
+            if (filter.NoType)
+            {
+                LoadOperation<NodeType> nullTypeOp = database.Load<NodeType>(t => t.Id)
+                                                             .Where(t => t.Type == null);
+                predicate &= new PredicateExpression<Node>(n => n.TypeId.In(typeOp))
+                           | new PredicateExpression<Node>(n => n.TypeId.In(nullTypeOp));
+            } else
+            {
+                predicate &= n => n.TypeId.In(typeOp);
+            }
+        } else if (filter.NoType)
+        {
+            LoadOperation<NodeType> nullTypeOp = database.Load<NodeType>(t => t.Id)
+                                                         .Where(t => t.Type == null);
+            predicate &= n => n.TypeId.In(nullTypeOp);
         }
 
         if (filter.Status?.Length > 0)
