@@ -39,8 +39,6 @@ import { setupServer } from 'msw/node';
 import { BASE_URL } from '@/test/msw/handlers';
 import type { Page, PositionedNodeDetails } from '@/types/divoid';
 
-// ─── MSW server ───────────────────────────────────────────────────────────────
-
 // Tracks the raw query string of each /api/nodes?bounds=... request so tests
 // can assert on exact URL params.
 const capturedQueries: string[] = [];
@@ -87,8 +85,6 @@ afterEach(() => {
 });
 afterAll(() => server.close());
 
-// ─── Mocks ────────────────────────────────────────────────────────────────────
-
 vi.mock('react-oidc-context', () => ({
   useAuth: vi.fn(() => ({
     isAuthenticated: true,
@@ -132,8 +128,6 @@ vi.mock('next-themes', () => ({
   useTheme: vi.fn(() => ({ resolvedTheme: 'dark', setTheme: vi.fn() })),
 }));
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 function makeQC() {
   return new QueryClient({
     defaultOptions: {
@@ -169,8 +163,6 @@ function renderWithTypes(selectedTypes: string[]) {
   );
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 describe('viewport query collapse — param assembly (DiVoid #1976)', () => {
   /**
    * Test 1: UNTYPED_VALUE in selectedTypes → request carries type=task AND notype=true.
@@ -180,7 +172,6 @@ describe('viewport query collapse — param assembly (DiVoid #1976)', () => {
    * false → `expect(...).toBe(true)` fails.
    */
   it('sends notype=true when UNTYPED_VALUE is selected alongside real types', async () => {
-    // Seed: task (real) + __untyped__ (synthetic)
     renderWithTypes(['task', '__untyped__']);
 
     await waitFor(() => expect(nodeRequestCount).toBeGreaterThanOrEqual(1), { timeout: 5000 });
@@ -205,10 +196,8 @@ describe('viewport query collapse — param assembly (DiVoid #1976)', () => {
 
     const viewportQuery = capturedQueries.find((q) => q.includes('bounds'));
     expect(viewportQuery).toBeDefined();
-    // Both real types present.
     expect(viewportQuery!.includes('task')).toBe(true);
     expect(viewportQuery!.includes('bug')).toBe(true);
-    // notype must be absent.
     expect(viewportQuery!.includes('notype')).toBe(false);
   });
 });
@@ -221,7 +210,6 @@ describe('viewport query collapse — truncation badge (DiVoid #1976)', () => {
    * `screen.getByRole('status')` throws → test fails.
    */
   it('shows truncation badge when nodesPage.total > MAX_VIEWPORT_NODES', async () => {
-    // Build a result array of 250 items (simulates the cap being hit).
     const bigResult: PositionedNodeDetails[] = Array.from({ length: 250 }, (_, i) => ({
       id: i + 1, type: 'task', name: `Node ${i + 1}`, status: 'open', x: i * 10, y: 0, links: [],
     }));
@@ -232,7 +220,6 @@ describe('viewport query collapse — truncation badge (DiVoid #1976)', () => {
 
     await waitFor(() => expect(nodeRequestCount).toBeGreaterThanOrEqual(1), { timeout: 5000 });
 
-    // Wait for badge to appear.
     await waitFor(() => {
       expect(screen.getByRole('status')).toBeInTheDocument();
     }, { timeout: 5000 });
@@ -258,7 +245,6 @@ describe('viewport query collapse — truncation badge (DiVoid #1976)', () => {
 
     await waitFor(() => expect(nodeRequestCount).toBeGreaterThanOrEqual(1), { timeout: 5000 });
 
-    // Allow the React tree to fully settle.
     await act(async () => { await new Promise((r) => setTimeout(r, 100)); });
 
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
@@ -283,10 +269,8 @@ describe('viewport query collapse — single request (DiVoid #1976)', () => {
   it('every notype=true request also carries a type= param (no lone untyped-only fetch)', async () => {
     renderWithTypes(['task', '__untyped__']);
 
-    // Wait for the initial query to settle.
     await waitFor(() => expect(nodeRequestCount).toBeGreaterThanOrEqual(1), { timeout: 5000 });
 
-    // Allow any follow-up requests to complete.
     await act(async () => { await new Promise((r) => setTimeout(r, 200)); });
 
     const boundsRequests = capturedQueries.filter((q) => q.includes('bounds'));
