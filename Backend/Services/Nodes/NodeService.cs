@@ -81,30 +81,45 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                       .ExecuteAsync(transaction);
     }
 
+    /// <summary>
+    /// resolves a type name to its <see cref="NodeType"/> id, creating the row if it does not exist.
+    /// <paramref name="type"/> that is null, empty, or whitespace-only normalizes to the untyped
+    /// marker (null), so an empty-string type never spawns a row distinct from the null-named one.
+    /// the untyped lookup branches on a literal <c>== null</c> rather than a captured-null variable:
+    /// a captured null compiles to <c>Type = NULL</c> (never true), which is why stray null-named
+    /// rows accumulated before (DiVoid #508); the literal emits <c>Type IS NULL</c> and reuses the row.
+    /// all operations are bound to <paramref name="transaction"/>.
+    /// </summary>
+    async Task<long> ResolveOrCreateTypeId(string type, Transaction transaction)
+    {
+        string normalized = string.IsNullOrWhiteSpace(type) ? null : type;
+
+        LoadOperation<NodeType> lookup = normalized == null
+            ? database.Load<NodeType>(t => t.Id).Where(t => t.Type == null)
+            : database.Load<NodeType>(t => t.Id).Where(t => t.Type == normalized);
+        long? existing = await lookup.ExecuteScalarAsync<long?>(transaction);
+        if (existing.HasValue)
+            return existing.Value;
+
+        return await database.Insert<NodeType>()
+                             .Columns(n => n.Type)
+                             .Values(normalized)
+                             .ReturnID()
+                             .ExecuteAsync(transaction);
+    }
+
     /// <inheritdoc />
     public async Task<NodeDetails> CreateNode(NodeDetails node, long callerId)
     {
         using Transaction transaction = database.Transaction();
-        NodeType type = await database.Load<NodeType>()
-                                    .Where(t => t.Type == node.Type)
-                                    .ExecuteEntityAsync(transaction);
-        if (type == null)
-            type = new()
-            {
-                Id = await database.Insert<NodeType>()
-                                 .Columns(n => n.Type)
-                                 .Values(node.Type)
-                                 .ReturnID()
-                                 .ExecuteAsync(transaction),
-                Type = node.Type
-            };
+        long typeId = await ResolveOrCreateTypeId(node.Type, transaction);
 
         double insertX = node.X ?? 0.0;
         double insertY = node.Y ?? 0.0;
         DateTime now = DateTime.UtcNow;
         long nodeId = await database.Insert<Node>()
                               .Columns(n => n.TypeId, n => n.Name, n => n.Status, n => n.Severity, n => n.X, n => n.Y, n => n.OwnerId, n => n.Access, n => n.Created, n => n.LastUpdate)
-                              .Values(type.Id, node.Name, node.Status, node.Severity, insertX, insertY, callerId, node.Access ?? (NodeAccess.Read | NodeAccess.Write), now, now)
+                              .Values(typeId, node.Name, node.Status, node.Severity, insertX, insertY, callerId, node.Access ?? (NodeAccess.Read | NodeAccess.Write), now, now)
                               .ReturnID()
                               .ExecuteAsync(transaction);
 
