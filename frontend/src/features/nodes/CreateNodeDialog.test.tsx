@@ -4,8 +4,10 @@
  * Covers:
  *  - Renders correctly when open.
  *  - Shows status dropdown only for task/bug types.
- *  - Submits the form and calls onCreated with the returned id.
- *  - Validation: blocks submit on empty type or name.
+ *  - Submits the form and calls onCreated with the returned id (typed create).
+ *  - Untyped create: submitting with no type succeeds and omits the `type`
+ *    field from the POST body (DiVoid #2011 / design #2014).
+ *  - Validation: blocks submit on empty name; type is no longer required.
  *  - Error: mutation error does not close the dialog.
  */
 
@@ -19,12 +21,22 @@ import { setupServer } from 'msw/node';
 import { BASE_URL, sampleNode } from '@/test/msw/handlers';
 import { CreateNodeDialog } from './CreateNodeDialog';
 
+// Capture the body of the most recent POST /nodes request so tests can assert
+// what the dialog actually sends to the backend.
+let lastPostBody: unknown = undefined;
+
 const server = setupServer(
-  http.post(`${BASE_URL}/nodes`, () => HttpResponse.json(sampleNode, { status: 201 })),
+  http.post(`${BASE_URL}/nodes`, async ({ request }) => {
+    lastPostBody = await request.json();
+    return HttpResponse.json(sampleNode, { status: 201 });
+  }),
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
-afterEach(() => server.resetHandlers());
+afterEach(() => {
+  server.resetHandlers();
+  lastPostBody = undefined;
+});
 afterAll(() => server.close());
 
 vi.mock('react-oidc-context', () => ({
@@ -120,7 +132,7 @@ describe('CreateNodeDialog', () => {
     expect(screen.queryByLabelText(/status/i)).not.toBeInTheDocument();
   });
 
-  it('calls onCreated with new node id on successful submit', async () => {
+  it('calls onCreated with new node id on successful typed submit', async () => {
     const user = userEvent.setup();
     const onCreated = vi.fn();
     render(
@@ -134,6 +146,36 @@ describe('CreateNodeDialog', () => {
     await user.click(screen.getByRole('button', { name: /create/i }));
 
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(42));
+    // Verify the POST body carries the typed value (DiVoid #2011).
+    expect((lastPostBody as Record<string, unknown>).type).toBe('documentation');
+    expect((lastPostBody as Record<string, unknown>).name).toBe('My new doc');
+  });
+
+  it('allows submit with no type and omits `type` from POST body (untyped create, DiVoid #2011)', async () => {
+    // LOAD-BEARING: revert the `trimmedType ? { type: trimmedType } : {}` spread in
+    // CreateNodeDialog onSubmit — the POST body would include `type: ""`, the backend
+    // would receive an empty string rather than the absent-field signal for untyped.
+    // Reverting the schema change (re-adding .min(1)) would cause the submit to be
+    // blocked by validation instead.
+    const user = userEvent.setup();
+    const onCreated = vi.fn();
+    render(
+      <Wrapper>
+        <CreateNodeDialog open onOpenChange={vi.fn()} onCreated={onCreated} />
+      </Wrapper>,
+    );
+
+    // Leave type blank; only fill name.
+    await user.type(screen.getByLabelText(/name/i), 'Untyped node');
+    await user.click(screen.getByRole('button', { name: /create/i }));
+
+    // Submit must succeed and call onCreated.
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(42));
+
+    // The POST body must NOT include a `type` key — field absent signals untyped
+    // to the backend (design #2014: null/""/whitespace → NodeType.Type IS NULL).
+    expect(lastPostBody as Record<string, unknown>).not.toHaveProperty('type');
+    expect((lastPostBody as Record<string, unknown>).name).toBe('Untyped node');
   });
 
   it('shows validation error when name is empty', async () => {
@@ -144,29 +186,11 @@ describe('CreateNodeDialog', () => {
       </Wrapper>,
     );
 
-    await user.type(screen.getByLabelText(/type/i), 'task');
-    // Leave name empty
+    // Leave name empty (type is now optional — no longer blocks submit).
     await user.click(screen.getByRole('button', { name: /create/i }));
 
     await waitFor(() =>
       expect(screen.getByText(/name is required/i)).toBeInTheDocument(),
-    );
-  });
-
-  it('shows validation error when type is empty', async () => {
-    const user = userEvent.setup();
-    render(
-      <Wrapper>
-        <CreateNodeDialog open onOpenChange={vi.fn()} onCreated={vi.fn()} />
-      </Wrapper>,
-    );
-
-    // Leave type empty, fill name
-    await user.type(screen.getByLabelText(/name/i), 'My doc');
-    await user.click(screen.getByRole('button', { name: /create/i }));
-
-    await waitFor(() =>
-      expect(screen.getByText(/type is required/i)).toBeInTheDocument(),
     );
   });
 
