@@ -98,7 +98,6 @@ export function useCreateNode() {
  *   /name      — replace with a new string
  *   /status    — replace with a status string or null
  *   /type      — replace with a type name; empty string = untyped (PR #149)
- *   /access    — replace with a NodeAccess string (owner/admin only)
  *
  * On success: the node detail query and any linked-to queries are invalidated.
  * On error: a sonner toast shows the backend error.

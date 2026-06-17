@@ -10,7 +10,8 @@
  *  T5  No warning when target type IS in allowlist (task/bug).
  *  T6  No warning when node has NO status, even targeting a non-lifecycle type.
  *  T7  Warning disappears when user changes selection back to a lifecycle type.
- *  T8  shouldWarnOnRetype — pure-function unit tests covering all heuristic branches.
+ *  T8  shouldWarnOnRetype — pure-function unit tests covering all heuristic branches
+ *      (T8a–T8f: status branch; T8g–T8h: severity branch per design #2014 §9.1).
  *  T9  toApiValue — unit tests for the form-value → API-value conversion.
  *
  * Load-bearing substitution proof per contract §13.1:
@@ -36,6 +37,14 @@
  *      Warning shows even when status is null → T6 fails.
  *
  *  T7: T7 depends on T4/T5/T6 logic being correct, validated by their tests.
+ *
+ *  T8g: severity set + status null + non-lifecycle target → warns.
+ *       Load-bearing: remove `|| node.severity != null` from hasLifecycleState.
+ *       T8g assertion `toBe(true)` becomes `toBe(false)` → fails.
+ *
+ *  T8h: severity set + lifecycle target → does NOT warn.
+ *       Load-bearing: change `!targetBearsCycle` to `true` always.
+ *       T8h assertion `toBe(false)` becomes `toBe(true)` → fails.
  */
 
 import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
@@ -308,6 +317,14 @@ describe('shouldWarnOnRetype — pure function', () => {
 
   it('T8f: status set + empty string target (untyped) → true', () => {
     expect(shouldWarnOnRetype({ ...taskNode, status: 'open' }, '')).toBe(true);
+  });
+
+  it('T8g: severity set, status null, non-lifecycle target → true (severity counts as lifecycle state)', () => {
+    expect(shouldWarnOnRetype({ ...docNode, status: null, severity: 2 }, 'documentation')).toBe(true);
+  });
+
+  it('T8h: severity set, lifecycle target (bug) → false (target bears lifecycle)', () => {
+    expect(shouldWarnOnRetype({ ...docNode, status: null, severity: 2 }, 'bug')).toBe(false);
   });
 });
 

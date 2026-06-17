@@ -8,8 +8,8 @@
  * whitespace to the untyped row (design #2014 §4 decision 2).
  *
  * Soft warning (design #2014 §9.1): fires when the node currently has
- * a status value AND the target type is outside the lifecycle-bearing
- * allowlist (task, bug). The warning is advisory; the user may proceed.
+ * lifecycle state (non-empty status OR non-null severity) AND the target
+ * type is outside the lifecycle-bearing allowlist (task, bug). Advisory only.
  *
  * Design: docs/architecture/node-type-untyped-and-retype.md §9.1
  * Task: DiVoid node #2012
@@ -27,25 +27,22 @@ import { UNTYPED_VALUE } from '@/features/workspace/useWorkspaceFilters';
 import { useNodeTypes } from '@/features/workspace/useNodeTypes';
 import type { NodeDetails } from '@/types/divoid';
 
-// ─── Warning heuristic (design #2014 §9.1) ───────────────────────────────────
-
 /** Types whose lifecycle (status/severity) is meaningful and well-defined. */
 export const LIFECYCLE_BEARING_TYPES: readonly string[] = ['task', 'bug'] as const;
 
 /**
- * Returns true when the node has lifecycle state (a non-null status) AND the
- * target type is outside the lifecycle-bearing allowlist.
+ * Returns true when the node has lifecycle state AND the target type is outside
+ * the lifecycle-bearing allowlist.
  *
+ * Lifecycle state per design #2014 §9.1: non-empty status OR non-null severity.
  * Pure membership + presence check — no aggregation, no backend call.
  * The backend allows ALL transitions regardless of this result.
  */
 export function shouldWarnOnRetype(node: NodeDetails, targetTypeName: string): boolean {
-  const hasLifecycleState = node.status != null;
+  const hasLifecycleState = (node.status != null && node.status !== '') || node.severity != null;
   const targetBearsCycle = LIFECYCLE_BEARING_TYPES.includes(targetTypeName);
   return hasLifecycleState && !targetBearsCycle;
 }
-
-// ─── Form schema ──────────────────────────────────────────────────────────────
 
 const retypeSchema = z.object({
   type: z.string(),
@@ -65,8 +62,6 @@ export function toApiValue(formValue: string): string {
   if (trimmed === UNTYPED_DISPLAY || trimmed === UNTYPED_VALUE) return '';
   return trimmed;
 }
-
-// ─── Component ────────────────────────────────────────────────────────────────
 
 interface RetypeNodeDialogProps {
   open: boolean;
