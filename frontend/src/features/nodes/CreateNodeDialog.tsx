@@ -67,8 +67,6 @@ export function CreateNodeDialog({ open, onOpenChange, onCreated, initialPositio
   };
 
   const onSubmit = handleSubmit(async (values) => {
-    // Omit `type` when blank so the JSON field is absent — backend normalises
-    // null/""/whitespace → untyped (NodeType.Type IS NULL). See DiVoid #2014.
     const trimmedType = values.type.trim();
     const input = {
       ...(trimmedType ? { type: trimmedType } : {}),
@@ -120,7 +118,7 @@ export function CreateNodeDialog({ open, onOpenChange, onCreated, initialPositio
           )}
 
           <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
-            {/* Type — optional; leave blank to create an untyped node (DiVoid #2011) */}
+            {/* Type */}
             <div className="flex flex-col gap-1">
               <label htmlFor="create-type" className="text-sm font-medium">
                 Type <span className="text-muted-foreground font-normal">(optional)</span>

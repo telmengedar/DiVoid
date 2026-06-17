@@ -21,8 +21,6 @@ import { setupServer } from 'msw/node';
 import { BASE_URL, sampleNode } from '@/test/msw/handlers';
 import { CreateNodeDialog } from './CreateNodeDialog';
 
-// Capture the body of the most recent POST /nodes request so tests can assert
-// what the dialog actually sends to the backend.
 let lastPostBody: unknown = undefined;
 
 const server = setupServer(
@@ -146,37 +144,31 @@ describe('CreateNodeDialog', () => {
     await user.click(screen.getByRole('button', { name: /create/i }));
 
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(42));
-    // Verify the POST body carries the typed value (DiVoid #2011).
     expect((lastPostBody as Record<string, unknown>).type).toBe('documentation');
     expect((lastPostBody as Record<string, unknown>).name).toBe('My new doc');
   });
 
-  it('allows submit with no type and omits `type` from POST body (untyped create, DiVoid #2011)', async () => {
-    // LOAD-BEARING: revert the `trimmedType ? { type: trimmedType } : {}` spread in
-    // CreateNodeDialog onSubmit — the POST body would include `type: ""`, the backend
-    // would receive an empty string rather than the absent-field signal for untyped.
-    // Reverting the schema change (re-adding .min(1)) would cause the submit to be
-    // blocked by validation instead.
-    const user = userEvent.setup();
-    const onCreated = vi.fn();
-    render(
-      <Wrapper>
-        <CreateNodeDialog open onOpenChange={vi.fn()} onCreated={onCreated} />
-      </Wrapper>,
-    );
+  it(
+    'allows submit with no type and omits `type` from POST body — ' +
+    'LOAD-BEARING: reverting the conditional spread in onSubmit sends type:"" to the backend; ' +
+    're-adding .min(1) to the schema blocks submit instead of allowing untyped create (DiVoid #2011)',
+    async () => {
+      const user = userEvent.setup();
+      const onCreated = vi.fn();
+      render(
+        <Wrapper>
+          <CreateNodeDialog open onOpenChange={vi.fn()} onCreated={onCreated} />
+        </Wrapper>,
+      );
 
-    // Leave type blank; only fill name.
-    await user.type(screen.getByLabelText(/name/i), 'Untyped node');
-    await user.click(screen.getByRole('button', { name: /create/i }));
+      await user.type(screen.getByLabelText(/name/i), 'Untyped node');
+      await user.click(screen.getByRole('button', { name: /create/i }));
 
-    // Submit must succeed and call onCreated.
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(42));
-
-    // The POST body must NOT include a `type` key — field absent signals untyped
-    // to the backend (design #2014: null/""/whitespace → NodeType.Type IS NULL).
-    expect(lastPostBody as Record<string, unknown>).not.toHaveProperty('type');
-    expect((lastPostBody as Record<string, unknown>).name).toBe('Untyped node');
-  });
+      await waitFor(() => expect(onCreated).toHaveBeenCalledWith(42));
+      expect(lastPostBody as Record<string, unknown>).not.toHaveProperty('type');
+      expect((lastPostBody as Record<string, unknown>).name).toBe('Untyped node');
+    },
+  );
 
   it('shows validation error when name is empty', async () => {
     const user = userEvent.setup();
@@ -186,7 +178,6 @@ describe('CreateNodeDialog', () => {
       </Wrapper>,
     );
 
-    // Leave name empty (type is now optional — no longer blocks submit).
     await user.click(screen.getByRole('button', { name: /create/i }));
 
     await waitFor(() =>
