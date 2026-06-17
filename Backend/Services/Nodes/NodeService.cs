@@ -867,6 +867,29 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         return false;
     }
 
+    /// <summary>
+    /// extracts the value from the first op targeting <paramref name="path"/> and returns
+    /// the remaining ops with that op removed. returns null for <paramref name="typeValue"/>
+    /// when no matching op is present, leaving <paramref name="patches"/> unchanged.
+    /// </summary>
+    static (PatchOperation[] Remaining, string TypeValue, bool Found) ExtractTypeOp(PatchOperation[] patches)
+    {
+        for (int i = 0; i < patches.Length; i++)
+        {
+            if (!string.Equals(patches[i].Path, "/type", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            string value = patches[i].Value as string;
+            PatchOperation[] remaining = new PatchOperation[patches.Length - 1];
+            if (i > 0)
+                Array.Copy(patches, 0, remaining, 0, i);
+            if (i < patches.Length - 1)
+                Array.Copy(patches, i + 1, remaining, i, patches.Length - i - 1);
+            return (remaining, value, true);
+        }
+        return (patches, null, false);
+    }
+
     /// <inheritdoc />
     public async Task<NodeDetails> Patch(long nodeId, PatchOperation[] patches, long callerId, bool isAdmin, CancellationToken ct)
     {
@@ -893,14 +916,35 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (gatePredicate != null)
             predicate &= gatePredicate;
 
+        (PatchOperation[] remainingPatches, string typeValue, bool retypeRequested) = ExtractTypeOp(patches);
+
         bool nameTouched = embeddingCapability.IsEnabled && TouchesName(patches);
         using Transaction transaction = database.Transaction();
 
-        if (await database.Update<Node>()
-                         .Patch(patches)
-                         .Where(predicate.Content)
-                         .ExecuteAsync(transaction) == 0)
-            throw new NotFoundException<Node>(nodeId);
+        if (remainingPatches.Length > 0)
+        {
+            if (await database.Update<Node>()
+                             .Patch(remainingPatches)
+                             .Where(predicate.Content)
+                             .ExecuteAsync(transaction) == 0)
+                throw new NotFoundException<Node>(nodeId);
+        }
+        else if (retypeRequested)
+        {
+            if (await database.Load<Node>(DB.Count())
+                              .Where(predicate.Content)
+                              .ExecuteScalarAsync<long>(transaction) == 0)
+                throw new NotFoundException<Node>(nodeId);
+        }
+
+        if (retypeRequested)
+        {
+            long typeId = await ResolveOrCreateTypeId(typeValue, transaction);
+            await database.Update<Node>()
+                          .Set(n => n.TypeId == typeId)
+                          .Where(n => n.Id == nodeId)
+                          .ExecuteAsync(transaction);
+        }
 
         DateTime patchedAt = DateTime.UtcNow;
         await database.Update<Node>()

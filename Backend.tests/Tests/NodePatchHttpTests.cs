@@ -171,18 +171,19 @@ public class NodePatchHttpTests
         Assert.That(error.Code, Is.EqualTo("badparameter"));
     }
 
-    // -----------------------------------------------------------------------
-    // 400 — /type path (maps to no Node entity property; TypeId is the DB column)
-    // -----------------------------------------------------------------------
-
     [Test]
-    public async Task Patch_TypePath_Returns400()
+    public async Task Patch_TypePath_Returns200AndUpdatesType()
     {
-        // "/type" does not map to any property on Node (the entity uses TypeId).
-        // This path was specifically called out in the service-layer tests as PropertyNotFoundException.
-        long id = await CreateNodeAsync();
-        PatchOperation[] ops = [new() { Op = "replace", Path = "/type", Value = "other" }];
+        long id = await CreateNodeAsync(type: "task");
+        PatchOperation[] ops = [new() { Op = "replace", Path = "/type", Value = "bug" }];
         HttpResponseMessage resp = await PatchAsync($"{TestSetup.BaseUrl}/api/nodes/{id}", ops);
-        Assert.That((int) resp.StatusCode, Is.EqualTo(400));
+        Assert.That((int) resp.StatusCode, Is.EqualTo(200),
+            "PATCH /type to an existing type name must return 200 (retype is supported via the /type special-case)");
+
+        NodeDetails fetched = await http.Get<NodeDetails>(
+            $"{TestSetup.BaseUrl}/api/nodes/{id}",
+            new HttpOptions());
+        Assert.That(fetched.Type, Is.EqualTo("bug"),
+            "the retyped node must read back with the new type on a subsequent GET");
     }
 }
