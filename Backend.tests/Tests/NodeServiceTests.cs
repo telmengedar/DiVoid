@@ -79,6 +79,75 @@ public class NodeServiceTests
         Assert.That(count, Is.EqualTo(1));
     }
 
+    [Test]
+    public async Task CreateNode_EmptyType_CreatesUntypedNode()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails created = await svc.CreateNode(new NodeDetails { Type = "", Name = "EmptyType" }, callerId: 0);
+
+        long emptyStringTypeCount = await fixture.EntityManager.Load<NodeType>(Pooshit.Ocelot.Tokens.DB.Count())
+                                                 .Where(t => t.Type == "")
+                                                 .ExecuteScalarAsync<long>();
+        Assert.That(emptyStringTypeCount, Is.EqualTo(0),
+            "an empty-string type must normalize to untyped (null), never create an empty-string NodeType row");
+
+        NodeDetails fetched = await svc.GetNodeById(created.Id, callerId: 0, isAdmin: true);
+        Assert.That(fetched.Type, Is.Null.Or.Empty, "node created with empty type must read back as untyped");
+    }
+
+    [Test]
+    public async Task CreateNode_WhitespaceType_CreatesUntypedNode()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails created = await svc.CreateNode(new NodeDetails { Type = "   ", Name = "WhitespaceType" }, callerId: 0);
+
+        long whitespaceTypeCount = await fixture.EntityManager.Load<NodeType>(Pooshit.Ocelot.Tokens.DB.Count())
+                                                .Where(t => t.Type == "   ")
+                                                .ExecuteScalarAsync<long>();
+        Assert.That(whitespaceTypeCount, Is.EqualTo(0),
+            "a whitespace-only type must normalize to untyped (null), never create a whitespace NodeType row");
+
+        NodeDetails fetched = await svc.GetNodeById(created.Id, callerId: 0, isAdmin: true);
+        Assert.That(fetched.Type, Is.Null.Or.Empty, "node created with whitespace type must read back as untyped");
+    }
+
+    [Test]
+    public async Task CreateNode_NullAndEmptyType_ShareSameNodeTypeRow()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        await svc.CreateNode(new NodeDetails { Type = null, Name = "NullType" }, callerId: 0);
+        await svc.CreateNode(new NodeDetails { Type = "", Name = "EmptyType" }, callerId: 0);
+
+        long untypedRowCount = await fixture.EntityManager.Load<NodeType>(Pooshit.Ocelot.Tokens.DB.Count())
+                                            .Where(t => t.Type == null)
+                                            .ExecuteScalarAsync<long>();
+        Assert.That(untypedRowCount, Is.EqualTo(1),
+            "null-type and empty-type creates must resolve to the same single untyped NodeType row, not two");
+    }
+
+    [Test]
+    public async Task CreateNode_Untyped_FoundByNoTypeFilter()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails created = await svc.CreateNode(new NodeDetails { Type = "", Name = "FilterTarget" }, callerId: 0);
+
+        AsyncPageResponseWriter<NodeDetails> page =
+            await svc.ListPaged(new NodeFilter { NoType = true, Count = 100 }, callerId: 0, isAdmin: true);
+        List<NodeDetails> results = await CollectPage(page);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.That(ids, Does.Contain(created.Id),
+            "a node created with empty type must be returned by the notype=true filter (untyped == NodeType.Type IS NULL)");
+    }
+
     // -----------------------------------------------------------------------
     // Delete
     // -----------------------------------------------------------------------
