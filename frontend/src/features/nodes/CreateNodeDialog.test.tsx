@@ -4,8 +4,10 @@
  * Covers:
  *  - Renders correctly when open.
  *  - Shows status dropdown only for task/bug types.
- *  - Submits the form and calls onCreated with the returned id.
- *  - Validation: blocks submit on empty type or name.
+ *  - Submits the form and calls onCreated with the returned id (typed create).
+ *  - Untyped create: submitting with no type succeeds and omits the `type`
+ *    field from the POST body (DiVoid #2011 / design #2014).
+ *  - Validation: blocks submit on empty name; type is no longer required.
  *  - Error: mutation error does not close the dialog.
  */
 
@@ -19,12 +21,20 @@ import { setupServer } from 'msw/node';
 import { BASE_URL, sampleNode } from '@/test/msw/handlers';
 import { CreateNodeDialog } from './CreateNodeDialog';
 
+let lastPostBody: unknown = undefined;
+
 const server = setupServer(
-  http.post(`${BASE_URL}/nodes`, () => HttpResponse.json(sampleNode, { status: 201 })),
+  http.post(`${BASE_URL}/nodes`, async ({ request }) => {
+    lastPostBody = await request.json();
+    return HttpResponse.json(sampleNode, { status: 201 });
+  }),
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
-afterEach(() => server.resetHandlers());
+afterEach(() => {
+  server.resetHandlers();
+  lastPostBody = undefined;
+});
 afterAll(() => server.close());
 
 vi.mock('react-oidc-context', () => ({
@@ -120,7 +130,7 @@ describe('CreateNodeDialog', () => {
     expect(screen.queryByLabelText(/status/i)).not.toBeInTheDocument();
   });
 
-  it('calls onCreated with new node id on successful submit', async () => {
+  it('calls onCreated with new node id on successful typed submit', async () => {
     const user = userEvent.setup();
     const onCreated = vi.fn();
     render(
@@ -134,7 +144,31 @@ describe('CreateNodeDialog', () => {
     await user.click(screen.getByRole('button', { name: /create/i }));
 
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(42));
+    expect((lastPostBody as Record<string, unknown>).type).toBe('documentation');
+    expect((lastPostBody as Record<string, unknown>).name).toBe('My new doc');
   });
+
+  it(
+    'allows submit with no type and omits `type` from POST body — ' +
+    'LOAD-BEARING: reverting the conditional spread in onSubmit sends type:"" to the backend; ' +
+    're-adding .min(1) to the schema blocks submit instead of allowing untyped create (DiVoid #2011)',
+    async () => {
+      const user = userEvent.setup();
+      const onCreated = vi.fn();
+      render(
+        <Wrapper>
+          <CreateNodeDialog open onOpenChange={vi.fn()} onCreated={onCreated} />
+        </Wrapper>,
+      );
+
+      await user.type(screen.getByLabelText(/name/i), 'Untyped node');
+      await user.click(screen.getByRole('button', { name: /create/i }));
+
+      await waitFor(() => expect(onCreated).toHaveBeenCalledWith(42));
+      expect(lastPostBody as Record<string, unknown>).not.toHaveProperty('type');
+      expect((lastPostBody as Record<string, unknown>).name).toBe('Untyped node');
+    },
+  );
 
   it('shows validation error when name is empty', async () => {
     const user = userEvent.setup();
@@ -144,29 +178,10 @@ describe('CreateNodeDialog', () => {
       </Wrapper>,
     );
 
-    await user.type(screen.getByLabelText(/type/i), 'task');
-    // Leave name empty
     await user.click(screen.getByRole('button', { name: /create/i }));
 
     await waitFor(() =>
       expect(screen.getByText(/name is required/i)).toBeInTheDocument(),
-    );
-  });
-
-  it('shows validation error when type is empty', async () => {
-    const user = userEvent.setup();
-    render(
-      <Wrapper>
-        <CreateNodeDialog open onOpenChange={vi.fn()} onCreated={vi.fn()} />
-      </Wrapper>,
-    );
-
-    // Leave type empty, fill name
-    await user.type(screen.getByLabelText(/name/i), 'My doc');
-    await user.click(screen.getByRole('button', { name: /create/i }));
-
-    await waitFor(() =>
-      expect(screen.getByText(/type is required/i)).toBeInTheDocument(),
     );
   });
 

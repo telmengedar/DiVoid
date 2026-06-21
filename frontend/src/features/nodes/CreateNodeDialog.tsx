@@ -2,13 +2,18 @@
  * CreateNodeDialog — "New node" dialog for the /nodes browse page.
  *
  * Shows a form with:
- *  - type (free-text input)
+ *  - type (free-text input, optional — leaving it blank creates an untyped node)
  *  - name (required text input)
  *  - status dropdown (only rendered when type is "task" or "bug")
  *
  * On success: calls the onCreated callback with the new node id.
  * On error: the mutation hook surfaces a sonner toast; the dialog stays open
  *           so the user can correct and retry.
+ *
+ * Untyped create: PR #148 / DiVoid #2011 / design #2014.
+ * The backend normalises null/""/whitespace → untyped (NodeType.Type IS NULL).
+ * The frontend omits the `type` field when the input is blank so JSON
+ * serialises to `undefined` (field absent), which the backend treats as untyped.
  *
  * Design: docs/architecture/frontend-bootstrap.md §5.6, §6.6
  * Task: DiVoid node #229
@@ -62,8 +67,9 @@ export function CreateNodeDialog({ open, onOpenChange, onCreated, initialPositio
   };
 
   const onSubmit = handleSubmit(async (values) => {
+    const trimmedType = values.type.trim();
     const input = {
-      type: values.type.trim(),
+      ...(trimmedType ? { type: trimmedType } : {}),
       name: values.name.trim(),
       ...(values.status && statusOptions ? { status: values.status } : {}),
       ...(initialPosition != null ? { x: initialPosition.x, y: initialPosition.y } : {}),
@@ -115,7 +121,7 @@ export function CreateNodeDialog({ open, onOpenChange, onCreated, initialPositio
             {/* Type */}
             <div className="flex flex-col gap-1">
               <label htmlFor="create-type" className="text-sm font-medium">
-                Type <span aria-hidden="true">*</span>
+                Type <span className="text-muted-foreground font-normal">(optional)</span>
               </label>
               <input
                 id="create-type"
@@ -123,15 +129,8 @@ export function CreateNodeDialog({ open, onOpenChange, onCreated, initialPositio
                 placeholder="task, documentation, project…"
                 autoComplete="off"
                 className="h-9 rounded-md border border-border bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
-                aria-invalid={!!errors.type}
-                aria-describedby={errors.type ? 'create-type-error' : undefined}
                 {...register('type')}
               />
-              {errors.type && (
-                <p id="create-type-error" className="text-xs text-destructive" role="alert">
-                  {errors.type.message}
-                </p>
-              )}
             </div>
 
             {/* Name */}

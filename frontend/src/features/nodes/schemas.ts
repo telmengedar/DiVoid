@@ -54,7 +54,12 @@ export function statusOptionsForType(
 // ─── Create node schema ───────────────────────────────────────────────────────
 
 export const createNodeSchema = z.object({
-  type: z.string().min(1, 'Type is required'),
+  /**
+   * Type is optional — an empty/absent type creates an untyped node.
+   * The backend normalises null/""/whitespace → untyped (NodeType.Type IS NULL)
+   * as of PR #148 (DiVoid #2011 / design #2014).
+   */
+  type: z.string(),
   name: z.string().min(1, 'Name is required').max(255, 'Name must be 255 characters or fewer'),
   /**
    * Status is optional at the schema level; the form component conditionally

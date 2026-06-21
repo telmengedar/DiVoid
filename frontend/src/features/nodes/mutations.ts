@@ -52,7 +52,12 @@ function toastError(error: unknown, fallback = 'Something went wrong. Please try
 
 /** Body shape for POST /api/nodes. */
 export interface CreateNodeInput {
-  type: string;
+  /**
+   * Node type string. Omit (undefined / absent) to create an untyped node —
+   * the backend normalises null/""/absent → untyped (NodeType.Type IS NULL).
+   * See PR #148 / DiVoid #2011 / design #2014.
+   */
+  type?: string;
   name: string;
   /** Only send status for types that carry one (task, bug). */
   status?: string;
