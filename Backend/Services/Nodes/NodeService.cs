@@ -893,14 +893,31 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (gatePredicate != null)
             predicate &= gatePredicate;
 
+        PatchOperation typeOp = Array.Find(patches, p => string.Equals(p.Path, "/type", StringComparison.OrdinalIgnoreCase));
+        PatchOperation[] remainingPatches = typeOp == null ? patches : patches.Where(p => p != typeOp).ToArray();
+
         bool nameTouched = embeddingCapability.IsEnabled && TouchesName(patches);
         using Transaction transaction = database.Transaction();
 
-        if (await database.Update<Node>()
-                         .Patch(patches)
-                         .Where(predicate.Content)
-                         .ExecuteAsync(transaction) == 0)
-            throw new NotFoundException<Node>(nodeId);
+        if (remainingPatches.Length > 0)
+        {
+            if (await database.Update<Node>()
+                             .Patch(remainingPatches)
+                             .Where(predicate.Content)
+                             .ExecuteAsync(transaction) == 0)
+                throw new NotFoundException<Node>(nodeId);
+        }
+
+        if (typeOp != null)
+        {
+            long typeId = await ResolveOrCreateTypeId(typeOp.Value as string, transaction);
+            long affected = await database.Update<Node>()
+                                          .Set(n => n.TypeId == typeId)
+                                          .Where(predicate.Content)
+                                          .ExecuteAsync(transaction);
+            if (remainingPatches.Length == 0 && affected == 0)
+                throw new NotFoundException<Node>(nodeId);
+        }
 
         DateTime patchedAt = DateTime.UtcNow;
         await database.Update<Node>()

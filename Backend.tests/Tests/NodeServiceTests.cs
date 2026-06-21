@@ -709,19 +709,81 @@ public class NodeServiceTests
     }
 
     [Test]
-    public async Task Patch_ReplaceType_ThrowsPropertyNotFoundException()
+    public async Task Patch_ReplaceType_TypedToTyped_UpdatesType()
     {
-        // The PATCH path "/type" does not map to any property on Node — the DB entity
-        // stores type as TypeId (long), not as "type". The extension throws
-        // PropertyNotFoundException before the [AllowPatch] check is reached.
-        // Either way, /type is not patchable and the middleware returns 400.
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await Create(svc, type: "task");
+        NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/type", Value = "bug" }], callerId: 0, isAdmin: true, CancellationToken.None);
+
+        Assert.That(result.Type, Is.EqualTo("bug"),
+            "PATCH /type typed→typed must repoint the node to the target type");
+    }
+
+    [Test]
+    public async Task Patch_ReplaceType_TypedToUntyped_NullValue_MakesNodeUntyped()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await Create(svc, type: "task");
+        NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/type", Value = null }], callerId: 0, isAdmin: true, CancellationToken.None);
+
+        Assert.That(result.Type, Is.Null.Or.Empty,
+            "PATCH /type to null must make the node untyped");
+
+        AsyncPageResponseWriter<NodeDetails> page =
+            await svc.ListPaged(new NodeFilter { NoType = true, Count = 100 }, callerId: 0, isAdmin: true);
+        List<NodeDetails> results = await CollectPage(page);
+        Assert.That(results.Select(n => n.Id), Does.Contain(node.Id),
+            "the retyped-to-untyped node must be returned by notype=true");
+    }
+
+    [Test]
+    public async Task Patch_ReplaceType_UntypedToTyped_GivesNodeType()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = null, Name = "WasUntyped" }, callerId: 0);
+        Assert.That(node.Type, Is.Null.Or.Empty, "precondition: node must start untyped");
+
+        NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/type", Value = "documentation" }], callerId: 0, isAdmin: true, CancellationToken.None);
+
+        Assert.That(result.Type, Is.EqualTo("documentation"),
+            "PATCH /type from untyped to a named type must assign that type");
+    }
+
+    [Test]
+    public async Task Patch_ReplaceType_NewTypeName_CreatesNodeTypeRow()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await Create(svc, type: "task");
+        NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/type", Value = "brandnewtype-xyz" }], callerId: 0, isAdmin: true, CancellationToken.None);
+
+        Assert.That(result.Type, Is.EqualTo("brandnewtype-xyz"),
+            "PATCH /type to an unseen type name must create the NodeType row and assign it");
+
+        long count = await fixture.EntityManager.Load<NodeType>(Pooshit.Ocelot.Tokens.DB.Count())
+                                  .Where(t => t.Type == "brandnewtype-xyz")
+                                  .ExecuteScalarAsync<long>();
+        Assert.That(count, Is.EqualTo(1),
+            "exactly one NodeType row must be created for the new type name");
+    }
+
+    [Test]
+    public async Task Patch_ReplaceTypeId_StillThrows()
+    {
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
         NodeDetails node = await Create(svc);
 
-        Assert.ThrowsAsync<PropertyNotFoundException>(
-            () => svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/type", Value = "other" }], callerId: 0, isAdmin: true, CancellationToken.None));
+        Assert.ThrowsAsync<NotSupportedException>(
+            () => svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/typeid", Value = 99L }], callerId: 0, isAdmin: true, CancellationToken.None));
     }
 
     [Test]
