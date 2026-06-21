@@ -25,7 +25,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
 import { toast } from 'sonner';
-import { Pencil, Trash2, Link2, Unlink, UploadCloud, X, FileText } from 'lucide-react';
+import { Pencil, Repeat2, Trash2, Link2, Unlink, UploadCloud, X, FileText } from 'lucide-react';
 import { useNode } from './useNode';
 import { useNodeContent } from './useNodeContent';
 import { useNodeListLinkedTo } from './useNodeListLinkedTo';
@@ -33,6 +33,7 @@ import { useUnlinkNodes } from './mutations';
 import { EditNodeDialog } from './EditNodeDialog';
 import { DeleteNodeDialog } from './DeleteNodeDialog';
 import { LinkNodeDialog } from './LinkNodeDialog';
+import { RetypeNodeDialog } from './RetypeNodeDialog';
 import { ContentUploadZone } from './ContentUploadZone';
 import { MarkdownEditorSurface, isTextShaped } from './MarkdownEditorSurface';
 import { NodeResultTable } from '@/components/common/NodeResultTable';
@@ -431,6 +432,7 @@ export function NodeDetailView({ nodeId, onClose, onNeighbourClick }: NodeDetail
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
+  const [retypeOpen, setRetypeOpen] = useState(false);
 
   useEffect(() => {
     if (error instanceof DivoidApiError && error.status !== 404) {
@@ -487,6 +489,15 @@ export function NodeDetailView({ nodeId, onClose, onNeighbourClick }: NodeDetail
               >
                 <Pencil size={14} aria-hidden="true" />
                 Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => setRetypeOpen(true)}
+                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-border text-sm hover:bg-muted transition-colors"
+                aria-label="Change node type"
+              >
+                <Repeat2 size={14} aria-hidden="true" />
+                Retype
               </button>
               <button
                 type="button"
@@ -571,6 +582,7 @@ export function NodeDetailView({ nodeId, onClose, onNeighbourClick }: NodeDetail
       {node && (
         <>
           <EditNodeDialog open={editOpen} onOpenChange={setEditOpen} node={node} />
+          <RetypeNodeDialog open={retypeOpen} onOpenChange={setRetypeOpen} node={node} />
           <DeleteNodeDialog
             open={deleteOpen}
             onOpenChange={setDeleteOpen}

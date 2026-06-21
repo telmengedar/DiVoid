@@ -36,6 +36,13 @@ export interface NodeDetails {
    * the backend always populates it on `GET /api/nodes/:id`. See DiVoid #1370 / PR #130.
    */
   access?: NodeAccess;
+  /**
+   * Severity level for bug nodes (null for all other types).
+   * Non-null severity counts as lifecycle state per design #2014 §9.1 — a node
+   * with severity set MUST warn on retype to a non-lifecycle type even when status
+   * is null. Present in DefaultListFields (backend NodeMapper).
+   */
+  severity?: number | null;
 }
 
 /** Paginated response envelope from GET /api/nodes (including path-query via ?path=). */
