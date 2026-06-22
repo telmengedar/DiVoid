@@ -309,8 +309,6 @@ public class MessageHttpTests
     }
 
     // -----------------------------------------------------------------------
-    // T5 — non-admin default scope: recipient-only; authored messages excluded
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task T5_List_NonAdmin_DefaultScope_RecipientOnly_AuthoredExcluded()
@@ -404,8 +402,6 @@ public class MessageHttpTests
             "principal-scoping clause instead of being ANDed on top of it.");
     }
 
-    // -----------------------------------------------------------------------
-    // T7 — admin default scope is also recipient-only (not all messages in the system)
     // -----------------------------------------------------------------------
 
     [Test]
@@ -732,10 +728,6 @@ public class MessageHttpTests
             "are possible again.");
     }
 
-    // -----------------------------------------------------------------------
-    // T16 — includeAuthored=true returns both received and sent messages
-    // -----------------------------------------------------------------------
-
     [Test]
     public async Task T16_List_NonAdmin_IncludeAuthored_ReturnsBothSentAndReceived()
     {
@@ -771,10 +763,6 @@ public class MessageHttpTests
                 "A failure here means includeAuthored=true is not combining recipient and author scopes.");
         });
     }
-
-    // -----------------------------------------------------------------------
-    // T17 — admin explicit ?recipientId= returns that user's received messages
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task T17_List_Admin_ExplicitRecipientId_ReturnsTargetUsersMessages()
@@ -813,10 +801,6 @@ public class MessageHttpTests
         });
     }
 
-    // -----------------------------------------------------------------------
-    // T18 — non-admin cannot widen past own set via explicit recipientId filter
-    // -----------------------------------------------------------------------
-
     [Test]
     public async Task T18_List_NonAdmin_ExplicitRecipientId_CannotWidenPastOwnSet()
     {
@@ -843,10 +827,6 @@ public class MessageHttpTests
             "filter must prevent A from reading B→C. A failure here means a non-admin can view " +
             "arbitrary users' messages by supplying an explicit recipientId filter.");
     }
-
-    // -----------------------------------------------------------------------
-    // T19 — admin no-params returns recipient-only (not all messages in system)
-    // -----------------------------------------------------------------------
 
     [Test]
     public async Task T19_List_Admin_NoParams_DoesNotReturnAllSystemMessages()
