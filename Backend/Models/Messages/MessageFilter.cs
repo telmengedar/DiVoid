@@ -26,4 +26,12 @@ public class MessageFilter : ListFilter {
     /// for non-admin callers this filter is ANDed on top of the principal-scoping clause.
     /// </summary>
     public long[] AuthorId { get; set; }
+
+    /// <summary>
+    /// when <c>true</c>, the default scope includes messages where the caller is either the recipient or the
+    /// author (inbox + sent). when <c>false</c> (the default), only messages where the caller is the
+    /// recipient are returned. has no effect when <see cref="RecipientId"/> or <see cref="AuthorId"/>
+    /// are set explicitly.
+    /// </summary>
+    public bool IncludeAuthored { get; set; }
 }

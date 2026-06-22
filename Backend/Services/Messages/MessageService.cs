@@ -107,19 +107,26 @@ public class MessageService : IMessageService {
     PredicateExpression<Message> BuildPredicate(long callerId, bool isAdmin, MessageFilter filter) {
         PredicateExpression<Message> predicate = null;
 
+        bool explicitScope = filter.RecipientId?.Length > 0 || filter.AuthorId?.Length > 0;
+        if (explicitScope) {
+            if (filter.RecipientId?.Length > 0) {
+                long[] recipientIds = filter.RecipientId;
+                predicate &= new PredicateExpression<Message>(m => m.RecipientId.In(recipientIds));
+            }
+            if (filter.AuthorId?.Length > 0) {
+                long[] authorIds = filter.AuthorId;
+                predicate &= new PredicateExpression<Message>(m => m.AuthorId.In(authorIds));
+            }
+        } else {
+            long scopeId = callerId;
+            predicate &= filter.IncludeAuthored
+                ? new PredicateExpression<Message>(m => m.RecipientId == scopeId || m.AuthorId == scopeId)
+                : new PredicateExpression<Message>(m => m.RecipientId == scopeId);
+        }
+
         if (!isAdmin) {
             long scopeId = callerId;
             predicate &= new PredicateExpression<Message>(m => m.AuthorId == scopeId || m.RecipientId == scopeId);
-        }
-
-        if (filter.RecipientId?.Length > 0) {
-            long[] recipientIds = filter.RecipientId;
-            predicate &= new PredicateExpression<Message>(m => m.RecipientId.In(recipientIds));
-        }
-
-        if (filter.AuthorId?.Length > 0) {
-            long[] authorIds = filter.AuthorId;
-            predicate &= new PredicateExpression<Message>(m => m.AuthorId.In(authorIds));
         }
 
         return predicate;

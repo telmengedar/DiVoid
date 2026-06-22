@@ -40,7 +40,10 @@ public class MessageController(ILogger<MessageController> logger, IMessageServic
 
     /// <summary>
     /// lists messages visible to the authenticated caller.
-    /// non-admin callers see only messages where they are the author or recipient.
+    /// defaults to messages where the caller is the recipient; set <c>includeAuthored=true</c>
+    /// to also include messages the caller sent.
+    /// admin callers follow the same default but may supply explicit <c>recipientId</c> or
+    /// <c>authorId</c> filters to inspect another user's messages.
     /// </summary>
     /// <param name="filter">paging, sort, and id filter criteria</param>
     /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
