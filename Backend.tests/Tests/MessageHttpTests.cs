@@ -19,17 +19,17 @@ using Pooshit.Ocelot.Entities;
 namespace Backend.tests.Tests;
 
 /// <summary>
-/// HTTP integration tests for the messaging system (task #425).
+/// HTTP integration tests for the messaging system (task #425, updated DiVoid #1939).
 ///
-/// Covers the 15 load-bearing cases from Sarah's architectural doc §15.1:
+/// Covers load-bearing cases from Sarah's architectural doc §15.1, extended for recipient-default filter:
 ///   T1  — round-trip: POST creates and re-reads row correctly
 ///   T2  — authorId in body is ignored; server forces callerId as author (anti-impersonation)
 ///   T3  — POST to unknown recipient returns 404
 ///   T4a — POST with empty subject returns 400
 ///   T4b — POST with oversize subject returns 400
-///   T5  — non-admin list scope: caller sees only own messages (author OR recipient)
+///   T5  — non-admin default scope: recipient-only; authored messages excluded
 ///   T6  — non-admin with ?recipientId= of another user returns empty (scope AND filter)
-///   T7  — admin sees all messages regardless of involvement
+///   T7  — admin default scope is also recipient-only, not everyone's messages
 ///   T8  — default sort is createdat DESC (newest first)
 ///   T9  — GET /{id} returns 404 to non-related caller (not 403 — existence must not leak via status code)
 ///   T10 — sender cannot DELETE their own sent message (recipient-or-admin only)
@@ -37,6 +37,11 @@ namespace Backend.tests.Tests;
 ///   T12 — admin can DELETE any message
 ///   T13 — PATCH returns 404 or 405 (patch surface is structurally absent)
 ///   T14 — subject is trimmed of leading/trailing whitespace server-side
+///   T15 — IMessageService.ListPaged carries a CancellationToken parameter
+///   T16 — includeAuthored=true returns both received and sent messages for non-admin
+///   T17 — admin explicit ?recipientId= returns that user's messages (oversight preserved)
+///   T18 — non-admin cannot widen past own set via explicit recipientId filter
+///   T19 — admin no-params returns recipient-only, not all messages in the system
 /// </summary>
 [TestFixture]
 public class MessageHttpTests
@@ -304,18 +309,17 @@ public class MessageHttpTests
     }
 
     // -----------------------------------------------------------------------
-    // T5 — non-admin sees only messages where they are author or recipient
+    // T5 — non-admin default scope: recipient-only; authored messages excluded
     // -----------------------------------------------------------------------
 
     [Test]
-    public async Task T5_List_NonAdmin_OnlySeesOwnMessages()
+    public async Task T5_List_NonAdmin_DefaultScope_RecipientOnly_AuthoredExcluded()
     {
         string suffix = Guid.NewGuid().ToString("N")[..8];
         long userA = await InsertUserAsync($"t5-A-{suffix}", Json.WriteString(new[] { "write" }));
         long userB = await InsertUserAsync($"t5-B-{suffix}", Json.WriteString(new[] { "write" }));
         long userC = await InsertUserAsync($"t5-C-{suffix}", Json.WriteString(new[] { "read" }));
 
-        // Insert messages directly so we control the authorId/recipientId precisely.
         DateTime now = DateTime.UtcNow;
         long msgAtoB = await db.Insert<Message>()
                                .Columns(m => m.AuthorId, m => m.RecipientId, m => m.Subject, m => m.Body, m => m.CreatedAt)
@@ -333,7 +337,6 @@ public class MessageHttpTests
                                .ReturnID()
                                .ExecuteAsync();
 
-        // Caller A: must see A→B and B→A only (not B→C).
         string tokenA = fixture.MintToken(userId: userA);
         HttpClient clientA = ClientWithToken(tokenA);
         HttpResponseMessage listResponseA = await clientA.GetAsync("/api/messages");
@@ -342,16 +345,15 @@ public class MessageHttpTests
 
         long[] aIds = Array.ConvertAll(aMessages, m => m.Id);
         Assert.Multiple(() => {
-            Assert.That(aIds, Does.Contain(msgAtoB),
-                "T5: caller A must see the A→B message (A is author)");
             Assert.That(aIds, Does.Contain(msgBtoA),
-                "T5: caller A must see the B→A message (A is recipient)");
+                "T5: caller A must see B→A (A is recipient)");
+            Assert.That(aIds, Does.Not.Contain(msgAtoB),
+                "T5 (CRITICAL): caller A must NOT see A→B in the default recipient-only scope. " +
+                "A failure here means the default filter still uses the old author-or-recipient semantics.");
             Assert.That(aIds, Does.Not.Contain(msgBtoC),
-                "T5 (CRITICAL): caller A must NOT see B→C message where A is neither author nor recipient. " +
-                "A failure here means the principal-scoping clause is missing or wrong.");
+                "T5 (CRITICAL): caller A must NOT see B→C where A is neither author nor recipient.");
         });
 
-        // Caller B: sees all three messages.
         string tokenB = fixture.MintToken(userId: userB);
         HttpClient clientB = ClientWithToken(tokenB);
         HttpResponseMessage listResponseB = await clientB.GetAsync("/api/messages");
@@ -360,9 +362,12 @@ public class MessageHttpTests
         long[] bIds = Array.ConvertAll(bMessages, m => m.Id);
 
         Assert.Multiple(() => {
-            Assert.That(bIds, Does.Contain(msgAtoB), "T5: B sees A→B (recipient)");
-            Assert.That(bIds, Does.Contain(msgBtoA), "T5: B sees B→A (author)");
-            Assert.That(bIds, Does.Contain(msgBtoC), "T5: B sees B→C (author)");
+            Assert.That(bIds, Does.Contain(msgAtoB),
+                "T5: B sees A→B (B is recipient)");
+            Assert.That(bIds, Does.Not.Contain(msgBtoA),
+                "T5 (CRITICAL): B must NOT see B→A in default recipient-only scope (B is author, not recipient).");
+            Assert.That(bIds, Does.Not.Contain(msgBtoC),
+                "T5 (CRITICAL): B must NOT see B→C in default recipient-only scope (B is author, not recipient).");
         });
     }
 
@@ -400,11 +405,11 @@ public class MessageHttpTests
     }
 
     // -----------------------------------------------------------------------
-    // T7 — admin sees all messages
+    // T7 — admin default scope is also recipient-only (not all messages in the system)
     // -----------------------------------------------------------------------
 
     [Test]
-    public async Task T7_List_Admin_SeesAllMessages()
+    public async Task T7_List_Admin_DefaultScope_RecipientOnly_NotAllMessages()
     {
         string suffix = Guid.NewGuid().ToString("N")[..8];
         long adminId  = await InsertUserAsync($"t7-admin-{suffix}", Json.WriteString(new[] { "admin" }));
@@ -412,16 +417,16 @@ public class MessageHttpTests
         long userB    = await InsertUserAsync($"t7-B-{suffix}", Json.WriteString(new[] { "read" }));
 
         DateTime now = DateTime.UtcNow;
-        long msg1 = await db.Insert<Message>()
-                            .Columns(m => m.AuthorId, m => m.RecipientId, m => m.Subject, m => m.Body, m => m.CreatedAt)
-                            .Values(userA, userB, $"T7-msg1-{suffix}", "body", now)
-                            .ReturnID()
-                            .ExecuteAsync();
-        long msg2 = await db.Insert<Message>()
-                            .Columns(m => m.AuthorId, m => m.RecipientId, m => m.Subject, m => m.Body, m => m.CreatedAt)
-                            .Values(userB, userA, $"T7-msg2-{suffix}", "body", now.AddSeconds(1))
-                            .ReturnID()
-                            .ExecuteAsync();
+        long msgAtoB = await db.Insert<Message>()
+                               .Columns(m => m.AuthorId, m => m.RecipientId, m => m.Subject, m => m.Body, m => m.CreatedAt)
+                               .Values(userA, userB, $"T7-A->B-{suffix}", "body", now)
+                               .ReturnID()
+                               .ExecuteAsync();
+        long msgBtoAdmin = await db.Insert<Message>()
+                                   .Columns(m => m.AuthorId, m => m.RecipientId, m => m.Subject, m => m.Body, m => m.CreatedAt)
+                                   .Values(userB, adminId, $"T7-B->admin-{suffix}", "body", now.AddSeconds(1))
+                                   .ReturnID()
+                                   .ExecuteAsync();
 
         string adminToken = fixture.MintToken(userId: adminId);
         HttpClient adminClient = ClientWithToken(adminToken);
@@ -432,11 +437,11 @@ public class MessageHttpTests
         long[] ids = Array.ConvertAll(messages, m => m.Id);
 
         Assert.Multiple(() => {
-            Assert.That(ids, Does.Contain(msg1),
-                "T7: admin must see msg1 (A→B, admin is neither)");
-            Assert.That(ids, Does.Contain(msg2),
-                "T7: admin must see msg2 (B→A, admin is neither). " +
-                "A failure here means the admin bypass of the scoping clause is broken.");
+            Assert.That(ids, Does.Contain(msgBtoAdmin),
+                "T7: admin must see B→admin (admin is the recipient)");
+            Assert.That(ids, Does.Not.Contain(msgAtoB),
+                "T7 (CRITICAL): admin must NOT see A→B in default scope — admin is neither author nor recipient. " +
+                "A failure here means admin bypasses the new recipient-default filter.");
         });
     }
 
@@ -469,10 +474,9 @@ public class MessageHttpTests
                               .ReturnID()
                               .ExecuteAsync();
 
-        // Caller A sees these messages; no ?sort= supplied — default should be DESC.
-        string tokenA = fixture.MintToken(userId: userA);
-        HttpClient clientA = ClientWithToken(tokenA);
-        HttpResponseMessage response = await clientA.GetAsync("/api/messages");
+        string tokenB = fixture.MintToken(userId: userB);
+        HttpClient clientB = ClientWithToken(tokenB);
+        HttpResponseMessage response = await clientB.GetAsync("/api/messages");
         Assert.That((int)response.StatusCode, Is.EqualTo(200));
 
         MessageDetails[] messages = await ReadMessagesAsync(response);
@@ -726,5 +730,158 @@ public class MessageHttpTests
             "so that streaming reads are cancelled on client disconnect (DiVoid #428). " +
             "A failure here means the CT plumbing has been removed and cursor leaks on Postgres/SQLite " +
             "are possible again.");
+    }
+
+    // -----------------------------------------------------------------------
+    // T16 — includeAuthored=true returns both received and sent messages
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task T16_List_NonAdmin_IncludeAuthored_ReturnsBothSentAndReceived()
+    {
+        string suffix = Guid.NewGuid().ToString("N")[..8];
+        long userA = await InsertUserAsync($"t16-A-{suffix}", Json.WriteString(new[] { "write" }));
+        long userB = await InsertUserAsync($"t16-B-{suffix}", Json.WriteString(new[] { "write" }));
+
+        DateTime now = DateTime.UtcNow;
+        long msgAtoB = await db.Insert<Message>()
+                               .Columns(m => m.AuthorId, m => m.RecipientId, m => m.Subject, m => m.Body, m => m.CreatedAt)
+                               .Values(userA, userB, $"T16-A->B-{suffix}", "body", now)
+                               .ReturnID()
+                               .ExecuteAsync();
+        long msgBtoA = await db.Insert<Message>()
+                               .Columns(m => m.AuthorId, m => m.RecipientId, m => m.Subject, m => m.Body, m => m.CreatedAt)
+                               .Values(userB, userA, $"T16-B->A-{suffix}", "body", now.AddSeconds(1))
+                               .ReturnID()
+                               .ExecuteAsync();
+
+        string tokenA = fixture.MintToken(userId: userA);
+        HttpClient clientA = ClientWithToken(tokenA);
+        HttpResponseMessage response = await clientA.GetAsync("/api/messages?includeAuthored=true");
+        Assert.That((int)response.StatusCode, Is.EqualTo(200));
+
+        MessageDetails[] messages = await ReadMessagesAsync(response);
+        long[] ids = Array.ConvertAll(messages, m => m.Id);
+
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(msgAtoB),
+                "T16: with includeAuthored=true, caller A must see A→B (authored)");
+            Assert.That(ids, Does.Contain(msgBtoA),
+                "T16: with includeAuthored=true, caller A must see B→A (received). " +
+                "A failure here means includeAuthored=true is not combining recipient and author scopes.");
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // T17 — admin explicit ?recipientId= returns that user's received messages
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task T17_List_Admin_ExplicitRecipientId_ReturnsTargetUsersMessages()
+    {
+        string suffix = Guid.NewGuid().ToString("N")[..8];
+        long adminId  = await InsertUserAsync($"t17-admin-{suffix}", Json.WriteString(new[] { "admin" }));
+        long userA    = await InsertUserAsync($"t17-A-{suffix}", Json.WriteString(new[] { "write" }));
+        long userB    = await InsertUserAsync($"t17-B-{suffix}", Json.WriteString(new[] { "write" }));
+
+        DateTime now = DateTime.UtcNow;
+        long msgAtoB = await db.Insert<Message>()
+                               .Columns(m => m.AuthorId, m => m.RecipientId, m => m.Subject, m => m.Body, m => m.CreatedAt)
+                               .Values(userA, userB, $"T17-A->B-{suffix}", "body", now)
+                               .ReturnID()
+                               .ExecuteAsync();
+        long msgBtoA = await db.Insert<Message>()
+                               .Columns(m => m.AuthorId, m => m.RecipientId, m => m.Subject, m => m.Body, m => m.CreatedAt)
+                               .Values(userB, userA, $"T17-B->A-{suffix}", "body", now.AddSeconds(1))
+                               .ReturnID()
+                               .ExecuteAsync();
+
+        string adminToken = fixture.MintToken(userId: adminId);
+        HttpClient adminClient = ClientWithToken(adminToken);
+        HttpResponseMessage response = await adminClient.GetAsync($"/api/messages?recipientId={userB}");
+        Assert.That((int)response.StatusCode, Is.EqualTo(200));
+
+        MessageDetails[] messages = await ReadMessagesAsync(response);
+        long[] ids = Array.ConvertAll(messages, m => m.Id);
+
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(msgAtoB),
+                "T17 (CRITICAL): admin with explicit ?recipientId=B must see A→B (B is recipient). " +
+                "A failure here means admin oversight via explicit filter is broken.");
+            Assert.That(ids, Does.Not.Contain(msgBtoA),
+                "T17: admin with ?recipientId=B must NOT see B→A (A is recipient, not B).");
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // T18 — non-admin cannot widen past own set via explicit recipientId filter
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task T18_List_NonAdmin_ExplicitRecipientId_CannotWidenPastOwnSet()
+    {
+        string suffix = Guid.NewGuid().ToString("N")[..8];
+        long userA = await InsertUserAsync($"t18-A-{suffix}", Json.WriteString(new[] { "write" }));
+        long userB = await InsertUserAsync($"t18-B-{suffix}", Json.WriteString(new[] { "write" }));
+        long userC = await InsertUserAsync($"t18-C-{suffix}", Json.WriteString(new[] { "write" }));
+
+        DateTime now = DateTime.UtcNow;
+        await db.Insert<Message>()
+                .Columns(m => m.AuthorId, m => m.RecipientId, m => m.Subject, m => m.Body, m => m.CreatedAt)
+                .Values(userB, userC, $"T18-B->C-{suffix}", "body", now)
+                .ExecuteAsync();
+
+        string tokenA = fixture.MintToken(userId: userA);
+        HttpClient clientA = ClientWithToken(tokenA);
+        HttpResponseMessage response = await clientA.GetAsync($"/api/messages?recipientId={userC}");
+        Assert.That((int)response.StatusCode, Is.EqualTo(200));
+
+        MessageDetails[] messages = await ReadMessagesAsync(response);
+        Assert.That(messages, Is.Empty,
+            "T18 (CRITICAL): non-admin A with ?recipientId=C must get empty results. " +
+            "The security floor (AuthorId==caller OR RecipientId==caller) ANDed with the explicit " +
+            "filter must prevent A from reading B→C. A failure here means a non-admin can view " +
+            "arbitrary users' messages by supplying an explicit recipientId filter.");
+    }
+
+    // -----------------------------------------------------------------------
+    // T19 — admin no-params returns recipient-only (not all messages in system)
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task T19_List_Admin_NoParams_DoesNotReturnAllSystemMessages()
+    {
+        string suffix = Guid.NewGuid().ToString("N")[..8];
+        long adminId = await InsertUserAsync($"t19-admin-{suffix}", Json.WriteString(new[] { "admin" }));
+        long userA   = await InsertUserAsync($"t19-A-{suffix}", Json.WriteString(new[] { "write" }));
+        long userB   = await InsertUserAsync($"t19-B-{suffix}", Json.WriteString(new[] { "write" }));
+
+        DateTime now = DateTime.UtcNow;
+        long msgUnrelated = await db.Insert<Message>()
+                                    .Columns(m => m.AuthorId, m => m.RecipientId, m => m.Subject, m => m.Body, m => m.CreatedAt)
+                                    .Values(userA, userB, $"T19-A->B-{suffix}", "body", now)
+                                    .ReturnID()
+                                    .ExecuteAsync();
+        long msgToAdmin = await db.Insert<Message>()
+                                  .Columns(m => m.AuthorId, m => m.RecipientId, m => m.Subject, m => m.Body, m => m.CreatedAt)
+                                  .Values(userA, adminId, $"T19-A->admin-{suffix}", "body", now.AddSeconds(1))
+                                  .ReturnID()
+                                  .ExecuteAsync();
+
+        string adminToken = fixture.MintToken(userId: adminId);
+        HttpClient adminClient = ClientWithToken(adminToken);
+        HttpResponseMessage response = await adminClient.GetAsync("/api/messages");
+        Assert.That((int)response.StatusCode, Is.EqualTo(200));
+
+        MessageDetails[] messages = await ReadMessagesAsync(response);
+        long[] ids = Array.ConvertAll(messages, m => m.Id);
+
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(msgToAdmin),
+                "T19: admin must see messages addressed to them");
+            Assert.That(ids, Does.Not.Contain(msgUnrelated),
+                "T19 (CRITICAL): admin no-params must NOT return A→B where admin is uninvolved. " +
+                "A failure here means admin bypasses the recipient-default filter and gets all system messages.");
+        });
     }
 }
