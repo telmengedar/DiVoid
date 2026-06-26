@@ -1826,3 +1826,145 @@ async def test_create_session_log_severity_in_post_body(server: FastMCP) -> None
     assert create_body["severity"] == 7, (
         f"Expected severity=7, got: {create_body['severity']!r}."
     )
+
+
+# ---------------------------------------------------------------------------
+# divoid_create_node — invariant guard + happy-path POST body (DiVoid #1364)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_node_empty_name_rejected_before_http(server: FastMCP) -> None:
+    """Empty name → invariant guard returns isError before any HTTP call.
+
+    Substitution probe: remove the empty-name check from create_node._check_invariants
+    — the guard no longer fires and this test fails because isError is absent.
+
+    Why this test is load-bearing: the name guard is the only hard invariant in the
+    generic tool; if it is deleted, callers can POST unnamed nodes to the backend and
+    receive opaque server errors instead of a clear MCP error. The test also verifies
+    that NO HTTP call is issued when the guard fires — respx.assert_all_called=False
+    is intentional; the test explicitly asserts zero POST requests by checking
+    captured_requests is empty.
+    """
+    from divoid_mcp.tools.create_node import register as register_create_node
+
+    cn_server = FastMCP("divoid-mcp-create-node-guard-test")
+    cn_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    register_create_node(cn_server)
+
+    captured_requests: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_requests.append(request)
+            return httpx.Response(201, json={"id": 1, "name": ""})
+
+        mock.post(_NODES_URL).mock(side_effect=capture)
+
+        result_empty = await _call(cn_server, "divoid_create_node", {"name": ""})
+        result_blank = await _call(cn_server, "divoid_create_node", {"name": "   "})
+
+    assert result_empty.get("isError") is True, (
+        f"Expected isError=True for empty name, got: {result_empty}"
+    )
+    assert "name_required" in result_empty["content"][0]["text"], (
+        f"Expected 'name_required' in error text, got: {result_empty['content'][0]['text']!r}. "
+        "Substitution probe: removing the name check from _check_invariants causes this failure."
+    )
+    assert result_blank.get("isError") is True, (
+        f"Expected isError=True for blank name, got: {result_blank}"
+    )
+    assert len(captured_requests) == 0, (
+        f"Expected zero HTTP calls when invariant guard fires, got {len(captured_requests)}. "
+        "Substitution probe: moving the HTTP call before the guard causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_node_meeting_type_post_body_correct(server: FastMCP) -> None:
+    """type='meeting' + content + extra_links → POST body has type=meeting, content posted, links created.
+
+    Substitution probe: remove the `if type is not None and type.strip()` branch from
+    create_node.py — 'type' is absent from the POST body and this test fails on the
+    type assertion. Remove the content POST path — content_length is 0. Remove the
+    link loop — extra_links_attached is empty.
+
+    Why this test is load-bearing: it is the primary regression guard for the use-case
+    that drove #1364 — creating uncommon node types that the type-specific tools do not
+    cover. If any of the three HTTP steps (create, content, link) is removed, at least
+    one assertion below fails, so the test cannot pass vacuously.
+    """
+    from divoid_mcp.tools.create_node import register as register_create_node
+
+    cn_server = FastMCP("divoid-mcp-create-node-meeting-test")
+    cn_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    register_create_node(cn_server)
+
+    meeting_id = 1357
+    captured_create_body: list[Any] = []
+    content_posted: list[bytes] = []
+    link_targets: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture_create(request: httpx.Request) -> httpx.Response:
+            captured_create_body.append(json.loads(request.content))
+            return httpx.Response(201, json={"id": meeting_id, "name": "2026-06-26 — Theo x Toni", "type": "meeting"})
+
+        def capture_content(request: httpx.Request) -> httpx.Response:
+            content_posted.append(request.content)
+            return httpx.Response(200, content=b"")
+
+        def capture_link(request: httpx.Request) -> httpx.Response:
+            link_targets.append(json.loads(request.content))
+            return httpx.Response(200, json={})
+
+        mock.post(_NODES_URL).mock(side_effect=capture_create)
+        mock.post(f"{_DUMMY_BASE}/nodes/{meeting_id}/content").mock(side_effect=capture_content)
+        mock.post(f"{_DUMMY_BASE}/nodes/{meeting_id}/links").mock(side_effect=capture_link)
+
+        result = await _call(cn_server, "divoid_create_node", {
+            "name": "2026-06-26 — Theo x Toni: Planning",
+            "type": "meeting",
+            "content": "Agenda: Q3 roadmap review. Attendees: Theo, Toni.",
+            "extra_links": [499],
+        })
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+
+    assert len(captured_create_body) == 1, (
+        f"Expected exactly 1 POST /nodes call, got {len(captured_create_body)}. "
+        "Substitution probe: removing the http_client.post_json('nodes', ...) call causes this failure."
+    )
+    create_body = captured_create_body[0]
+    assert create_body.get("type") == "meeting", (
+        f"Expected type='meeting' in POST body, got: {create_body.get('type')!r}. "
+        "Substitution probe: removing the type branch in create_node.py causes type to be absent."
+    )
+    assert create_body.get("name") == "2026-06-26 — Theo x Toni: Planning", (
+        f"Expected name in POST body, got: {create_body.get('name')!r}"
+    )
+
+    assert len(content_posted) == 1, (
+        f"Expected exactly 1 content POST, got {len(content_posted)}. "
+        "Substitution probe: removing the content POST path causes content_length=0 "
+        "and this assertion fails."
+    )
+    decoded_content = content_posted[0].decode("utf-8")
+    assert "Agenda" in decoded_content, (
+        f"Expected content body to be posted, got: {decoded_content!r}"
+    )
+
+    assert link_targets == [499], (
+        f"Expected extra_links=[499] to be linked, got: {link_targets!r}. "
+        "Substitution probe: removing the link loop causes link_targets to be empty."
+    )
+
+    assert result.get("id") == meeting_id, f"Expected id={meeting_id}, got: {result.get('id')!r}"
+    assert result.get("type") == "meeting", f"Expected type='meeting', got: {result.get('type')!r}"
+    assert result.get("extra_links_attached") == [499], (
+        f"Expected extra_links_attached=[499], got: {result.get('extra_links_attached')!r}"
+    )
+    assert isinstance(result.get("content_length"), int) and result["content_length"] > 0, (
+        f"Expected positive content_length, got: {result.get('content_length')!r}"
+    )
