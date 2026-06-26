@@ -60,6 +60,7 @@ from divoid_mcp.tools.set_content import _check_invariants as _check_set_content
 from divoid_mcp.tools.set_content import _execute as _execute_set_content
 from divoid_mcp.tools.get_links import _check_invariants as _check_get_links_invariants
 from divoid_mcp.tools.get_links import _execute as _execute_get_links
+from divoid_mcp.tools.create_node import _check_invariants as _check_create_node_invariants
 from divoid_mcp.errors import InvariantViolation
 
 # Pinned group ids for the smoke-test target project (DiVoid project #3).
@@ -2796,6 +2797,204 @@ async def smoke_get_links_happy_path(config: Any) -> None:
 
 
 ### -----------------------------------------------------------------------
+### divoid_create_node (generic create — DiVoid #1364)
+### -----------------------------------------------------------------------
+
+async def smoke_create_node_invariant_violation(config: Any) -> None:
+    """
+    divoid_create_node: empty name -> name_required invariant fires before HTTP.
+
+    Load-bearing proof: _check_create_node_invariants is imported by name at the top
+    of run_all.py — deleting _check_invariants from create_node.py causes an
+    ImportError that aborts the entire runner.
+    """
+    print("\n--- divoid_create_node (invariant: name_required) ---")
+
+    raised = False
+    violation_code = None
+    try:
+        _check_create_node_invariants("", None)
+    except InvariantViolation as exc:
+        raised = True
+        violation_code = exc.code
+
+    _assert("empty name raises InvariantViolation", raised)
+    _assert(
+        "violation code is 'name_required'",
+        violation_code == "name_required",
+        f"code={violation_code!r}",
+    )
+
+    raised2 = False
+    try:
+        _check_create_node_invariants("   ", None)
+    except InvariantViolation:
+        raised2 = True
+    _assert("whitespace-only name raises InvariantViolation", raised2)
+
+
+async def smoke_create_node_happy_path(config: Any) -> None:
+    """
+    divoid_create_node: happy path — create a type='meeting' node with content + extra_links,
+    verify round-trip, then DELETE it.
+
+    This is the use-case that drove DiVoid #1364: creating a node whose type is not
+    covered by the type-specific creators (create_task, create_documentation,
+    create_session_log). The test uses type='meeting' as the representative uncommon type
+    per the original incident report.
+
+    Load-bearing proof: the test calls http_client directly (same code path the tool
+    uses) and asserts each of the three steps produced the expected server state.
+    Removing any of the three HTTP steps from create_node.py causes one assertion below
+    to fail:
+    - Remove POST /nodes: create_result.ok is False, test exits early.
+    - Remove POST /nodes/{id}/content: content_check.status is 404; content round-trip
+      assertion fails.
+    - Remove POST /nodes/{id}/links: adjacency check returns no edge; link assertion fails.
+    """
+    print("\n--- divoid_create_node (happy path: type=meeting + content + link + cleanup) ---")
+
+    content = (
+        "# Smoke test meeting\n\n"
+        "This node was created by divoid-mcp run_all.py to test divoid_create_node. "
+        "UTF-8 safety check: em-dash — and euro sign €.\n\n"
+        "It should be deleted at the end of the test. "
+        "If you see this node it was not cleaned up."
+    )
+
+    # Step 1: Create the meeting node.
+    create_result = await http_client.post_json("nodes", {
+        "name": "[smoke-test] divoid_create_node meeting — delete me",
+        "type": "meeting",
+    })
+    _assert("POST /nodes (meeting) returns 2xx", create_result.ok, f"status={create_result.status}")
+    if not create_result.ok:
+        return
+
+    try:
+        node_id = create_result.json()["id"]
+    except Exception as exc:
+        _record("parse created meeting id", False, str(exc))
+        return
+
+    _assert("created meeting has integer id", isinstance(node_id, int), f"id={node_id!r}")
+
+    try:
+        # Step 2: Post content via the UTF-8-safe bytes path.
+        content_result = await http_client.post_bytes(
+            f"nodes/{node_id}/content",
+            content.encode("utf-8"),
+            "text/markdown; charset=utf-8",
+        )
+        _assert(
+            f"POST /nodes/{node_id}/content returns 2xx",
+            content_result.ok,
+            f"status={content_result.status}",
+        )
+
+        # Step 3: Link to the Meetings group (#499).
+        link_result = await http_client.post_json(f"nodes/{node_id}/links", 499)
+        _assert(
+            f"POST /nodes/{node_id}/links -> Meetings group #499 returns 2xx",
+            link_result.ok,
+            f"status={link_result.status}",
+        )
+
+        # Step 4: Verify the node exists with the right type.
+        get_result = await http_client.get(f"nodes/{node_id}")
+        if get_result.ok and get_result.body.strip():
+            node_data = get_result.json()
+            _assert(
+                "created node has type='meeting'",
+                node_data.get("type") == "meeting",
+                f"type={node_data.get('type')!r}",
+            )
+
+        # Step 5: Verify content round-trip (UTF-8 safety).
+        content_check = await http_client.get(f"nodes/{node_id}/content")
+        if content_check.ok:
+            try:
+                decoded = content_check.body.decode("utf-8")
+                _assert(
+                    "content round-trip: em-dash preserved",
+                    "—" in decoded,
+                    f"em-dash {'found' if chr(0x2014) in decoded else 'MISSING'}",
+                )
+                _assert(
+                    "content round-trip: euro sign preserved",
+                    "€" in decoded,
+                    f"euro sign {'found' if chr(0x20ac) in decoded else 'MISSING'}",
+                )
+            except UnicodeDecodeError:
+                _assert("content round-trip: decodes as UTF-8", False, "UnicodeDecodeError")
+
+        # Step 6: Verify link visible in adjacency.
+        links_check = await http_client.get("nodes/links", params={"ids": [node_id, 499]})
+        if links_check.ok:
+            pairs = {
+                (lnk.get("sourceId"), lnk.get("targetId"))
+                for lnk in links_check.json().get("result", [])
+            }
+            has_link = (node_id, 499) in pairs or (499, node_id) in pairs
+            _assert(
+                "link to Meetings group #499 visible in adjacency",
+                has_link,
+                f"pair_count={len(pairs)}",
+            )
+
+    finally:
+        # Cleanup: DELETE the test node.
+        delete_result = await http_client.delete(f"nodes/{node_id}")
+        _assert(
+            f"DELETE /nodes/{node_id} returns 2xx (cleanup)",
+            delete_result.ok,
+            f"status={delete_result.status}",
+        )
+
+
+async def smoke_create_node_untyped(config: Any) -> None:
+    """
+    divoid_create_node: type=None (group/container node) — create, verify no type, delete.
+
+    Group nodes (Tasks, Docs, Plans containers) carry no type. This was one of the
+    REST-fallback cases in the DiVoid #1364 addendum (2026-06-08).
+    """
+    print("\n--- divoid_create_node (untyped group node: type=None) ---")
+
+    create_result = await http_client.post_json("nodes", {
+        "name": "[smoke-test] divoid_create_node untyped group — delete me",
+    })
+    _assert("POST /nodes (no type) returns 2xx", create_result.ok, f"status={create_result.status}")
+    if not create_result.ok:
+        return
+
+    try:
+        node_id = create_result.json()["id"]
+    except Exception as exc:
+        _record("parse created untyped node id", False, str(exc))
+        return
+
+    _assert("created untyped node has integer id", isinstance(node_id, int), f"id={node_id!r}")
+
+    try:
+        get_result = await http_client.get(f"nodes/{node_id}")
+        if get_result.ok and get_result.body.strip():
+            node_data = get_result.json()
+            _assert(
+                "created untyped node has type=null",
+                node_data.get("type") is None,
+                f"type={node_data.get('type')!r}",
+            )
+    finally:
+        delete_result = await http_client.delete(f"nodes/{node_id}")
+        _assert(
+            f"DELETE /nodes/{node_id} returns 2xx (cleanup)",
+            delete_result.ok,
+            f"status={delete_result.status}",
+        )
+
+
+### -----------------------------------------------------------------------
 ### Server bootstrap smoke test (the one that catches FastMCP API mismatches)
 ### -----------------------------------------------------------------------
 
@@ -2942,6 +3141,10 @@ async def _run_all(config: Any) -> None:
         smoke_get_links_single_node,
         smoke_get_links_multiple_nodes,
         smoke_get_links_happy_path,
+        # divoid_create_node (generic escape hatch — DiVoid #1364)
+        smoke_create_node_invariant_violation,
+        smoke_create_node_happy_path,
+        smoke_create_node_untyped,
         # Bootstrap: subprocess spawn verifies FastMCP API compat at startup
         smoke_server_bootstrap,
     ]

@@ -10,7 +10,7 @@ Architecture document: `docs/architecture/phase-1.md` and DiVoid node **#695** (
 
 ## Tool surface
 
-17 tools currently registered (see `src/divoid_mcp/tools/__init__.py`). Read-side: `divoid_search`, `divoid_get_node`, `divoid_get_content`, `divoid_get_links`, `divoid_list_nodes`. Mutate: `divoid_link_nodes`, `divoid_unlink_nodes`, `divoid_patch_node`, `divoid_set_status`, `divoid_set_content`. Composite create: `divoid_create_task`, `divoid_create_documentation`, `divoid_create_session_log`. Messaging: `divoid_send_message`, `divoid_list_messages`, `divoid_delete_message`, `divoid_resolve_user`.
+18 tools currently registered (see `src/divoid_mcp/tools/__init__.py`). Read-side: `divoid_search`, `divoid_get_node`, `divoid_get_content`, `divoid_get_links`, `divoid_list_nodes`. Mutate: `divoid_link_nodes`, `divoid_unlink_nodes`, `divoid_patch_node`, `divoid_set_status`, `divoid_set_content`. Composite create: `divoid_create_task`, `divoid_create_documentation`, `divoid_create_session_log`, `divoid_create_node` (generic escape hatch for any type). Messaging: `divoid_send_message`, `divoid_list_messages`, `divoid_delete_message`, `divoid_resolve_user`.
 
 New tools require human sign-off from the repo owner before implementation — this is a generic-purpose tool used outside this deployment, so the surface evolves deliberately.
 

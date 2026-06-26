@@ -13,7 +13,7 @@ pip install "git+https://github.com/telmengedar/DiVoid.git#subdirectory=divoid-m
 claude mcp add --transport stdio --scope user divoid -- python -m divoid_mcp
 ```
 
-## Tools (16)
+## Tools (18)
 
 | Tool | What it does |
 |---|---|
@@ -30,9 +30,11 @@ claude mcp add --transport stdio --scope user divoid -- python -m divoid_mcp
 | `divoid_create_task` | Atomic create: makes the node, sets its content, links it to the project's Tasks group; accepts optional `access` param |
 | `divoid_create_documentation` | Atomic create: makes the node, sets its content, links it to the project's Docs group; accepts optional `access` param |
 | `divoid_create_session_log` | Atomic create: makes the node, sets its content, links it to the project's Docs group + any extra links; accepts optional `access` param |
+| `divoid_create_node` | Generic atomic create for any node type — meeting, plan, project, group (type=None), event, or any custom type; optional content + extra_links; no content-required check or group auto-resolution |
 | `divoid_resolve_user` | Look up a DiVoid user by name — returns the user id needed for message routing |
 | `divoid_send_message` | Send a message to a DiVoid user's inbox |
 | `divoid_list_messages` | List messages in a user's inbox, optionally filtered by project |
+| `divoid_delete_message` | Delete a message from a user's inbox by message id |
 
 Five MCP resources are also exposed for the canonical DiVoid reference documents: nodes #9 (onboarding), #190 (Hivemind Protocol), #8 (API reference), #493 (structural conventions), #435 (messaging system).
 

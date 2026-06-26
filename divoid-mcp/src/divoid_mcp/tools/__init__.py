@@ -23,6 +23,7 @@ def register_tools(mcp_server: fastmcp.FastMCP) -> None:
     from .create_task import register as register_create_task
     from .create_documentation import register as register_create_documentation
     from .create_session_log import register as register_create_session_log
+    from .create_node import register as register_create_node
     from .resolve_user import register as register_resolve_user
     from .send_message import register as register_send_message
     from .list_messages import register as register_list_messages
@@ -42,6 +43,7 @@ def register_tools(mcp_server: fastmcp.FastMCP) -> None:
     register_create_task(mcp_server)
     register_create_documentation(mcp_server)
     register_create_session_log(mcp_server)
+    register_create_node(mcp_server)
     register_resolve_user(mcp_server)
     register_send_message(mcp_server)
     register_list_messages(mcp_server)
@@ -52,4 +54,4 @@ def register_tools(mcp_server: fastmcp.FastMCP) -> None:
     register_set_content(mcp_server)
     register_get_links(mcp_server)
 
-    logger.info("Registered 17 MCP tools: read-side + link/unlink + composite writes + messaging + list + primitives.")
+    logger.info("Registered 18 MCP tools: read-side + link/unlink + composite writes + messaging + list + primitives.")
