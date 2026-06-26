@@ -13,7 +13,7 @@ pip install "git+https://github.com/telmengedar/DiVoid.git#subdirectory=divoid-m
 claude mcp add --transport stdio --scope user divoid -- python -m divoid_mcp
 ```
 
-## Tools (17)
+## Tools (18)
 
 | Tool | What it does |
 |---|---|
@@ -34,6 +34,7 @@ claude mcp add --transport stdio --scope user divoid -- python -m divoid_mcp
 | `divoid_resolve_user` | Look up a DiVoid user by name — returns the user id needed for message routing |
 | `divoid_send_message` | Send a message to a DiVoid user's inbox |
 | `divoid_list_messages` | List messages in a user's inbox, optionally filtered by project |
+| `divoid_delete_message` | Delete a message from a user's inbox by message id |
 
 Five MCP resources are also exposed for the canonical DiVoid reference documents: nodes #9 (onboarding), #190 (Hivemind Protocol), #8 (API reference), #493 (structural conventions), #435 (messaging system).
 
