@@ -53,8 +53,7 @@ public static class CliDispatcher {
         services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Information));
         services.ConfigureDatabaseService(configuration);
 
-        bool embeddingEnabled = configuration["Database:Type"] != "Sqlite";
-        services.AddSingleton<IEmbeddingCapability>(new EmbeddingCapability(embeddingEnabled));
+        services.AddSingleton<IEmbeddingProvider>(Startup.BuildEmbeddingProvider(configuration));
         services.AddTransient<EmbeddingBackfillService>();
 
         await using ServiceProvider provider = services.BuildServiceProvider();

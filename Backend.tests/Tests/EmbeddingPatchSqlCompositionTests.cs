@@ -42,10 +42,9 @@ namespace Backend.tests.Tests;
 [TestFixture]
 public class EmbeddingPatchSqlCompositionTests
 {
-    static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
 
     static NodeService MakeSqliteService(DatabaseFixture fixture)
-        => new(fixture.EntityManager, DisabledCapability);
+        => new(fixture.EntityManager, NullEmbeddingProvider.Instance);
 
 
     static async Task<NodeDetails> SeedNode(NodeService svc, string name, byte[]? content = null, string? contentType = null)
@@ -269,7 +268,7 @@ public class EmbeddingPatchSqlCompositionTests
         await ApplySchema(em);
         PurgeTestData(em);
 
-        NodeService svc = new(em, DisabledCapability);
+        NodeService svc = new(em, NullEmbeddingProvider.Instance);
 
         byte[] content = Encoding.UTF8.GetBytes("# foo\n\nsome markdown body");
         NodeDetails node = await SeedNode(svc, "Before", content, "text/markdown");
@@ -296,7 +295,7 @@ public class EmbeddingPatchSqlCompositionTests
         await ApplySchema(em);
         PurgeTestData(em);
 
-        NodeService svc = new(em, DisabledCapability);
+        NodeService svc = new(em, NullEmbeddingProvider.Instance);
 
         byte[] content = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
         NodeDetails node = await SeedNode(svc, "Before", content, "image/png");
@@ -321,7 +320,7 @@ public class EmbeddingPatchSqlCompositionTests
         await ApplySchema(em);
         PurgeTestData(em);
 
-        NodeService svc = new(em, DisabledCapability);
+        NodeService svc = new(em, NullEmbeddingProvider.Instance);
         NodeDetails node = await SeedNode(svc, "Before");
         await PatchName(svc, node.Id, "Group node");
 
@@ -344,7 +343,7 @@ public class EmbeddingPatchSqlCompositionTests
         await ApplySchema(em);
         PurgeTestData(em);
 
-        NodeService svc = new(em, DisabledCapability);
+        NodeService svc = new(em, NullEmbeddingProvider.Instance);
 
         byte[] content = Encoding.UTF8.GetBytes("# untitled doc\n\nbody");
         NodeDetails node = await SeedNode(svc, "Before", content, "text/markdown");
@@ -369,7 +368,7 @@ public class EmbeddingPatchSqlCompositionTests
         await ApplySchema(em);
         PurgeTestData(em);
 
-        NodeService svc = new(em, DisabledCapability);
+        NodeService svc = new(em, NullEmbeddingProvider.Instance);
         NodeDetails node = await SeedNode(svc, "Before");
         await PatchName(svc, node.Id, "");
 
@@ -401,7 +400,7 @@ public class EmbeddingPatchSqlCompositionTests
         await ApplySchema(em);
         PurgeTestData(em);
 
-        NodeService svc = new(em, DisabledCapability);
+        NodeService svc = new(em, NullEmbeddingProvider.Instance);
 
         string contentText = new string('x', 7999) + "—" + new string('y', 1000);
         byte[] content = Encoding.UTF8.GetBytes(contentText);
@@ -446,7 +445,7 @@ public class EmbeddingPatchSqlCompositionTests
         await ApplySchema(em);
         PurgeTestData(em);
 
-        NodeService svc = new(em, DisabledCapability);
+        NodeService svc = new(em, NullEmbeddingProvider.Instance);
 
         byte[] content = Encoding.UTF8.GetBytes("{\"key\":\"value\"}");
         NodeDetails node = await SeedNode(svc, "Before", content, "application/json");

@@ -34,7 +34,6 @@ namespace Backend.tests.Tests;
 [TestFixture]
 public class LinkedToLateralJoinTests
 {
-    static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
 
     static IEntityManager CreatePostgresManager(string connString)
     {
@@ -48,7 +47,7 @@ public class LinkedToLateralJoinTests
         await svc.StartAsync(CancellationToken.None);
     }
 
-    static NodeService MakeService(IEntityManager em) => new(em, DisabledCapability);
+    static NodeService MakeService(IEntityManager em) => new(em, NullEmbeddingProvider.Instance);
 
     static async Task<NodeDetails> Create(NodeService svc, string name)
         => await svc.CreateNode(new NodeDetails { Type = "task", Name = name }, callerId: 0);

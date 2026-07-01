@@ -51,8 +51,7 @@ namespace Backend.tests.Tests;
 [TestFixture]
 public class EmbeddingPatchTransactionRollbackTests
 {
-    static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
-    static readonly IEmbeddingCapability EnabledCapability = new EmbeddingCapability(true);
+    static readonly IEmbeddingProvider EnabledProvider = new GoogleMlEmbeddingProvider(TextContentTypePredicate.EmbeddingModel);
 
 
     /// <summary>
@@ -77,8 +76,8 @@ public class EmbeddingPatchTransactionRollbackTests
     public async Task Patch_EmbeddingThrowsMidTransaction_NameUpdateRolledBack()
     {
         using DatabaseFixture fixture = new();
-        NodeService seedSvc = new(fixture.EntityManager, DisabledCapability);
-        NodeService patchSvc = new(fixture.EntityManager, EnabledCapability);
+        NodeService seedSvc = new(fixture.EntityManager, NullEmbeddingProvider.Instance);
+        NodeService patchSvc = new(fixture.EntityManager, EnabledProvider);
 
         NodeDetails node = await seedSvc.CreateNode(new NodeDetails { Type = "task", Name = "Original" }, callerId: 0);
 
@@ -119,8 +118,8 @@ public class EmbeddingPatchTransactionRollbackTests
     public async Task Patch_EmbeddingThrowsMidTransaction_ExceptionMentionsPostgresRestriction()
     {
         using DatabaseFixture fixture = new();
-        NodeService seedSvc = new(fixture.EntityManager, DisabledCapability);
-        NodeService patchSvc = new(fixture.EntityManager, EnabledCapability);
+        NodeService seedSvc = new(fixture.EntityManager, NullEmbeddingProvider.Instance);
+        NodeService patchSvc = new(fixture.EntityManager, EnabledProvider);
 
         NodeDetails node = await seedSvc.CreateNode(new NodeDetails { Type = "documentation", Name = "OriginalDoc" }, callerId: 0);
 
@@ -153,8 +152,8 @@ public class EmbeddingPatchTransactionRollbackTests
     public async Task Patch_NonNameField_EmbeddingCapabilityEnabled_NoThrow()
     {
         using DatabaseFixture fixture = new();
-        NodeService seedSvc = new(fixture.EntityManager, DisabledCapability);
-        NodeService patchSvc = new(fixture.EntityManager, EnabledCapability);
+        NodeService seedSvc = new(fixture.EntityManager, NullEmbeddingProvider.Instance);
+        NodeService patchSvc = new(fixture.EntityManager, EnabledProvider);
 
         NodeDetails node = await seedSvc.CreateNode(
             new NodeDetails { Type = "task", Name = "StableNode", Status = "open" }, callerId: 0);

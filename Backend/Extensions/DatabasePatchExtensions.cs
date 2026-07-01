@@ -47,13 +47,11 @@ public static class DatabasePatchExtensions {
             if(!Attribute.IsDefined(property, typeof(AllowPatchAttribute)))
                 throw new NotSupportedException($"Patching of '{entitytype.Name}::{property.Name}' is not supported");
 
-            object targetvalue = null;
-            if (patch.Op != "embed") {
-                if (Attribute.IsDefined(property, typeof(JsonColumnAttribute)))
-                    targetvalue = ResolveJsonColumnValue(patch.Value, entitytype, property);
-                else
-                    targetvalue = Converter.Convert(patch.Value, property.PropertyType, true);
-            }
+            object targetvalue;
+            if (Attribute.IsDefined(property, typeof(JsonColumnAttribute)))
+                targetvalue = ResolveJsonColumnValue(patch.Value, entitytype, property);
+            else
+                targetvalue = Converter.Convert(patch.Value, property.PropertyType, true);
 
             switch (patch.Op) {
                 case Pooshit.AspNetCore.Services.Patches.Patch.Op_Replace:
@@ -70,9 +68,6 @@ public static class DatabasePatchExtensions {
                 break;
                 case Pooshit.AspNetCore.Services.Patches.Patch.Op_Unflag:
                     setters.Add(e => DB.Property<T>(property.Name, true).Int64 == (DB.Property<T>(property.Name, true).Int64 & ~DB.Constant(targetvalue).Int64));
-                break;
-                case "embed":
-                    setters.Add(e => DB.Property<T>(property.Name, true) == DB.CustomFunction("embedding", DB.Constant("gemini-embedding-001"), DB.Constant(patch.Value)));
                 break;
                 default:
                     throw new ArgumentException($"Unsupported patch operation '{patch.Op}'");

@@ -16,25 +16,26 @@ namespace Backend.Init;
 public class StartupWarningService : IHostedService {
     readonly IApiKeyService apiKeyService;
     readonly IUserService userService;
-    readonly IEmbeddingCapability embeddingCapability;
+    readonly IEmbeddingProvider embeddingProvider;
     readonly ILogger<StartupWarningService> logger;
 
     public StartupWarningService(
         IApiKeyService apiKeyService,
         IUserService userService,
-        IEmbeddingCapability embeddingCapability,
+        IEmbeddingProvider embeddingProvider,
         ILogger<StartupWarningService> logger) {
         this.apiKeyService = apiKeyService;
         this.userService = userService;
-        this.embeddingCapability = embeddingCapability;
+        this.embeddingProvider = embeddingProvider;
         this.logger = logger;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken) {
-        if (embeddingCapability.IsEnabled)
-            logger.LogDebug("embedding step enabled — text-content uploads will call embedding() on Postgres");
+        if (embeddingProvider.IsEnabled)
+            logger.LogDebug("embedding provider={Provider} dimension={Dimension} — embedding generation enabled",
+                embeddingProvider.GetType().Name, embeddingProvider.Dimension);
         else
-            logger.LogDebug("embedding step disabled (SQLite) — text-content uploads will skip embedding");
+            logger.LogDebug("embedding provider=None — embedding generation disabled");
 
         try {
             if (!await apiKeyService.AnyAdminKeyExists())

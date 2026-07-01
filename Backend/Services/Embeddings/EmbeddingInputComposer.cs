@@ -13,19 +13,17 @@ public static class EmbeddingInputComposer {
 
     /// <summary>
     /// maximum number of characters in the composed output string.
-    /// the content portion is truncated to fit within this budget while the
-    /// name + separator prefix is always preserved.
-    /// heuristic for ~2k-token Gemini embedding budget (≈4 chars/token on average
-    /// English+German prose); treat as a tunable constant, not a contract.
+    /// delegated to <see cref="EmbeddingCompositionPolicy.MaxLength"/> — single source
+    /// of truth shared with the SQL composition path.
     /// </summary>
-    public const int MaxLength = 8000;
+    public const int MaxLength = EmbeddingCompositionPolicy.MaxLength;
 
     /// <summary>
     /// the separator placed between name and content in the composed string.
-    /// double newline — markdown-natural paragraph boundary, unlikely to collide
-    /// with names, clearly delimits "title" from "body".
+    /// delegated to <see cref="EmbeddingCompositionPolicy.Separator"/> — single source
+    /// of truth shared with the SQL composition path.
     /// </summary>
-    const string Separator = "\n\n";
+    const string Separator = EmbeddingCompositionPolicy.Separator;
 
     /// <summary>
     /// composes the embedding input from a node's name, content bytes, and content type.
