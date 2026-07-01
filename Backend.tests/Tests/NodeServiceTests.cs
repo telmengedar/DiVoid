@@ -18,9 +18,7 @@ public class NodeServiceTests
     /// <summary>
     /// embedding is disabled in unit tests — SQLite does not have the embedding() function
     /// </summary>
-    static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
-
-    static NodeService MakeService(DatabaseFixture fixture) => new(fixture.EntityManager, DisabledCapability);
+    static NodeService MakeService(DatabaseFixture fixture) => new(fixture.EntityManager, NullEmbeddingProvider.Instance);
 
     // -----------------------------------------------------------------------
     // Helpers
@@ -1604,7 +1602,7 @@ public class NodeServiceTests
         IDBClient spyClient = CancellationTokenRejectingDbClientSpy.Wrap(fixture.EntityManager.DBClient);
         IEntityManager spyManager = new EntityManager(spyClient);
 
-        NodeService spySvc = new(spyManager, DisabledCapability);
+        NodeService spySvc = new(spyManager, NullEmbeddingProvider.Instance);
         using CancellationTokenSource cts = new();
 
         AsyncPageResponseWriter<NodeLink> writer = await spySvc.ListLinks(

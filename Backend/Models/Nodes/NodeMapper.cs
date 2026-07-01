@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
 using Backend.Services.Embeddings;
 using Pooshit.Ocelot.Clients;
 using Pooshit.Ocelot.Entities;
@@ -26,12 +27,21 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
 
     /// <summary>
     /// creates a new <see cref="NodeMapper"/> optionally configured for semantic search.
-    /// when <paramref name="filter"/> carries a non-empty <c>Query</c>, the
-    /// <c>similarity</c> field-mapping is included in <see cref="Mappings()"/>.
+    /// when <paramref name="filter"/> carries a non-empty <c>Query</c> AND
+    /// <paramref name="queryVectorToken"/> is provided, the <c>similarity</c>
+    /// field-mapping uses that token as the left operand of the cosine comparison.
+    /// when <paramref name="queryVectorToken"/> is null but the query is set, the mapper
+    /// falls back to the google inline <c>embedding(model, text)</c> expression so that
+    /// direct NodeMapper construction in unit tests continues to work.
     /// </summary>
     /// <param name="filter">the inbound node filter; null is treated as standard list mode</param>
-    public NodeMapper(NodeFilter filter)
-    : base(Mappings(filter).ToArray(), null, PostProcess)
+    /// <param name="queryVectorToken">
+    /// pre-computed Ocelot SQL expression token for the query vector, produced by
+    /// <c>IEmbeddingProvider.QueryVectorTokenAsync</c>.  pass null for standard list mode
+    /// or when constructing the mapper directly in tests.
+    /// </param>
+    public NodeMapper(NodeFilter filter, Expression<Func<object, object>> queryVectorToken = null)
+    : base(Mappings(filter, queryVectorToken).ToArray(), null, PostProcess)
     {
         this.filter = filter;
     }
@@ -51,7 +61,7 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
         node.Content = InlineContentEncoder.Encode(node.RawContent, node.ContentType);
     }
 
-    static IEnumerable<FieldMapping<NodeDetails>> Mappings(NodeFilter filter = null)
+    static IEnumerable<FieldMapping<NodeDetails>> Mappings(NodeFilter filter = null, Expression<Func<object, object>> queryVectorToken = null)
     {
         yield return new FieldMapping<NodeDetails, long>("id",
                                                         DB.Property<Node>(n => n.Id, "node"),
@@ -98,14 +108,20 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
             // DB.VCos compiles to pgvector's <=> (cosine distance: smaller = more similar).
             // Both sides are cast to vector so Postgres can invoke the <=> operator.
             // The outer Float cast makes the result a plain float for the .Single projection.
-            // Shape taken verbatim from mamgo-backend CampaignItemTargetMapper.cs:171-174.
+            //
+            // queryVectorToken is supplied by IEmbeddingProvider.QueryVectorTokenAsync before
+            // this mapper is constructed (NodeService.ListPaged / ListPagedByPath).
+            // When null (direct test construction or standard list mode), fall back to the
+            // google inline embedding(model, text) expression so existing tests continue to work.
             string queryText = filter.Query;
+            Expression<Func<object, object>> vectorExpr = queryVectorToken
+                ?? (v => DB.Cast(DB.CustomFunction("embedding",
+                                     DB.Constant(TextContentTypePredicate.EmbeddingModel),
+                                     DB.Constant(queryText)), CastType.Vector));
             yield return new FieldMapping<NodeDetails, float>("similarity",
                 t => 1.0f - DB.Cast(
                     DB.VCos(
-                        DB.Value<object>(v => DB.Cast(DB.CustomFunction("embedding",
-                                                        DB.Constant(TextContentTypePredicate.EmbeddingModel),
-                                                        DB.Constant(queryText)), CastType.Vector)),
+                        DB.Value<object>(vectorExpr),
                         DB.Value<object>(v => DB.Cast(DB.Property<Node>(n => n.Embedding, "node"), CastType.Vector))),
                     CastType.Float).Single,
                 (n, v) => n.Similarity = v);

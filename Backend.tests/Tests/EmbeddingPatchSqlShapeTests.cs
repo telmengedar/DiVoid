@@ -1,7 +1,6 @@
 #nullable disable
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
-using Backend.Services.Nodes;
 using Moq;
 using NUnit.Framework;
 using Pooshit.Ocelot.Clients;
@@ -25,7 +24,7 @@ namespace Backend.tests.Tests;
 /// still passed.  Jenny's substitution proof: reverting NodeService.cs to Option B
 /// without touching the test file gave 8 pass / 0 fail.
 ///
-/// Fix: tests now call <see cref="NodeService.BuildEmbeddingBranchOperations"/> — the
+/// Fix: tests now call <see cref="GoogleMlEmbeddingProvider.BuildEmbeddingBranchOperations"/> — the
 /// <c>internal static</c> shared helper that builds the same UPDATE trees as the
 /// production path — and render each operation’s SQL via <c>Prepare().CommandText</c>
 /// in the test-local <c>RenderAllBranches</c> helper.  Service code carries no test-only
@@ -57,17 +56,17 @@ public class EmbeddingPatchSqlShapeTests
     }
 
     /// <summary>
-    /// Calls <see cref="NodeService.BuildEmbeddingBranchOperations"/> — the internal
+    /// Calls <see cref="GoogleMlEmbeddingProvider.BuildEmbeddingBranchOperations"/> — the internal
     /// shared helper — once and renders each operation to SQL via <c>Prepare().CommandText</c>.
     /// This is the only place the operation tree is constructed; any change to
-    /// <see cref="NodeService.BuildEmbeddingBranchOperations"/> automatically propagates here.
+    /// <see cref="GoogleMlEmbeddingProvider.BuildEmbeddingBranchOperations"/> automatically propagates here.
     /// </summary>
     static (string F1, string F2, string F3, string F4) RenderAllBranches()
     {
         IEntityManager em = CreatePostgresEntityManager();
         (UpdateValuesOperation<Node> f1, UpdateValuesOperation<Node> f2,
          UpdateValuesOperation<Node> f3, UpdateValuesOperation<Node> f4) =
-            NodeService.BuildEmbeddingBranchOperations(em, nodeId: 1L);
+            GoogleMlEmbeddingProvider.BuildEmbeddingBranchOperations(em, nodeId: 1L, TextContentTypePredicate.EmbeddingModel);
         return (
             f1.Prepare().CommandText,
             f2.Prepare().CommandText,

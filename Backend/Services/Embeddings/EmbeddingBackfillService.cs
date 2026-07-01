@@ -1,9 +1,9 @@
 using System;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Backend.Models.Nodes;
 using Microsoft.Extensions.Logging;
+using Pooshit.Ocelot.Clients;
 using Pooshit.Ocelot.Entities;
 using Pooshit.Ocelot.Entities.Operations;
 using Pooshit.Ocelot.Expressions;
@@ -14,16 +14,19 @@ namespace Backend.Services.Embeddings;
 
 /// <summary>
 /// one-shot service that walks all nodes with any embeddable surface (non-empty name OR
-/// text content) and (re)generates their embedding using the v2 composition policy.
-/// Postgres-only: if <see cref="IEmbeddingCapability.IsEnabled"/> is false the method
-/// exits immediately with a log message and no database writes.
+/// text content) and (re)generates their embedding using the configured provider.
+/// exits immediately when <see cref="IEmbeddingProvider.IsEnabled"/> is false.
+///
+/// each row is processed in its own transaction so a single-row failure does not
+/// roll back the whole run — the provider is responsible for throwing on error
+/// (fail-closed per §9 of the design doc).
 /// </summary>
-public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapability embeddingCapability, ILogger<EmbeddingBackfillService> logger) {
+public class EmbeddingBackfillService(IEntityManager database, IEmbeddingProvider embeddingProvider, ILogger<EmbeddingBackfillService> logger) {
 
     const int ProgressInterval = 25;
 
     readonly IEntityManager database = database;
-    readonly IEmbeddingCapability embeddingCapability = embeddingCapability;
+    readonly IEmbeddingProvider embeddingProvider = embeddingProvider;
     readonly ILogger<EmbeddingBackfillService> logger = logger;
 
     /// <summary>
@@ -45,13 +48,13 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
     }
 
     /// <summary>
-    /// runs the v2 backfill: re-embeds every node with any embeddable surface using
-    /// the name+content composition policy.
+    /// runs the backfill: re-embeds every node with any embeddable surface using
+    /// the configured <see cref="IEmbeddingProvider"/>.
     /// </summary>
     /// <param name="ct">cancellation token</param>
     public async Task RunAsync(CancellationToken ct = default) {
-        if (!embeddingCapability.IsEnabled) {
-            logger.LogInformation("event=backfill.skip reason=capability_disabled message=\"embedding capability is disabled; backfill is a no-op\"");
+        if (!embeddingProvider.IsEnabled) {
+            logger.LogInformation("event=backfill.skip reason=provider_disabled message=\"embedding provider is disabled; backfill is a no-op\"");
             return;
         }
 
@@ -65,26 +68,15 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
         logger.LogInformation("event=backfill.candidates total={Total}", total);
 
         int embedded = 0;
-        int skipped = 0;
 
-        await foreach (Node node in database.Load<Node>(n => n.Id, n => n.Name, n => n.ContentType, n => n.Content)
+        await foreach (Node node in database.Load<Node>(n => n.Id)
                                             .Where(CandidatePredicate().Content)
                                             .ExecuteEntitiesAsync()) {
             ct.ThrowIfCancellationRequested();
 
-            string composed = EmbeddingInputComposer.Compose(node.Name, node.Content, node.ContentType);
-            if (composed == null) {
-                // composition returned null despite passing the candidate predicate — safety skip
-                skipped++;
-                continue;
-            }
-
-            await database.Update<Node>()
-                          .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                                      DB.Constant(TextContentTypePredicate.EmbeddingModel),
-                                                                      DB.Constant(composed)).Type<float[]>())
-                          .Where(n => n.Id == node.Id)
-                          .ExecuteAsync();
+            using Transaction transaction = database.Transaction();
+            await embeddingProvider.RegenerateEmbedding(database, transaction, node.Id, ct);
+            transaction.Commit();
 
             embedded++;
 
@@ -94,7 +86,7 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
 
         TimeSpan elapsed = DateTimeOffset.UtcNow - started;
         logger.LogInformation(
-            "event=backfill.complete embedded={Embedded} skipped={Skipped} total={Total} elapsed={Elapsed}",
-            embedded, skipped, total, elapsed);
+            "event=backfill.complete embedded={Embedded} total={Total} elapsed={Elapsed}",
+            embedded, total, elapsed);
     }
 }

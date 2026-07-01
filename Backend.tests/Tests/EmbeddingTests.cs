@@ -11,31 +11,29 @@ namespace Backend.tests.Tests;
 /// <summary>
 /// tests for the automatic embedding-on-content-write feature (PR A).
 /// all tests run on SQLite (via DatabaseFixture or WebApplicationFactory with Sqlite config).
-/// the Postgres embedding() call path is not exercised here — the capability flag
+/// the Postgres embedding() call path is not exercised here — the provider IsEnabled check
 /// ensures it is never reached in these tests.
 /// </summary>
 [TestFixture]
 public class EmbeddingTests
 {
-    static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
-
     static NodeService MakeService(DatabaseFixture fixture)
-        => new(fixture.EntityManager, DisabledCapability);
+        => new(fixture.EntityManager, NullEmbeddingProvider.Instance);
 
     // -----------------------------------------------------------------------
-    // 1. Capability flag — DI resolution in the SQLite test factory
+    // 1. Provider disabled — DI resolution in the SQLite test factory
     // -----------------------------------------------------------------------
 
     [Test]
-    public void EmbeddingCapability_SqliteTestFactory_IsDisabled()
+    public void EmbeddingProvider_SqliteTestFactory_IsDisabled()
     {
         // WebApplicationFactory uses "Database:Type" = "Sqlite" (see TestSetup.CreateTestFactory).
-        // Startup registers EmbeddingCapability(isEnabled: false) for any non-Postgres config.
+        // Startup registers NullEmbeddingProvider when Embedding:Provider is absent / None.
         // Verify the resolved singleton reports IsEnabled = false.
         using WebApplicationFactory<Program> factory = TestSetup.CreateTestFactory("capability_check");
-        IEmbeddingCapability capability = factory.Services.GetRequiredService<IEmbeddingCapability>();
-        Assert.That(capability.IsEnabled, Is.False,
-            "IEmbeddingCapability.IsEnabled must be false when Database:Type is Sqlite");
+        IEmbeddingProvider provider = factory.Services.GetRequiredService<IEmbeddingProvider>();
+        Assert.That(provider.IsEnabled, Is.False,
+            "IEmbeddingProvider.IsEnabled must be false when Embedding:Provider is absent (SQLite/dev)");
     }
 
     // -----------------------------------------------------------------------
@@ -60,7 +58,7 @@ public class EmbeddingTests
                                               .ExecuteEntityAsync();
 
         Assert.That(raw.Embedding, Is.Null,
-            "Embedding must remain null on SQLite because the capability flag is false — the embedding step is skipped entirely");
+            "Embedding must remain null on SQLite because the provider is disabled — the embedding step is skipped entirely");
     }
 
     [Test]
@@ -131,7 +129,7 @@ public class EmbeddingTests
 
     // -----------------------------------------------------------------------
     // 4. Clear-on-non-text — non-text upload on SQLite leaves Embedding unchanged
-    //    (on SQLite the clear UPDATE is also skipped because capability.IsEnabled = false)
+    //    (on SQLite the clear UPDATE is also skipped because provider.IsEnabled = false)
     // -----------------------------------------------------------------------
 
     [Test]
@@ -156,8 +154,8 @@ public class EmbeddingTests
     [Test]
     public async Task UploadContent_NonTextAfterText_SqliteFixture_EmbeddingRemainsNull()
     {
-        // Verify the clear-on-non-text path is also skipped on SQLite (capability disabled).
-        // Upload text content first (Embedding remains null — capability disabled).
+        // Verify the clear-on-non-text path is also skipped on SQLite (provider disabled).
+        // Upload text content first (Embedding remains null — provider disabled).
         // Then upload non-text content — the clear UPDATE is also skipped.
         // Result: Embedding is still null, content type has changed.
         using DatabaseFixture fixture = new();
