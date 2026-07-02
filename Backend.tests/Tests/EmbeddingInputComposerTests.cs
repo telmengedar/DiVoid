@@ -107,7 +107,7 @@ public class EmbeddingInputComposerTests
         string name = "Short";
         string sep = EmbeddingCompositionPolicy.Separator;
         int contentBudget = EmbeddingInputComposer.MaxLength - sep.Length;
-        string longBody = new string('x', contentBudget + 100); // exceeds content budget
+        string longBody = new string('x', contentBudget + 100);
 
         byte[] content = Encoding.UTF8.GetBytes(longBody);
         string result = EmbeddingInputComposer.Compose(name, content, "text/plain");

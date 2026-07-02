@@ -18,7 +18,7 @@ namespace Backend.tests.Tests;
 ///   - wrong dimension → InvalidOperationException (fail-closed)
 ///   - unknown provider name → InvalidOperationException (fail-closed)
 /// </summary>
-[TestFixture]
+[TestFixture, Parallelizable]
 public class EmbeddingProviderSelectionTests
 {
     /// <summary>stub IHttpService passed to BuildEmbeddingProvider for all test cases.</summary>

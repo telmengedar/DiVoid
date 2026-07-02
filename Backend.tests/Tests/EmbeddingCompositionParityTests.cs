@@ -18,7 +18,7 @@ namespace Backend.tests.Tests;
 /// load-bearing (DiVoid #275): any change to <see cref="EmbeddingCompositionPolicy"/>
 /// constants must either update both composition paths or be detected here.
 /// </summary>
-[TestFixture]
+[TestFixture, Parallelizable]
 public class EmbeddingCompositionParityTests
 {
     [Test]

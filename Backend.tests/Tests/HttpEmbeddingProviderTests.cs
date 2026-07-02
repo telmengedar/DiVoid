@@ -26,7 +26,7 @@ namespace Backend.tests.Tests;
 /// Postgres because <c>CastType.Vector</c> is not supported by SQLite; it skips via
 /// <see cref="Assert.Inconclusive"/> when <c>POSTGRES_CONNECTION</c> is absent.
 /// </summary>
-[TestFixture]
+[TestFixture, Parallelizable]
 public class HttpEmbeddingProviderTests
 {
     const int TestDimension = EmbeddingCompositionPolicy.EmbeddingDimension;
