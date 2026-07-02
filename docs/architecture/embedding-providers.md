@@ -4,6 +4,8 @@ Resolves DiVoid task **#2596**. Discussion-first design (per brief §5 / DiVoid 
 
 **Delta pass (2026-07-01).** A prior revision of this doc recommended **Option C** (uniform SQL token), which required a **partial revert of PR #81** (the F1–F4 server-side name+content composition). Toni **rejected the revert** and chose a new **Option D**: the provider abstraction sits at the level of *the embed operation itself* — the provider **owns the write** (executes the whole operation, or something in between), so the Google provider keeps its server-side composition and the HTTP provider composes app-side, with **no call-site branching**. This revision reworks §4, §5, §6, §8, §11 and §14 for Option D. Everything Toni locked (fail-closed + bounded timeout, deploy-time dimension gate, `embed` op removal, Phase-0 reflect-probe) is unchanged.
 
+**Implementation pass (2026-07-02, PR #154).** The four WHERE-predicated UPDATEs (`BuildEmbeddingBranchOperations`) were collapsed into a **single CASE-expression UPDATE** (`BuildEmbeddingUpdate`) at implementation time — architect Sarah's ruling (DiVoid #2632): one Postgres round-trip instead of four, same SQL machinery, cleaner. The content-truncation budget uses a **constant** `MaxLength − sep.Length` (7998) rather than the dynamic `MaxLength − len(name) − len(sep)` the design specified — the dynamic form is not expressible inside a CASE expression in Ocelot's SQL renderer without an inner CASE that throws. The residual divergence (C# path is precise, SQL path uses a constant budget) is accepted and documented in §6.7. The `embed` PATCH op was removed per Decision 4.
+
 Load-bearing contracts: **Code Contracts #114** (§0 principles, Ocelot idioms, `[AllowPatch]` discipline) and **Design Contracts #1136** (§1 KISS/DRY/YAGNI, §2 existing-systems-first, §3 configurability-is-not-free, §5 Pre-Design Checklist).
 
 Precedent this design builds on: **#440** (embeddings-v2 composition), **#626 + #627 / PR #81** (SQL-side branch-by-WHERE server-side composition — this design **PRESERVES** it under Option D; see §4.4), **#180** (v1 failure-tolerance constraint), **#786** (dimension/vector-space incompatibility — PARKED, but authoritative on migration mechanics).
@@ -94,7 +96,7 @@ Two members carry the seam, at two different altitudes, deliberately:
    - **Google:** an inline `embedding(model, queryText)` function-call token (identical SQL to today).
    - **HTTP:** performs one network call, returns a constant-vector token.
 
-**Why two altitudes (the "or something in between" Toni left to me).** A write is a *self-contained unit* the provider can own end-to-end — this is precisely what lets Google keep F1–F4: the provider is free to emit four WHERE-predicated UPDATEs, a shape that **cannot be expressed as a single `.Set(...)` setter** without rewriting PR #81's SQL into a server-side `CASE`. "Executes the operation" therefore dominates "provides the setter" for the goal of preserving PR #81 verbatim. The query vector, by contrast, is **not** a standalone operation — it is an *operand* inside the mapper's ranking `SELECT` that `NodeMapper` owns; the provider can only contribute an expression token there. So: **executes on the write path, provides-a-token on the query path.** This asymmetry is the honest minimum; it is not two abstractions but one provider exposing the two altitudes its two call contexts actually require.
+**Why two altitudes (the "or something in between" Toni left to me).** A write is a *self-contained unit* the provider can own end-to-end. Google executes a single CASE-expression UPDATE (`BuildEmbeddingUpdate`) that composes and generates the vector entirely inside Postgres. The query vector, by contrast, is **not** a standalone operation — it is an *operand* inside the mapper's ranking `SELECT` that `NodeMapper` owns; the provider can only contribute an expression token there. So: **executes on the write path, provides-a-token on the query path.** This asymmetry is the honest minimum; it is not two abstractions but one provider exposing the two altitudes its two call contexts actually require.
 
 ```
                      +----------------------------------------------------+
@@ -119,7 +121,7 @@ Two members carry the seam, at two different altitudes, deliberately:
               | shared composition policy (EmbeddingCompositionPolicy) |
               |   Separator "\n\n" | MaxLength 8000 | text predicate    |
               |   consumed by  ->  EmbeddingInputComposer (C#)          |
-              |               ->  BuildEmbeddingBranchOperations (SQL)  |
+              |               ->  BuildEmbeddingUpdate (SQL, single CASE) |
               |   guarded by   ->  parity test (§6.7)                   |
               +--------------------------------------------------------+
 ```
@@ -132,9 +134,11 @@ Two members carry the seam, at two different altitudes, deliberately:
 
 ### 4.4 What Option D preserves that Option C gave up: server-side composition (PR #81)
 
-Option C would have made the provider return a *token* for pre-composed text, which forced composition to always happen in C# and therefore required **deleting F1–F4** — a partial revert of PR #81. Toni rejected that. Under **Option D the provider owns the whole write operation**, so the Google provider is free to keep composing *inside Postgres*: F1–F4, `BuildEmbeddingBranchOperations`, and the server-side `concat`/`left`/`convert_from` machinery **survive verbatim** and are now the Google provider's write implementation for *all* write paths (create, content, name-PATCH, backfill), not just name-PATCH. Google therefore never materializes a node's `Content` blob into .NET for embedding purposes on any write path — a strict retention (and mild extension) of PR #81's bandwidth optimization.
+Option C would have made the provider return a *token* for pre-composed text, which forced composition to always happen in C# and therefore required **deleting F1–F4** — a partial revert of PR #81. Toni rejected that. Under **Option D the provider owns the whole write operation**, so the Google provider is free to keep composing *inside Postgres*. The PR #81 server-side `concat`/`left`/`convert_from`/`embedding(...)` machinery is preserved and relocated into `GoogleMlEmbeddingProvider.BuildEmbeddingUpdate` — a **single CASE-expression UPDATE** that collapses the four WHERE-predicated UPDATEs into one statement. Google therefore never materializes a node's `Content` blob into .NET for embedding purposes on any write path — a strict retention (and mild extension) of PR #81's bandwidth optimization.
 
-The cost of preserving it is a **second composition path** (Google in SQL, HTTP in C#) that must stay policy-aligned. That cost is real and is contained, not waved away — see §6.7.
+**Implementation note (CASE collapse).** The design originally described four separate WHERE-predicated UPDATEs (`BuildEmbeddingBranchOperations`). During implementation, Sarah (architect) ruled that a single CASE-expression UPDATE (`BuildEmbeddingUpdate`) is both sufficient and cleaner — one round-trip to Postgres instead of four, with the branch selection done server-side by the CASE WHEN conditions. The SQL behaviour is preserved: each WHEN branch computes the same `embedding(model, concat(...))` as the original corresponding UPDATE; the ELSE NULL clause handles nodes with no embeddable surface.
+
+The cost of preserving server-side composition is a **second composition path** (Google in SQL, HTTP in C#) that must stay policy-aligned. That cost is real and is contained, not waved away — see §6.7.
 
 ## 5. Components & Responsibilities
 
@@ -145,14 +149,14 @@ The cost of preserving it is a **second composition path** (Google in SQL, HTTP 
 **Does not own.** The composition *policy values* (those live in `EmbeddingCompositionPolicy`, §5.9). The field write (name/content) that precedes the embedding write — that stays in `NodeService`. The cosine ranking assembly (that is `NodeMapper`). Reading rows for non-embedding purposes.
 
 **Members (prose — no signatures per architect discipline):**
-- **RegenerateEmbedding(database, transaction, nodeId, ct)** → executes the embedding write so node N's `Embedding` reflects its current persisted `(name, content, contentType)`. Google: the F1–F4 server-side UPDATEs. HTTP: read-compose-POST-write constant. Null: not callable (gated). *This is the write seam; no call site branches.*
+- **RegenerateEmbedding(database, transaction, nodeId, ct)** → executes the embedding write so node N's `Embedding` reflects its current persisted `(name, content, contentType)`. Google: single CASE-expression UPDATE (`BuildEmbeddingUpdate`). HTTP: read-compose-POST-write constant. Null: not callable (gated). *This is the write seam; no call site branches.*
 - **QueryVectorToken(queryText)** → an Ocelot SQL token for the query vector. Google: inline `embedding(model, text)`. HTTP: one call → constant-vector token.
 - **Dimension** → the integer output dimension the provider produces. Feeds the startup fail-closed gate and, for HTTP, the `dimensions` request parameter where supported.
 - **IsEnabled** → whether a real provider is configured (false for the null provider). Subsumes today's `IEmbeddingCapability.IsEnabled`.
 
 ### 5.2 `GoogleMlEmbeddingProvider`
 
-**Owns.** `RegenerateEmbedding` implemented as the **PR #81 F1–F4 WHERE-predicated server-side UPDATEs** (composition + vector both inside Postgres, against the node's own columns); `QueryVectorToken` as inline `embedding(model, text)`; `Dimension = 3072`; `IsEnabled = true`. Model comes from config (default `gemini-embedding-001`). Preserves today's atomic single-statement-per-branch, no-round-trip, no-vector-transfer, no-content-materialization behaviour. Consumes `EmbeddingCompositionPolicy` for the separator and truncation budget it emits into SQL (no literal `"\n\n"`/`8000`).
+**Owns.** `RegenerateEmbedding` implemented as a **single CASE-expression UPDATE (`BuildEmbeddingUpdate`)** (composition + vector both inside Postgres, against the node's own columns — three WHEN branches cover name+content, name-only, and content-only; ELSE NULL for no embeddable surface); `QueryVectorToken` as inline `embedding(model, text)`; `Dimension = 3072`; `IsEnabled = true`. Model comes from config (default `gemini-embedding-001`). Preserves today's atomic, no-round-trip, no-vector-transfer, no-content-materialization behaviour — now in a single statement instead of four. Consumes `EmbeddingCompositionPolicy` for the separator and truncation budget it emits into SQL (no literal `"\n\n"`/`8000`).
 
 ### 5.3 `HttpEmbeddingProvider` (the one reference app-side provider)
 
@@ -174,7 +178,7 @@ Kept as the composition implementation for the **HTTP** path (and any future app
 
 ### 5.7 `NodeService` (modified — writes delegate to the provider)
 
-**Owns.** Persisting the field change (name/content) in the transaction, then calling **`provider.RegenerateEmbedding(database, transaction, nodeId, ct)`** — one call, no branching — for create, content, and name-PATCH. Under Option D `NodeService` no longer contains F1–F4 nor the C# `EmbeddingInputComposer.Compose` call at the write sites; both move behind the provider (F1–F4 into `GoogleMlEmbeddingProvider`, the compose-and-bind into `HttpEmbeddingProvider`). `RegenerateEmbeddingViaBranches`/`BuildEmbeddingBranchOperations` **relocate into the Google provider** (moved, not deleted). Search guards (`isSemantic && !provider.IsEnabled` → `SemanticSearchUnavailableException`) unchanged in meaning.
+**Owns.** Persisting the field change (name/content) in the transaction, then calling **`provider.RegenerateEmbedding(database, transaction, nodeId, ct)`** — one call, no branching — for create, content, and name-PATCH. Under Option D `NodeService` no longer contains the SQL composition branches nor the C# `EmbeddingInputComposer.Compose` call at the write sites; both move behind the provider (`BuildEmbeddingUpdate` inside `GoogleMlEmbeddingProvider`, the compose-and-bind inside `HttpEmbeddingProvider`). Search guards (`isSemantic && !provider.IsEnabled` → `SemanticSearchUnavailableException`) unchanged in meaning.
 
 ### 5.8 `NodeMapper` (modified — query vector via provider)
 
@@ -198,7 +202,7 @@ Kept as the composition implementation for the **HTTP** path (and any future app
 
 1. Persist the field change (name and/or content) in the transaction (unchanged).
 2. If `provider.IsEnabled`: call `provider.RegenerateEmbedding(database, transaction, nodeId, ct)`. **No branching at the call site.**
-   - **Google:** runs the F1–F4 WHERE-predicated UPDATEs against the node's columns; the matching branch composes text server-side and generates the vector in the same statement. Content never enters .NET.
+   - **Google:** runs the single CASE-expression UPDATE (`BuildEmbeddingUpdate`) against the node's columns; the matching WHEN branch composes text server-side and generates the vector in the same statement. Content never enters .NET.
    - **HTTP:** reads `(name, content, contentType)` in-transaction, composes in C#, POSTs to the endpoint *now* (inside the transaction window, bounded timeout), writes the returned constant vector — or `SET Embedding = null` when composition is null.
 3. Commit. A provider failure (Vertex AI error, HTTP timeout/error) propagates and rolls the transaction back (fail-closed — §9, locked).
 
@@ -218,16 +222,16 @@ Option D deliberately keeps **two composition implementations**: Google composes
 
 **The policy knobs that must stay aligned across the two paths:**
 
-| Knob | C# path (`EmbeddingInputComposer`) | SQL path (`BuildEmbeddingBranchOperations`) | Containment |
+| Knob | C# path (`EmbeddingInputComposer`) | SQL path (`BuildEmbeddingUpdate`) | Containment |
 |---|---|---|---|
 | **Separator** | `"\n\n"` | `DB.Constant("\n\n")` in `concat` | Both read `EmbeddingCompositionPolicy.Separator` |
-| **Truncation budget** | `MaxLength = 8000` | `left(..., 8000)` | Both read `EmbeddingCompositionPolicy.MaxLength` |
+| **Truncation budget** | `MaxLength = 8000` | `left(..., MaxLength − sep.Length)` | Both read `EmbeddingCompositionPolicy.MaxLength` |
 | **Ordering** | `name + sep + content` | `concat(name, sep, content)` | Fixed by policy doc + parity test |
 | **Text-content predicate** | `TextContentTypePredicate.IsText` | `ContentType LIKE 'text/%' OR IN(allowlist)` | Both derive from `TextContentTypePredicate` |
-| **Null/empty semantics** | `Compose` returns null → caller writes `SET null` | F4 branch writes `SET null` | Parity test asserts same trigger |
-| **Content truncation *semantics*** | content clipped to `MaxLength − len(name) − len(sep)` so **total ≤ 8000** | today `left(content, 8000)` clips content **flat to 8000** (total can exceed 8000) | **Divergence today — see below** |
+| **Null/empty semantics** | `Compose` returns null → caller writes `SET null` | ELSE NULL in CASE expression | Parity test asserts same trigger |
+| **Content truncation *semantics*** | content clipped to `MaxLength − len(name) − len(sep)` so **total ≤ 8000** | **constant** budget: `left(content, MaxLength − sep.Length)` = `left(content, 7998)` — name length NOT deducted | **Residual divergence — see below** |
 
-**A real, pre-existing divergence to fix.** The two paths are **already not equivalent**: F1 truncates *content* to a flat 8000 chars, so `name + "\n\n" + content` can exceed 8000, whereas the C# composer truncates *content* to `8000 − len(name) − len(separator)` so the total is ≤ 8000. Under Option D this divergence would make the parity test fail — which is the point of having the test. **Implementation must align them:** the Google SQL builder computes its content budget as `MaxLength − char_length(name) − length(separator)` (a server-side expression over the same policy `MaxLength`), matching the C# semantics. This is a small, honest correction that turns two subtly-different compositions into one policy with two renderings.
+**Constant budget (implementation constraint).** The CASE-collapse approach cannot evaluate `char_length(name)` inside the CASE WHEN body and use it as a truncation limit without an inner CASE, which Ocelot's `CustomFunction` call tree does not support (inner CASE as argument to `embedding()` throws `NotImplementedException` in the Ocelot SQL renderer). The SQL path therefore uses a **constant** content budget of `MaxLength − sep.Length` (7998 chars). This means `name + sep + content` can slightly exceed 8000 for non-empty names. In practice the over-budget is bounded by the maximum practical name length (a few hundred chars), not catastrophic, and the embedding model handles context gracefully. The C# path is more precise (clips content to the exact residual budget). This residual divergence is accepted as the concrete cost of the CASE collapse (one Postgres round-trip instead of four).
 
 **The containment (KISS — no new abstraction):**
 1. **`EmbeddingCompositionPolicy`** (§5.9) is the single source of truth for separator, budget, ordering rule, and text predicate. Neither path carries its own literals.
@@ -247,7 +251,7 @@ No new entities, links, or columns. `Node.Embedding` stays `float[]`.
 
 | Member | Contract |
 |---|---|
-| RegenerateEmbedding(db, tx, nodeId, ct) | Precondition: the field write (name/content) for `nodeId` is already applied in `tx`; caller has checked `IsEnabled`. Effect: node `nodeId`'s `Embedding` is set to the embedding of its current persisted `(name, content, contentType)`, or to `null` when there is no embeddable surface. Google: executes the F1–F4 WHERE-predicated server-side UPDATEs; no content leaves the DB; no vector transfer. HTTP: reads the node's columns in `tx`, composes in C#, performs **exactly one** network call under a bounded timeout, writes a constant vector; on failure **throws** (no swallow) so `tx` rolls back. Null: never invoked. Idempotent w.r.t. the node's current state (re-running yields the same embedding). |
+| RegenerateEmbedding(db, tx, nodeId, ct) | Precondition: the field write (name/content) for `nodeId` is already applied in `tx`; caller has checked `IsEnabled`. Effect: node `nodeId`'s `Embedding` is set to the embedding of its current persisted `(name, content, contentType)`, or to `null` when there is no embeddable surface. Google: executes a single CASE-expression UPDATE (`BuildEmbeddingUpdate`); no content leaves the DB; no vector transfer. HTTP: reads the node's columns in `tx`, composes in C#, performs **exactly one** network call under a bounded timeout, writes a constant vector; on failure **throws** (no swallow) so `tx` rolls back. Null: never invoked. Idempotent w.r.t. the node's current state (re-running yields the same embedding). |
 | QueryVectorToken(queryText) | Input: a non-null query text. Output: an Ocelot SQL token whose evaluated value is the `float[Dimension]` embedding of `queryText`, usable as a `VCos` operand. Google: no side effects, server-side inline function. HTTP: performs exactly one network call; on failure throws. |
 | Dimension | Constant per provider. Google: 3072. HTTP: from config. Invariant: must equal the `Node.Embedding` column size or startup fails. |
 | IsEnabled | False only for `NullEmbeddingProvider`. True for google and HTTP. Every write path and search guard reads this before doing embedding work. |
@@ -316,10 +320,10 @@ No `IEmbeddingComposer` polymorphic over provider, no per-write strategy objects
 
 - **Same-dimension providers (google ↔ any 3072-dim HTTP model):** config change + restart + run the existing backfill (`cli backfill-embeddings`) to re-baseline vectors into the new provider's vector space (spaces are incompatible even at equal dimension — #786). No schema change.
 - **Different-dimension provider:** edit `[Size(...)]`, schema rebuild (existing `DatabaseModelService`), config `Dimension` to match, restart (fail-closed gate passes), backfill. One operator sequence, documented in the backfill CLI help.
-- **Default deployment (GCP):** `Embedding:Provider = GoogleMlIntegration`, dimension 3072 — behaviourally identical to today, F1–F4 intact; no migration.
+- **Default deployment (GCP):** `Embedding:Provider = GoogleMlIntegration`, dimension 3072 — behaviourally identical to today; no migration.
 - **Rollback:** revert the config to google + backfill. Symmetric.
 
-The backfill machinery (`EmbeddingBackfillService`) already exists; under Option D it calls `provider.RegenerateEmbedding` per row (Google: server-side F1–F4; HTTP: compose-and-POST). No new migration tooling.
+The backfill machinery (`EmbeddingBackfillService`) already exists; under Option D it calls `provider.RegenerateEmbedding` per row (Google: single CASE UPDATE; HTTP: compose-and-POST). No new migration tooling.
 
 ## 13. Open Questions (non-blocking, resolved at implementation time)
 
@@ -334,7 +338,7 @@ Ordered milestones (one PR for the whole task per #1165 default — but this is 
 
 1. **Phase 0 — probe** the constant-vector binding (Q1) and the fail-closed gate idiom. Gate the HTTP path on Q1's result; if it fails, return to the orchestrator before writing the HTTP provider.
 2. **Composition policy holder** — introduce `EmbeddingCompositionPolicy`; move `EmbeddingInputComposer`'s `MaxLength`/`Separator` into it; have the composer reference it. Pure refactor, behaviour-preserving.
-3. **Provider seam** — introduce `IEmbeddingProvider`; implement `GoogleMlEmbeddingProvider` (relocate `RegenerateEmbeddingViaBranches` / `BuildEmbeddingBranchOperations` into it, retargeted off literal `8000`/`"\n\n"` onto the policy holder, **and correct the content-truncation budget to `MaxLength − len(name) − len(sep)`** per §6.7) and `NullEmbeddingProvider`. Wire selection at `Startup.cs`/`CliDispatcher.cs` from the `Embedding` config section, replacing the `Database:Type` inference. Fold/remove `IEmbeddingCapability` (§5.6). Fail-closed dimension gate at startup.
+3. **Provider seam** — introduce `IEmbeddingProvider`; implement `GoogleMlEmbeddingProvider` (implement `BuildEmbeddingUpdate` as a **single CASE-expression UPDATE** with three WHEN branches + ELSE NULL, retargeted off literal `8000`/`"\n\n"` onto the policy holder; use **constant budget** `MaxLength − sep.Length` for content truncation — see §6.7 for the residual divergence from the C# path and why it is accepted) and `NullEmbeddingProvider`. Wire selection at `Startup.cs`/`CliDispatcher.cs` from the `Embedding` config section, replacing the `Database:Type` inference. Fold/remove `IEmbeddingCapability` (§5.6). Fail-closed dimension gate at startup.
 4. **Route the write sites through the seam** — sites 1, 2, 3, 4 (create, content, name-PATCH, backfill) call `provider.RegenerateEmbedding`. Google behaviour is server-side-composed everywhere (F1–F4 preserved, now reused on create/content/backfill too). **Parity guard test** (§6.7): representative-input parity between the C# composer and a reference rendering of the SQL composition from the shared policy; retarget `EmbeddingPatchSqlShapeTests` off literals onto the policy constants; add a Postgres behavioural parity test if a harness exists (Q4).
 5. **Route the query path through the seam** — `NodeMapper` obtains the query-vector token from `provider.QueryVectorToken` (site 6). Google SQL unchanged; portability now latent.
 6. **Remove the `embed` PATCH op** (site 5, Decision 4) + its CLAUDE.md mention.
@@ -356,7 +360,7 @@ Ordered milestones (one PR for the whole task per #1165 default — but this is 
 - ⚠️ DRY math, stated honestly: unlike the prior Option C revision (which *removed* a duplication), **Option D keeps two composition paths** — this is the accepted cost of preserving PR #81. It is *contained*, not eliminated: one policy holder + one parity test (§6.7). The trade is named in Decision 1 and §6.7, not hidden.
 
 **Existing systems first**
-- ✅ Reuses `EmbeddingInputComposer` (C# path), the PR #81 F1–F4 machinery (Google path, relocated not rewritten), `EmbeddingBackfillService` (migration tool), pgvector storage+cosine (already portable), the `Keycloak:Audience` fail-closed idiom.
+- ✅ Reuses `EmbeddingInputComposer` (C# path), the PR #81 server-side SQL composition (Google path, collapsed into a single CASE UPDATE — same SQL machinery, fewer round-trips), `EmbeddingBackfillService` (migration tool), pgvector storage+cosine (already portable), the `Keycloak:Audience` fail-closed idiom.
 - ✅ New surface justified concretely: `IEmbeddingProvider` is a genuine runtime-polymorphic operation seam; `EmbeddingCompositionPolicy` is the minimal DRY containment for the two-path cost — not "cleanliness."
 
 **Configurability**
