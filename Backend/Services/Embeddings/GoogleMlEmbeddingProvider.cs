@@ -55,16 +55,26 @@ public class GoogleMlEmbeddingProvider : IEmbeddingProvider {
     /// <summary>
     /// builds a single UPDATE that sets <c>Embedding</c> via a server-side CASE expression.
     /// shared by <see cref="RegenerateEmbedding"/> (production) and SQL-shape tests.
+    ///
+    /// the content-type gate is an ILIKE OR-chain built from
+    /// <see cref="TextContentTypePredicate.TextPrefixes"/> — identical semantics to the
+    /// C# <see cref="TextContentTypePredicate.IsText"/> gate.  Ocelot emits ILIKE (case-insensitive)
+    /// and the prefix match handles charset suffixes inherently
+    /// ("application/json; charset=utf-8" starts with "application/json").
     /// </summary>
     internal static UpdateValuesOperation<Node> BuildEmbeddingUpdate(IEntityManager database, long nodeId, string model) {
         string sep = EmbeddingCompositionPolicy.Separator;
         int maxLen = EmbeddingCompositionPolicy.MaxLength;
         int maxLenMinusSep = maxLen - sep.Length;
-        string[] allowlist = EmbeddingCompositionPolicy.ApplicationTextTypes;
+
+        string[] prefixes = TextContentTypePredicate.TextPrefixes;
+        string p0 = prefixes[0] + "%"; // "text/%"
+        string p1 = prefixes[1] + "%"; // "application/json%"
+        string p2 = prefixes[2] + "%"; // "application/xml%"
 
         When w1 = DB.When(
             DB.Predicate<Node>(n => n.Name != null && n.Name != ""
-                && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
+                && (n.ContentType.Like(p0) || n.ContentType.Like(p1) || n.ContentType.Like(p2))
                 && n.Content != null),
             DB.CustomFunction("embedding",
                 DB.Constant(model),
@@ -76,14 +86,14 @@ public class GoogleMlEmbeddingProvider : IEmbeddingProvider {
 
         When w2 = DB.When(
             DB.Predicate<Node>(n => n.Name != null && n.Name != ""
-                && (!(n.ContentType.Like("text/%") || n.ContentType.In(allowlist)) || n.Content == null)),
+                && (!(n.ContentType.Like(p0) || n.ContentType.Like(p1) || n.ContentType.Like(p2)) || n.Content == null)),
             DB.CustomFunction("embedding",
                 DB.Constant(model),
                 DB.Left(DB.Property<Node>(x => x.Name), maxLen)));
 
         When w3 = DB.When(
             DB.Predicate<Node>(n => (n.Name == null || n.Name == "")
-                && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
+                && (n.ContentType.Like(p0) || n.ContentType.Like(p1) || n.ContentType.Like(p2))
                 && n.Content != null),
             DB.CustomFunction("embedding",
                 DB.Constant(model),

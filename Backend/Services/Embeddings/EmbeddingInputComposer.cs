@@ -39,9 +39,13 @@ public static class EmbeddingInputComposer {
     /// <c>MaxLength − Separator.Length</c> chars, matching the SQL composition budget
     /// in <see cref="GoogleMlEmbeddingProvider.BuildEmbeddingUpdate"/> so the two paths
     /// are byte-for-byte identical for any (name, content) input.
+    ///
+    /// the name gate uses <see cref="string.IsNullOrEmpty"/> — not IsNullOrWhiteSpace —
+    /// so that both paths agree on whitespace-only names: SQL cannot express TRIM so
+    /// "Name != ''" passes whitespace, and <see cref="string.IsNullOrEmpty"/> matches that.
     /// </returns>
     public static string Compose(string name, byte[] content, string contentType) {
-        bool hasName = !string.IsNullOrWhiteSpace(name);
+        bool hasName = !string.IsNullOrEmpty(name);
         bool isTextContent = TextContentTypePredicate.IsText(contentType);
         bool hasTextContent = isTextContent && content != null && content.Length > 0;
 

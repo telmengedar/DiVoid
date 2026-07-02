@@ -21,14 +21,17 @@ namespace Backend.tests.Tests;
 ///
 /// two negative-proof substitutions are pinned:
 ///
-/// NP1 — drop the allowlist <c>= ANY()</c> clause from any WHEN condition.
-///   expected failure: "expected = ANY( but was absent".
+/// NP1 — restore the allowlist <c>= ANY()</c> clause in any WHEN condition (revert to allowlist form).
+///   expected failure: "must NOT contain = ANY(" fires.
+///   rationale: <c>= ANY(allowlist)</c> is an exact-match predicate that silently misclassifies
+///   "application/json; charset=utf-8" — the CF#A bug.  the canonical gate is now an ILIKE
+///   OR-chain built from <see cref="TextContentTypePredicate.TextPrefixes"/>.
 ///
 /// NP2 — swap the truncation operator from <c>LEFT( convert_from( ... ) )</c> (Option A, char-aware)
 ///   back to <c>convert_from( LEFT( ... ) )</c> (Option B) in the name+content or content-only WHEN branch.
 ///   expected failure: <c>Does.Not.Contain("convert_from( LEFT(")</c> fires.
 /// </summary>
-[TestFixture]
+[TestFixture, Parallelizable]
 public class EmbeddingPatchSqlShapeTests
 {
     static IEntityManager CreatePostgresEntityManager()
@@ -65,14 +68,31 @@ public class EmbeddingPatchSqlShapeTests
         });
     }
 
+    /// <summary>
+    /// SS2 (NP1): content-type gate uses prefix ILIKE OR-chain, NOT the old = ANY(allowlist) exact-match.
+    ///
+    /// mental-deletion:
+    ///   reverting to <c>ContentType.In(allowlist)</c> (= ANY) causes <c>Does.Not.Contain("= ANY(")</c>
+    ///   to fire.  dropping a prefix from the OR-chain reduces the ILIKE count below
+    ///   <c>TextPrefixes.Length × 3</c> and causes the count assertion to fail.
+    /// </summary>
     [Test]
-    public void SS2_NameContentBranch_WhenConditionContainsAllowlistAny()
+    public void SS2_ContentTypeGate_UsesPrefixIlikeChain_NotAllowlistIn()
     {
         string sql = RenderSingleUpdate();
+        int ilikeCnt = Regex.Matches(sql, @"\bILIKE\b", RegexOptions.IgnoreCase).Count;
+        int expectedIlike = TextContentTypePredicate.TextPrefixes.Length * 3;
 
-        Assert.That(sql, Does.Contain("= ANY("),
-            "SS2: name+content WHEN condition must contain = ANY( for the ApplicationTextTypes allowlist; " +
-            "removing it causes application/json etc. to silently drop into the name-only branch (NP1)");
+        Assert.Multiple(() => {
+            Assert.That(sql, Does.Not.Contain("= ANY("),
+                "SS2 (NP1): content-type gate must NOT use = ANY(allowlist); " +
+                "= ANY( is an exact-match predicate that misclassifies charset-suffixed types (CF#A); " +
+                "the canonical gate is an ILIKE OR-chain from TextContentTypePredicate.TextPrefixes");
+            Assert.That(ilikeCnt, Is.EqualTo(expectedIlike),
+                $"SS2: exactly {expectedIlike} ILIKE patterns expected " +
+                $"({TextContentTypePredicate.TextPrefixes.Length} prefixes × 3 WHEN branches); " +
+                "dropping a prefix from the OR-chain reduces the count and mis-routes content types");
+        });
     }
 
     [Test]
@@ -86,18 +106,23 @@ public class EmbeddingPatchSqlShapeTests
             Assert.That(sql, Does.Contain("\"content\" IS NOT NULL"),
                 "SS3: name+content WHEN must guard content IS NOT NULL");
             Assert.That(sql, Does.Contain("ILIKE"),
-                "SS3: name+content WHEN must include ILIKE for text/* wildcard");
+                "SS3: name+content WHEN must include ILIKE for prefix-based content-type matching");
         });
     }
 
+    /// <summary>
+    /// SS4: the name-only WHEN condition must not use the old = ANY(allowlist) negation.
+    /// the content-type check in the name-only branch is the negation of the same prefix
+    /// ILIKE OR-chain, not a negated exact-match IN predicate.
+    /// </summary>
     [Test]
-    public void SS4_NameOnlyBranch_WhenConditionContainsAllowlistAny()
+    public void SS4_NameOnlyBranch_ContentTypeNegation_NoPrefixAllowlistIn()
     {
         string sql = RenderSingleUpdate();
 
-        Assert.That(sql, Does.Contain("= ANY("),
-            "SS4: name-only WHEN condition must contain = ANY( for the allowlist negation; " +
-            "without it application/* types are silently routed into this branch instead of the name+content branch (NP1)");
+        Assert.That(sql, Does.Not.Contain("= ANY("),
+            "SS4 (NP1): the name-only WHEN condition must not use = ANY(allowlist) for the content-type negation; " +
+            "= ANY( indicates the old allowlist exact-match was restored (CF#A regression)");
     }
 
     [Test]
@@ -114,13 +139,19 @@ public class EmbeddingPatchSqlShapeTests
         });
     }
 
+    /// <summary>
+    /// SS6: the content-only WHEN condition must not use = ANY(allowlist).
+    /// the content-type predicate is the same prefix ILIKE OR-chain used in WHEN 1/2.
+    /// </summary>
     [Test]
-    public void SS6_ContentOnlyBranch_WhenConditionContainsAllowlistAny()
+    public void SS6_ContentOnlyBranch_WhenConditionUsesIlikeNotIn()
     {
         string sql = RenderSingleUpdate();
 
-        Assert.That(sql, Does.Contain("= ANY("),
-            "SS6: content-only WHEN condition must contain = ANY( for the ApplicationTextTypes allowlist");
+        Assert.That(sql, Does.Not.Contain("= ANY("),
+            "SS6 (NP1): content-only WHEN condition must not use = ANY(allowlist); " +
+            "the canonical gate is an ILIKE OR-chain from TextContentTypePredicate.TextPrefixes — " +
+            "= ANY( indicates the old exact-match was restored (CF#A regression)");
     }
 
     [Test]

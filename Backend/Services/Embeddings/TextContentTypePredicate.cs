@@ -13,24 +13,30 @@ public static class TextContentTypePredicate {
     public const string EmbeddingModel = "gemini-embedding-001";
 
     /// <summary>
-    /// application/* MIME types that qualify as embeddable text.
-    /// exposed so callers can build SQL-side IN predicates without
-    /// duplicating the allowlist.
+    /// content-type prefixes that qualify as embeddable text.
+    /// consumed identically by the C# gate (<see cref="IsText"/>) and the SQL gate
+    /// (<see cref="GoogleMlEmbeddingProvider.BuildEmbeddingUpdate"/>): each entry is used
+    /// as a case-insensitive LIKE prefix so the two paths cannot drift.
+    ///
+    /// "text/" covers all text/* subtypes (text/plain, text/markdown, text/html, etc.).
+    /// "application/json" and "application/xml" match those types regardless of any
+    /// charset suffix — "application/json; charset=utf-8" starts with "application/json".
+    ///
+    /// note: this deliberately narrows the previous allowlist.
+    /// application/x-yaml, application/yaml, application/javascript, and application/x-sh
+    /// are dropped.  see §3a of the embedding-providers design doc (DiVoid #2597).
     /// </summary>
-    public static readonly string[] ApplicationTextTypes = [
+    public static readonly string[] TextPrefixes = [
+        "text/",
         "application/json",
-        "application/xml",
-        "application/x-yaml",
-        "application/yaml",
-        "application/javascript",
-        "application/x-sh"
+        "application/xml"
     ];
 
     /// <summary>
     /// returns true when <paramref name="contentType"/> denotes textual data that
-    /// should be embedded.  handles charset suffixes (e.g. "text/plain; charset=utf-8")
-    /// by stripping the part after the first semicolon before matching.
-    /// matching is case-insensitive.
+    /// should be embedded.  matching is case-insensitive; charset and other suffixes
+    /// (e.g. "text/plain; charset=utf-8", "application/json; charset=utf-8") are handled
+    /// naturally by prefix matching — no stripping is required.
     /// </summary>
     /// <param name="contentType">raw Content-Type string from the request</param>
     /// <returns>true if the content should be embedded; false otherwise</returns>
@@ -38,22 +44,11 @@ public static class TextContentTypePredicate {
         if (string.IsNullOrEmpty(contentType))
             return false;
 
-        // strip charset and other parameters (e.g. "text/plain; charset=utf-8" -> "text/plain")
-        int semicolon = contentType.IndexOf(';');
-        string mimeType = (semicolon >= 0 ? contentType[..semicolon] : contentType).Trim().ToLowerInvariant();
-
-        // text/* covers text/plain, text/markdown, text/html, text/csv, text/xml, etc.
-        if (mimeType.StartsWith("text/"))
-            return true;
-
-        return mimeType switch {
-            "application/json" => true,
-            "application/xml" => true,
-            "application/x-yaml" => true,
-            "application/yaml" => true,
-            "application/javascript" => true,
-            "application/x-sh" => true,
-            _ => false
-        };
+        string lower = contentType.ToLowerInvariant();
+        foreach (string prefix in TextPrefixes) {
+            if (lower.StartsWith(prefix))
+                return true;
+        }
+        return false;
     }
 }

@@ -37,8 +37,8 @@ namespace Backend.tests.Tests;
 /// load-bearing tests per DiVoid #275:
 ///   R6 proves Option A (char-aware decode-then-truncate) over Option B (byte-aware; Postgres
 ///   errors on a split multi-byte boundary).
-///   R7 proves the ApplicationTextTypes allowlist branch is honoured (application/json goes
-///   through F1, not silently dropped into the name-only F2).
+///   R7 proves the prefix LIKE gate is honoured (application/json matches 'application/json%'
+///   via ILIKE and goes through F1, not silently dropped into the name-only F2).
 /// </summary>
 [TestFixture]
 public class EmbeddingPatchSqlCompositionTests
@@ -206,9 +206,9 @@ public class EmbeddingPatchSqlCompositionTests
     }
 
     /// <summary>
-    /// R7 (load-bearing for allowlist): name + application/json content → F1 branch.
-    /// proves that the ApplicationTextTypes allowlist IN-clause is honoured: application/json
-    /// must NOT be silently treated as non-text and dropped into the name-only F2 branch.
+    /// R7 (load-bearing for prefix gate): name + application/json content → F1 branch.
+    /// proves that the prefix ILIKE gate is honoured: application/json matches 'application/json%'
+    /// via ILIKE and must NOT be silently treated as non-text and dropped into the name-only F2 branch.
     ///
     /// on SQLite: no crash, embedding null.  Postgres parity test verifies byte-equality.
     /// </summary>
@@ -422,12 +422,12 @@ public class EmbeddingPatchSqlCompositionTests
     }
 
     /// <summary>
-    /// R7 Postgres (load-bearing for allowlist): name + application/json content → F1 branch.
+    /// R7 Postgres (load-bearing for prefix gate): name + application/json content → F1 branch.
     ///
-    /// application/json is in TextContentTypePredicate.ApplicationTextTypes (allowlist).
-    /// the SQL predicate must include the IN(allowlist) clause alongside ILIKE 'text/%'.
-    /// without the IN clause, application/json drops into F2 (name-only) and the embedding
-    /// misses the content — this fixture detects that regression.
+    /// application/json matches 'application/json%' via ILIKE (one of TextContentTypePredicate.TextPrefixes).
+    /// the SQL predicate must include the ILIKE 'application/json%' clause.
+    /// without that prefix in the ILIKE OR-chain, application/json drops into F2 (name-only)
+    /// and the embedding misses the content — this fixture detects that regression.
     /// </summary>
     [Test]
     public async Task R7_Postgres_ApplicationJsonContent_SqlComposedInputMatchesComposer()

@@ -57,12 +57,14 @@ public class EmbeddingInputComposerTests
     }
 
     [Test]
-    public void Compose_WhitespaceNameAndTextContent_ReturnsContentOnly()
+    public void Compose_WhitespaceNameAndTextContent_ReturnsNamePlusSeparatorPlusContent()
     {
         byte[] content = Encoding.UTF8.GetBytes("body text");
         string result = EmbeddingInputComposer.Compose("   ", content, "text/plain");
 
-        Assert.That(result, Is.EqualTo("body text"));
+        Assert.That(result, Is.EqualTo("   \n\nbody text"),
+            "whitespace-only names are treated as non-empty (IsNullOrEmpty, not IsNullOrWhiteSpace) " +
+            "to align with the SQL path where Name != '' passes whitespace — see §3d of embedding-providers.md");
     }
 
     [Test]

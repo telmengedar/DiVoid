@@ -38,9 +38,10 @@ public static class EmbeddingCompositionPolicy {
     public static bool IsText(string contentType) => TextContentTypePredicate.IsText(contentType);
 
     /// <summary>
-    /// delegates to <see cref="TextContentTypePredicate.ApplicationTextTypes"/> —
-    /// the allowlist of application/* MIME types that qualify as embeddable text.
-    /// exposed so SQL-side IN predicates can be built without duplicating the list.
+    /// delegates to <see cref="TextContentTypePredicate.TextPrefixes"/> —
+    /// the prefix set from which both the C# gate (<see cref="IsText"/>) and the SQL
+    /// ILIKE predicates (<see cref="GoogleMlEmbeddingProvider.BuildEmbeddingUpdate"/>)
+    /// are derived.  single source of truth: a change here propagates to both paths.
     /// </summary>
-    public static string[] ApplicationTextTypes => TextContentTypePredicate.ApplicationTextTypes;
+    public static string[] TextPrefixes => TextContentTypePredicate.TextPrefixes;
 }
