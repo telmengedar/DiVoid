@@ -106,7 +106,6 @@ public class EmbeddingInputComposerTests
     {
         string name = "Short";
         string sep = EmbeddingCompositionPolicy.Separator;
-        // constant budget: MaxLength - sep.Length = 7998 regardless of name length
         int contentBudget = EmbeddingInputComposer.MaxLength - sep.Length;
         string longBody = new string('x', contentBudget + 100); // exceeds content budget
 
@@ -116,8 +115,6 @@ public class EmbeddingInputComposerTests
         Assert.That(result, Is.Not.Null);
         Assert.That(result, Does.StartWith("Short\n\n"),
             "name + separator must be preserved at the start");
-        // with constant budget, content is capped at MaxLength-sep.Length; total may exceed MaxLength
-        // for non-trivial names (accepted trade per §6.7 — matches SQL path behaviour)
         string contentPortion = result[(name.Length + sep.Length)..];
         Assert.That(contentPortion.Length, Is.EqualTo(contentBudget),
             $"content portion must be exactly MaxLength−sep.Length = {contentBudget} (constant budget, matching SQL)");

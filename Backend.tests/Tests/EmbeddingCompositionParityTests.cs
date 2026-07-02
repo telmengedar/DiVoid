@@ -123,9 +123,6 @@ public class EmbeddingCompositionParityTests
     {
         int expectedBudget = EmbeddingCompositionPolicy.MaxLength - EmbeddingCompositionPolicy.Separator.Length;
 
-        // --- C# path ---
-        // name length 1: old dynamic budget would give MaxLength-1-2=7997, constant gives 7998.
-        // using name "N" makes the dynamic vs constant difference visible.
         string name = "N";
         string sep = EmbeddingCompositionPolicy.Separator;
         byte[] content = Encoding.UTF8.GetBytes(new string('x', expectedBudget + 100));
@@ -136,11 +133,6 @@ public class EmbeddingCompositionParityTests
             $"CP-PARITY (C#): content portion must be exactly MaxLength−sep.Length = {expectedBudget}; " +
             "reverting to dynamic budget MaxLength−len(name)−len(sep) yields 7997, not 7998, and fails this assertion");
 
-        // --- SQL path ---
-        // render the single CASE-expression UPDATE and assert the structural content-truncation
-        // branches exist.  Ocelot parameterizes integer constants as @N placeholders, so the
-        // literal "7998" is not in CommandText — the budget value is enforced at the source level
-        // (BuildEmbeddingUpdate reads EmbeddingCompositionPolicy.MaxLength and .Separator directly).
         Mock<IDBClient> clientMock = new();
         clientMock.SetupGet(c => c.DBInfo).Returns(new PostgreInfo());
         IEntityManager em = new EntityManager(clientMock.Object);
@@ -148,10 +140,6 @@ public class EmbeddingCompositionParityTests
             GoogleMlEmbeddingProvider.BuildEmbeddingUpdate(em, nodeId: 1L, TextContentTypePredicate.EmbeddingModel);
         string sql = op.Prepare().CommandText;
 
-        // WHEN 1 (name+text-content) and WHEN 3 (text-content-only) must each use
-        // LEFT(convert_from()) — exactly 2 occurrences confirms both content-budget branches
-        // are present.  removing either branch or reversing to convert_from(LEFT()) changes
-        // the count and fails this assertion.
         int leftConvertFromCount = System.Text.RegularExpressions.Regex.Matches(
             sql, @"LEFT\s*\(\s*convert_from\s*\(").Count;
         Assert.That(leftConvertFromCount, Is.EqualTo(2),

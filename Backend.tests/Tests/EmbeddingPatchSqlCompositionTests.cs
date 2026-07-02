@@ -189,10 +189,6 @@ public class EmbeddingPatchSqlCompositionTests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeSqliteService(fixture);
 
-        // Build content: 7999 ASCII 'x', then an em-dash (3 UTF-8 bytes), then 1000 more 'y'.
-        // Constant budget = MaxLength − sep.Length = 7998 chars (name length not deducted).
-        // The em-dash is at content position 7999 — beyond the 7998-char budget,
-        // so it will be fully excluded by LEFT(convert_from(content,'UTF8'),7998) on Postgres.
         string contentText = new string('x', 7999) + "—" + new string('y', 1000);
         byte[] content = Encoding.UTF8.GetBytes(contentText);
         NodeDetails node = await SeedNode(svc, "Original", content, "text/markdown");
@@ -278,8 +274,6 @@ public class EmbeddingPatchSqlCompositionTests
 
         string expected = EmbeddingInputComposer.Compose("Hivemind Protocol", content, "text/markdown");
 
-        // verifies the C# composer produces the expected F1 embedding input;
-        // on a real Postgres instance this test would also confirm SQL output matches
         Assert.That(expected, Is.EqualTo("Hivemind Protocol\n\n# foo\n\nsome markdown body"),
             "R1 Postgres: composer output must equal expected F1 embedding input");
     }
@@ -413,7 +407,6 @@ public class EmbeddingPatchSqlCompositionTests
         NodeDetails node = await SeedNode(svc, "Before", content, "text/markdown");
         await PatchName(svc, node.Id, "X");
 
-        // constant budget = MaxLength − sep.Length = 7998; em-dash at position 7999 is beyond
         string expected = EmbeddingInputComposer.Compose("X", content, "text/markdown");
         int budget = EmbeddingCompositionPolicy.MaxLength - EmbeddingCompositionPolicy.Separator.Length;
 
