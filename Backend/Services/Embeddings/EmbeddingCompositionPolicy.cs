@@ -41,7 +41,8 @@ public static class EmbeddingCompositionPolicy {
     /// delegates to <see cref="TextContentTypePredicate.TextPrefixes"/> —
     /// the prefix set from which both the C# gate (<see cref="IsText"/>) and the SQL
     /// ILIKE predicates (<see cref="GoogleMlEmbeddingProvider.BuildEmbeddingUpdate"/>)
-    /// are derived.  single source of truth: a change here propagates to both paths.
+    /// are derived.  both paths are aligned by the parity guard test
+    /// (<c>EmbeddingCompositionParityTests</c>), not by automatic propagation.
     /// </summary>
     public static string[] TextPrefixes => TextContentTypePredicate.TextPrefixes;
 }

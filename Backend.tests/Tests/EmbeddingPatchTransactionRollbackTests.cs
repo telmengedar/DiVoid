@@ -150,7 +150,7 @@ public class EmbeddingPatchTransactionRollbackTests
     /// other transaction issue.
     /// </summary>
     [Test]
-    public async Task Patch_NonNameField_EmbeddingCapabilityEnabled_NoThrow()
+    public async Task Patch_NonNameField_EmbeddingProviderEnabled_NoThrow()
     {
         using DatabaseFixture fixture = new();
         NodeService seedSvc = new(fixture.EntityManager, NullEmbeddingProvider.Instance);

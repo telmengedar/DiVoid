@@ -31,7 +31,7 @@ namespace Backend.tests.Tests;
 ///
 /// All tests run against the SQLite in-memory fixture.  Postgres-only paths
 /// (the actual <c>embedding()</c> / <c>&lt;=&gt;</c> execution) cannot be
-/// exercised in CI — they are gated by <see cref="IEmbeddingCapability.IsEnabled"/>
+/// exercised in CI — they are gated by <see cref="IEmbeddingProvider.IsEnabled"/>
 /// and deferred to a manual smoke test on the live Postgres instance before merge.
 ///
 /// SQL-construction-level assertions (operation tree shape, ORDER BY criteria,

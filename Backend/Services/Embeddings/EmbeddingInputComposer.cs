@@ -34,11 +34,13 @@ public static class EmbeddingInputComposer {
     /// <returns>
     /// the string to embed, or null when both name and content are empty/non-text
     /// (caller must write Embedding = null in that case).
-    /// note: when both name and content are present, total length may slightly exceed
-    /// <see cref="MaxLength"/> for long names — content is capped at
-    /// <c>MaxLength − Separator.Length</c> chars, matching the SQL composition budget
-    /// in <see cref="GoogleMlEmbeddingProvider.BuildEmbeddingUpdate"/> so the two paths
-    /// are byte-for-byte identical for any (name, content) input.
+    /// note: the C# and SQL paths use identical content-type classification, name gate, and
+    /// truncation budget.  residual divergences (both unreachable in the current corpus):
+    /// (1) empty-but-non-null content embeds <c>""</c> on the SQL path vs. <c>null</c> here —
+    /// Ocelot exposes no <c>octet_length</c> predicate to mirror the <c>content.Length &gt; 0</c>
+    /// gate in the <see cref="GoogleMlEmbeddingProvider.BuildEmbeddingUpdate"/> WHERE conditions;
+    /// (2) astral-plane characters at exactly the budget boundary may cut at a different offset —
+    /// C# truncates by UTF-16 code unit, SQL <c>LEFT</c> by code point.
     ///
     /// the name gate uses <see cref="string.IsNullOrEmpty"/> — not IsNullOrWhiteSpace —
     /// so that both paths agree on whitespace-only names: SQL cannot express TRIM so
