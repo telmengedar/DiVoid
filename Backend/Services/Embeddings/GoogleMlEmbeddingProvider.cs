@@ -68,9 +68,9 @@ public class GoogleMlEmbeddingProvider : IEmbeddingProvider {
         int maxLenMinusSep = maxLen - sep.Length;
 
         string[] prefixes = TextContentTypePredicate.TextPrefixes;
-        string p0 = prefixes[0] + "%"; // "text/%"
-        string p1 = prefixes[1] + "%"; // "application/json%"
-        string p2 = prefixes[2] + "%"; // "application/xml%"
+        string p0 = prefixes[0] + "%";
+        string p1 = prefixes[1] + "%";
+        string p2 = prefixes[2] + "%";
 
         When w1 = DB.When(
             DB.Predicate<Node>(n => n.Name != null && n.Name != ""

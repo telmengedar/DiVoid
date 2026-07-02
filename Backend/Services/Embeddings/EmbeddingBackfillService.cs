@@ -38,9 +38,9 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingProvide
         PredicateExpression<Node> hasName = new PredicateExpression<Node>(n => n.Name != null && n.Name != "");
 
         string[] prefixes = TextContentTypePredicate.TextPrefixes;
-        string p0 = prefixes[0] + "%"; // "text/%"
-        string p1 = prefixes[1] + "%"; // "application/json%"
-        string p2 = prefixes[2] + "%"; // "application/xml%"
+        string p0 = prefixes[0] + "%";
+        string p1 = prefixes[1] + "%";
+        string p2 = prefixes[2] + "%";
 
         PredicateExpression<Node> isTextType =
             new PredicateExpression<Node>(n => n.ContentType.Like(p0)) |
