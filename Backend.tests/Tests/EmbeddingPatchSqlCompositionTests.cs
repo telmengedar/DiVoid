@@ -413,7 +413,6 @@ public class EmbeddingPatchSqlCompositionTests
         Assert.Multiple(() => {
             Assert.That(expected, Is.Not.Null, "R6: composer must not return null");
             Assert.That(expected, Does.StartWith("X\n\n"), "R6: must start with name + separator");
-            // the em-dash at text position 7999 is beyond the budget (7998); must not appear
             Assert.That(expected, Does.Not.Contain("—"),
                 "R6: em-dash beyond the char budget must be fully excluded — never split mid-byte");
             // the first (budget) chars of content text are all 'x'
