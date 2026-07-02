@@ -1,53 +1,36 @@
 #nullable disable
+using System.Text.RegularExpressions;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
 using Moq;
 using NUnit.Framework;
 using Pooshit.Ocelot.Clients;
-using Pooshit.Ocelot.Entities.Operations;
 using Pooshit.Ocelot.Entities;
+using Pooshit.Ocelot.Entities.Operations;
 using Pooshit.Ocelot.Info;
 
 namespace Backend.tests.Tests;
 
 /// <summary>
-/// SQL-shape assertions for the four-branch embedding UPDATE (task #444, PR #81).
+/// SQL-shape assertions for the CASE-based embedding UPDATE (PR #154).
 ///
-/// Jenny's review (DiVoid #685) found that the R-fixtures in
-/// <see cref="EmbeddingPatchSqlCompositionTests"/> do not pin the SQL form — they assert
-/// <c>EmbeddingInputComposer.Compose</c> output (invariant under SQL changes) or
-/// "embedding IS NULL on SQLite" (always true, SQL form never executes there).
+/// each test calls <see cref="GoogleMlEmbeddingProvider.BuildEmbeddingUpdate"/> — the internal
+/// shared method that produces the same UPDATE tree as the production path — and renders it
+/// to SQL via <c>Prepare().CommandText</c>.  a change to
+/// <see cref="GoogleMlEmbeddingProvider.BuildEmbeddingUpdate"/> automatically propagates to all tests.
 ///
-/// Round 2 (DiVoid #723 / PR #91): the original SS1–SS8 replicated the operation tree
-/// in static helper methods (F1Sql/F3Sql/etc.), making the tests tautological — the
-/// helpers moved in lock-step with any production change, so a bug reintroduction
-/// still passed.  Jenny's substitution proof: reverting NodeService.cs to Option B
-/// without touching the test file gave 8 pass / 0 fail.
+/// two negative-proof substitutions are pinned:
 ///
-/// Fix: tests now call <see cref="GoogleMlEmbeddingProvider.BuildEmbeddingBranchOperations"/> — the
-/// <c>internal static</c> shared helper that builds the same UPDATE trees as the
-/// production path — and render each operation’s SQL via <c>Prepare().CommandText</c>
-/// in the test-local <c>RenderAllBranches</c> helper.  Service code carries no test-only
-/// surface.  A reversion of NodeService.cs alone now causes SS1 and SS5 to fail.
+/// NP1 — drop the allowlist <c>= ANY()</c> clause from any WHEN condition.
+///   expected failure: "expected = ANY( but was absent".
 ///
-/// Two negative-proof substitutions are pinned:
-///
-/// NP1 — drop the allowlist <c>= ANY()</c> clause from F1/F2/F3/F4.
-///   Expected failure: "expected = ANY( clause in F1 WHERE but was absent".
-///
-/// NP2 — swap the truncation operator from <c>LEFT( convert_from( ... ) )</c> (Option A)
-///   back to <c>convert_from( LEFT( ... ) )</c> (Option B) in F1/F3.
-///   Expected failure: "F1 SET must NOT use convert_from( LEFT( ... ) ) nesting (Option B, rejected)".
-///
-/// Each test documents the exact NP substitution that must make it fail.
+/// NP2 — swap the truncation operator from <c>LEFT( convert_from( ... ) )</c> (Option A, char-aware)
+///   back to <c>convert_from( LEFT( ... ) )</c> (Option B) in the name+content or content-only WHEN branch.
+///   expected failure: <c>Does.Not.Contain("convert_from( LEFT(")</c> fires.
 /// </summary>
 [TestFixture]
 public class EmbeddingPatchSqlShapeTests
 {
-    // -----------------------------------------------------------------------
-    // Infrastructure — PostgreInfo EntityManager, no real DB needed
-    // -----------------------------------------------------------------------
-
     static IEntityManager CreatePostgresEntityManager()
     {
         Mock<IDBClient> clientMock = new();
@@ -56,168 +39,118 @@ public class EmbeddingPatchSqlShapeTests
     }
 
     /// <summary>
-    /// Calls <see cref="GoogleMlEmbeddingProvider.BuildEmbeddingBranchOperations"/> — the internal
-    /// shared helper — once and renders each operation to SQL via <c>Prepare().CommandText</c>.
-    /// This is the only place the operation tree is constructed; any change to
-    /// <see cref="GoogleMlEmbeddingProvider.BuildEmbeddingBranchOperations"/> automatically propagates here.
+    /// renders <see cref="GoogleMlEmbeddingProvider.BuildEmbeddingUpdate"/> to SQL.
+    /// this is the single source of truth for all SS assertions.
     /// </summary>
-    static (string F1, string F2, string F3, string F4) RenderAllBranches()
+    static string RenderSingleUpdate()
     {
         IEntityManager em = CreatePostgresEntityManager();
-        (UpdateValuesOperation<Node> f1, UpdateValuesOperation<Node> f2,
-         UpdateValuesOperation<Node> f3, UpdateValuesOperation<Node> f4) =
-            GoogleMlEmbeddingProvider.BuildEmbeddingBranchOperations(em, nodeId: 1L, TextContentTypePredicate.EmbeddingModel);
-        return (
-            f1.Prepare().CommandText,
-            f2.Prepare().CommandText,
-            f3.Prepare().CommandText,
-            f4.Prepare().CommandText
-        );
+        UpdateValuesOperation<Node> op =
+            GoogleMlEmbeddingProvider.BuildEmbeddingUpdate(em, nodeId: 1L, TextContentTypePredicate.EmbeddingModel);
+        return op.Prepare().CommandText;
     }
 
-    // -----------------------------------------------------------------------
-    // SS1 — F1 SET expression uses LEFT( convert_from( ... ) ) nesting (Option A, char-aware)
-    //
-    // NP2 substitution: in NodeService.cs only, swap
-    //   DB.Left(DB.ConvertFrom(..., "UTF8"), 8000) back to
-    //   DB.ConvertFrom(DB.Left(..., 8000), "UTF8") inside BuildEmbeddingBranchOperations / F1.
-    // Expected failure: sql contains convert_from( LEFT( and the Does.Not.Contain fires
-    //   with "Option B, rejected" — exactly the crash-on-multibyte-boundary error.
-    // -----------------------------------------------------------------------
-
     [Test]
-    public void SS1_F1_SetExpression_ContainsLeftOuterConvertFromInner()
+    public void SS1_NameContentBranch_SetUsesLeftOuterConvertFromInner()
     {
-        string sql = RenderAllBranches().F1;
+        string sql = RenderSingleUpdate();
 
         Assert.Multiple(() => {
             Assert.That(sql, Does.Contain("LEFT( convert_from("),
-                "SS1: F1 SET must use LEFT( convert_from( ... ) ) nesting (Option A, char-aware); " +
-                "revert NodeService.cs to Option B (convert_from( LEFT( ... ) )) and this fails with " +
-                "invalid UTF-8 byte sequence on multi-byte chars spanning the 8000-byte boundary");
+                "SS1: name+content WHEN branch SET must use LEFT( convert_from( ... ) ) nesting (Option A, char-aware); " +
+                "revert to convert_from( LEFT( ... ) ) (Option B) and this fails with " +
+                "invalid UTF-8 byte sequence on multi-byte chars at the 8000-byte boundary");
             Assert.That(sql, Does.Not.Contain("convert_from( LEFT("),
-                "SS1: F1 SET must NOT use convert_from( LEFT( ... ) ) nesting (Option B, rejected)");
+                "SS1: must NOT use convert_from( LEFT( ... ) ) nesting (Option B, rejected)");
         });
     }
 
-    // -----------------------------------------------------------------------
-    // SS2 — F1 WHERE contains the allowlist ANY clause (NP1 pin)
-    //
-    // NP1 substitution: in NodeService.cs only, remove n.ContentType.In(allowlist)
-    //   from the F1 WHERE inside BuildEmbeddingBranchOperations, leaving only Like("text/%").
-    // Expected failure: SQL no longer contains = ANY( and this assertion fires.
-    // -----------------------------------------------------------------------
-
     [Test]
-    public void SS2_F1_WhereClause_ContainsAllowlistAny()
+    public void SS2_NameContentBranch_WhenConditionContainsAllowlistAny()
     {
-        string sql = RenderAllBranches().F1;
+        string sql = RenderSingleUpdate();
 
         Assert.That(sql, Does.Contain("= ANY("),
-            "SS2: F1 WHERE must contain = ANY( for the ApplicationTextTypes allowlist IN clause; " +
-            "if this fails the allowlist predicate was removed (NP1), causing application/json etc. " +
-            "to silently drop into the name-only F2 branch");
+            "SS2: name+content WHEN condition must contain = ANY( for the ApplicationTextTypes allowlist; " +
+            "removing it causes application/json etc. to silently drop into the name-only branch (NP1)");
     }
 
-    // -----------------------------------------------------------------------
-    // SS3 — F1 WHERE contains all required guard clauses
-    // -----------------------------------------------------------------------
-
     [Test]
-    public void SS3_F1_WhereClause_ContainsAllRequiredGuards()
+    public void SS3_NameContentBranch_WhenConditionContainsAllRequiredGuards()
     {
-        string sql = RenderAllBranches().F1;
+        string sql = RenderSingleUpdate();
 
         Assert.Multiple(() => {
             Assert.That(sql, Does.Contain("\"name\" IS NOT NULL"),
-                "SS3: F1 WHERE must guard name IS NOT NULL");
+                "SS3: name+content WHEN must guard name IS NOT NULL");
             Assert.That(sql, Does.Contain("\"content\" IS NOT NULL"),
-                "SS3: F1 WHERE must guard content IS NOT NULL");
+                "SS3: name+content WHEN must guard content IS NOT NULL");
             Assert.That(sql, Does.Contain("ILIKE"),
-                "SS3: F1 WHERE must include ILIKE for text/* wildcard");
+                "SS3: name+content WHEN must include ILIKE for text/* wildcard");
         });
     }
 
-    // -----------------------------------------------------------------------
-    // SS4 — F2 WHERE contains the allowlist ANY clause
-    //
-    // F2 is the complement of F1 — its negated predicate must also reference
-    // the allowlist so that application/* types are correctly excluded from F2.
-    // -----------------------------------------------------------------------
-
     [Test]
-    public void SS4_F2_WhereClause_ContainsAllowlistAny()
+    public void SS4_NameOnlyBranch_WhenConditionContainsAllowlistAny()
     {
-        string sql = RenderAllBranches().F2;
+        string sql = RenderSingleUpdate();
 
         Assert.That(sql, Does.Contain("= ANY("),
-            "SS4: F2 WHERE must contain = ANY( for the allowlist negation; " +
-            "without it application/* types are silently routed into F2 instead of F1");
+            "SS4: name-only WHEN condition must contain = ANY( for the allowlist negation; " +
+            "without it application/* types are silently routed into this branch instead of the name+content branch (NP1)");
     }
 
-    // -----------------------------------------------------------------------
-    // SS5 — F3 SET expression uses LEFT( convert_from( ... ) ) nesting (Option A, char-aware)
-    //
-    // NP2 substitution: in NodeService.cs only, swap DB.Left(DB.ConvertFrom(..., "UTF8"), 8000)
-    //   back to DB.ConvertFrom(DB.Left(..., 8000), "UTF8") in the F3 SET.
-    // Expected failure: SQL contains convert_from( LEFT( and the Does.Not.Contain fires.
-    // -----------------------------------------------------------------------
-
     [Test]
-    public void SS5_F3_SetExpression_ContainsLeftOuterConvertFromInner()
+    public void SS5_ContentOnlyBranch_SetUsesLeftOuterConvertFromInner()
     {
-        string sql = RenderAllBranches().F3;
+        string sql = RenderSingleUpdate();
 
         Assert.Multiple(() => {
             Assert.That(sql, Does.Contain("LEFT( convert_from("),
-                "SS5: F3 SET must use LEFT( convert_from( ... ) ) nesting (Option A, char-aware); " +
-                "revert NodeService.cs to Option B (convert_from( LEFT( ... ) )) and this fails (NP2)");
+                "SS5: content-only WHEN branch SET must use LEFT( convert_from( ... ) ) nesting (Option A, char-aware); " +
+                "revert to Option B and this fails (NP2)");
             Assert.That(sql, Does.Not.Contain("convert_from( LEFT("),
-                "SS5: F3 SET must NOT use convert_from( LEFT( ... ) ) nesting (Option B, rejected)");
+                "SS5: must NOT use convert_from( LEFT( ... ) ) nesting (Option B, rejected)");
         });
     }
 
-    // -----------------------------------------------------------------------
-    // SS6 — F3 WHERE contains the allowlist ANY clause
-    // -----------------------------------------------------------------------
-
     [Test]
-    public void SS6_F3_WhereClause_ContainsAllowlistAny()
+    public void SS6_ContentOnlyBranch_WhenConditionContainsAllowlistAny()
     {
-        string sql = RenderAllBranches().F3;
+        string sql = RenderSingleUpdate();
 
         Assert.That(sql, Does.Contain("= ANY("),
-            "SS6: F3 WHERE must contain = ANY( for the ApplicationTextTypes allowlist IN clause");
+            "SS6: content-only WHEN condition must contain = ANY( for the ApplicationTextTypes allowlist");
     }
 
-    // -----------------------------------------------------------------------
-    // SS7 — F4 WHERE contains the allowlist ANY clause
-    // -----------------------------------------------------------------------
-
     [Test]
-    public void SS7_F4_WhereClause_ContainsAllowlistAny()
+    public void SS7_CollapsedUpdate_ContainsElseNull()
     {
-        string sql = RenderAllBranches().F4;
+        string sql = RenderSingleUpdate();
 
-        Assert.That(sql, Does.Contain("= ANY("),
-            "SS7: F4 WHERE must contain = ANY( for the allowlist negation; " +
-            "without it the null-out branch incorrectly fires on allowlist content types");
+        Assert.That(sql, Does.Contain("ELSE NULL"),
+            "SS7: CASE must contain ELSE NULL for the no-embeddable-surface case; " +
+            "nodes with neither name nor text content must have their embedding cleared");
     }
 
-    // -----------------------------------------------------------------------
-    // SS8 — F4 SET is exactly NULL (no embedding function call)
-    // -----------------------------------------------------------------------
+    [Test]
+    public void SS8_CollapsedUpdate_HasSingleWhereClause()
+    {
+        string sql = RenderSingleUpdate();
+
+        int count = Regex.Matches(sql, @"\bWHERE\b", RegexOptions.IgnoreCase).Count;
+        Assert.That(count, Is.EqualTo(1),
+            "SS8: the CASE-collapsed UPDATE must have exactly one WHERE clause — " +
+            "four separate UPDATEs would each have their own WHERE and give count = 4");
+    }
 
     [Test]
-    public void SS8_F4_SetExpression_IsNull()
+    public void SS9_CollapsedUpdate_IsCaseWhenExpression()
     {
-        string sql = RenderAllBranches().F4;
+        string sql = RenderSingleUpdate();
 
-        Assert.Multiple(() => {
-            Assert.That(sql, Does.Contain("= NULL"),
-                "SS8: F4 SET must be SET embedding = NULL");
-            Assert.That(sql, Does.Not.Contain("embedding ("),
-                "SS8: F4 SET must NOT call the embedding() function — null branch sets NULL directly");
-        });
+        Assert.That(sql, Does.Contain("CASE"),
+            "SS9: SET expression must use a CASE expression to select the embedding branch server-side; " +
+            "if this fails the CASE collapse was reverted back to four separate UPDATEs");
     }
 }

@@ -104,15 +104,6 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
                                                         (n, v) => n.LastUpdate = v);
 
         if (!string.IsNullOrWhiteSpace(filter?.Query)) {
-            // similarity = 1.0 - cosineDistance(queryEmbedding, nodeEmbedding)
-            // DB.VCos compiles to pgvector's <=> (cosine distance: smaller = more similar).
-            // Both sides are cast to vector so Postgres can invoke the <=> operator.
-            // The outer Float cast makes the result a plain float for the .Single projection.
-            //
-            // queryVectorToken is supplied by IEmbeddingProvider.QueryVectorTokenAsync before
-            // this mapper is constructed (NodeService.ListPaged / ListPagedByPath).
-            // When null (direct test construction or standard list mode), fall back to the
-            // google inline embedding(model, text) expression so existing tests continue to work.
             string queryText = filter.Query;
             Expression<Func<object, object>> vectorExpr = queryVectorToken
                 ?? (v => DB.Cast(DB.CustomFunction("embedding",

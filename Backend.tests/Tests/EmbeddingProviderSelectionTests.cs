@@ -26,10 +26,6 @@ public class EmbeddingProviderSelectionTests
         return new ConfigurationBuilder().AddInMemoryCollection(dict).Build();
     }
 
-    // -----------------------------------------------------------------------
-    // PS1 — absent Embedding:Provider → NullEmbeddingProvider
-    // -----------------------------------------------------------------------
-
     [Test]
     public void PS1_NoProviderConfig_ReturnsNullProvider()
     {
@@ -40,10 +36,6 @@ public class EmbeddingProviderSelectionTests
         Assert.That(provider.IsEnabled, Is.False);
     }
 
-    // -----------------------------------------------------------------------
-    // PS2 — Embedding:Provider = None → NullEmbeddingProvider
-    // -----------------------------------------------------------------------
-
     [Test]
     public void PS2_NoneProvider_ReturnsNullProvider()
     {
@@ -52,10 +44,6 @@ public class EmbeddingProviderSelectionTests
         Assert.That(provider, Is.InstanceOf<NullEmbeddingProvider>(),
             "PS2: Embedding:Provider=None must return NullEmbeddingProvider");
     }
-
-    // -----------------------------------------------------------------------
-    // PS3 — Embedding:Provider = GoogleMl → GoogleMlEmbeddingProvider
-    // -----------------------------------------------------------------------
 
     [Test]
     public void PS3_GoogleMlProvider_ReturnsGoogleMlProvider()
@@ -68,10 +56,6 @@ public class EmbeddingProviderSelectionTests
         Assert.That(provider.Dimension, Is.EqualTo(EmbeddingCompositionPolicy.EmbeddingDimension),
             "PS3: default dimension must equal EmbeddingCompositionPolicy.EmbeddingDimension");
     }
-
-    // -----------------------------------------------------------------------
-    // PS4 — Embedding:Provider = Http → HttpEmbeddingProvider
-    // -----------------------------------------------------------------------
 
     [Test]
     public void PS4_HttpProvider_ReturnsHttpProvider()
@@ -88,10 +72,6 @@ public class EmbeddingProviderSelectionTests
         Assert.That(provider.IsEnabled, Is.True, "PS4: HttpEmbeddingProvider must have IsEnabled=true");
     }
 
-    // -----------------------------------------------------------------------
-    // PS5 — Http provider missing Endpoint → InvalidOperationException
-    // -----------------------------------------------------------------------
-
     [Test]
     public void PS5_HttpProvider_MissingEndpoint_ThrowsInvalidOperation()
     {
@@ -104,10 +84,6 @@ public class EmbeddingProviderSelectionTests
             "PS5: Http provider without Endpoint must throw InvalidOperationException");
     }
 
-    // -----------------------------------------------------------------------
-    // PS6 — dimension mismatch → fail-closed (InvalidOperationException)
-    // -----------------------------------------------------------------------
-
     [Test]
     public void PS6_HttpProvider_WrongDimension_ThrowsFailClosed()
     {
@@ -115,7 +91,7 @@ public class EmbeddingProviderSelectionTests
             ("Embedding:Provider", "Http"),
             ("Embedding:Endpoint", "http://localhost:11434/v1/embeddings"),
             ("Embedding:Model", "nomic-embed-text"),
-            ("Embedding:Dimension", "768")  // wrong — must be 3072
+            ("Embedding:Dimension", "768")
         );
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
             () => Startup.BuildEmbeddingProvider(config),
@@ -123,10 +99,6 @@ public class EmbeddingProviderSelectionTests
         Assert.That(ex.Message, Does.Contain("768").And.Contain("3072"),
             "PS6: error message must mention both the declared dimension and the required dimension");
     }
-
-    // -----------------------------------------------------------------------
-    // PS7 — unknown provider name → fail-closed
-    // -----------------------------------------------------------------------
 
     [Test]
     public void PS7_UnknownProvider_ThrowsInvalidOperation()

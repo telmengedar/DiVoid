@@ -31,10 +31,6 @@ public class EmbeddingBackfillTests
     static EmbeddingBackfillService MakeBackfill(DatabaseFixture fixture, IEmbeddingProvider provider)
         => new(fixture.EntityManager, provider, NullLogger<EmbeddingBackfillService>.Instance);
 
-    // -----------------------------------------------------------------------
-    // 1. Provider disabled (SQLite) — exits immediately, no DB writes
-    // -----------------------------------------------------------------------
-
     [Test]
     public async Task RunAsync_CapabilityDisabled_ExitsWithoutWriting()
     {
@@ -42,12 +38,10 @@ public class EmbeddingBackfillTests
         NodeService nodeSvc = MakeNodeService(fixture);
         EmbeddingBackfillService backfill = MakeBackfill(fixture, NullEmbeddingProvider.Instance);
 
-        // Seed one text-content node — its Embedding must remain null after the backfill no-op.
         NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "doc", Name = "ShouldNotBeEmbedded" }, callerId: 0);
         byte[] content = Encoding.UTF8.GetBytes("some markdown text");
         await nodeSvc.UploadContent(node.Id, "text/markdown", new MemoryStream(content), callerId: 0, isAdmin: true);
 
-        // Run backfill with provider disabled.
         await backfill.RunAsync();
 
         Node raw = await fixture.EntityManager.Load<Node>()
@@ -58,17 +52,6 @@ public class EmbeddingBackfillTests
             "Embedding must remain null — provider was disabled so RunAsync must be a no-op");
     }
 
-    // -----------------------------------------------------------------------
-    // 2. Provider enabled on SQLite — selection logic tests
-    //
-    // When IsEnabled = true but the database is SQLite, the service will attempt
-    // to call DB.CustomFunction (embedding()) for qualifying nodes.  SQLite does
-    // not have the embedding() function, so any attempt will throw.  We therefore
-    // test only nodes that are *skipped* by the selection predicates: non-text
-    // content-type, null content, or no nodes at all.  For those nodes RunAsync
-    // must complete without touching the embedding column.
-    // -----------------------------------------------------------------------
-
     [Test]
     public async Task RunAsync_CapabilityEnabled_SkipsNonTextNodesWithoutName()
     {
@@ -76,7 +59,7 @@ public class EmbeddingBackfillTests
         NodeService nodeSvc = MakeNodeService(fixture);
 
         NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "asset", Name = "" }, callerId: 0);
-        byte[] content = [0x89, 0x50, 0x4E, 0x47]; // PNG magic bytes
+        byte[] content = [0x89, 0x50, 0x4E, 0x47];
         await nodeSvc.UploadContent(node.Id, "image/png", new MemoryStream(content), callerId: 0, isAdmin: true);
 
         EmbeddingBackfillService backfill = MakeBackfill(fixture, EnabledProvider);
@@ -98,14 +81,11 @@ public class EmbeddingBackfillTests
         NodeService nodeSvc = MakeNodeService(fixture);
 
         NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "asset", Name = "PngWithName" }, callerId: 0);
-        byte[] content = [0x89, 0x50, 0x4E, 0x47]; // PNG magic bytes
+        byte[] content = [0x89, 0x50, 0x4E, 0x47];
         await nodeSvc.UploadContent(node.Id, "image/png", new MemoryStream(content), callerId: 0, isAdmin: true);
 
         EmbeddingBackfillService backfill = MakeBackfill(fixture, EnabledProvider);
 
-        // v2 candidate predicate includes this node (has name) — RunAsync will attempt
-        // to call embedding() on SQLite and fail.  This is the load-bearing assertion:
-        // if the predicate had not changed (v1 style), RunAsync would succeed silently.
         Assert.CatchAsync(() => backfill.RunAsync(),
             "node with non-empty name is a v2 candidate; RunAsync must attempt (and fail on SQLite) to embed it");
     }
@@ -138,10 +118,6 @@ public class EmbeddingBackfillTests
     [Test]
     public async Task RunAsync_CapabilityEnabled_IncludesNodesWithNameAndNullContent()
     {
-        // v2 change: a node with non-empty name but null content IS a candidate (name-only embedding).
-        // On SQLite with IsEnabled=true the UPDATE will fail because embedding() doesn't exist.
-        // This is the load-bearing assertion: RunAsync must attempt to embed the node
-        // (proving the predicate was broadened vs v1 which required Content IS NOT NULL).
         using DatabaseFixture fixture = new();
         NodeService nodeSvc = MakeNodeService(fixture);
 
@@ -153,14 +129,9 @@ public class EmbeddingBackfillTests
             "node with non-empty name and null content is a v2 candidate; RunAsync must attempt (and fail on SQLite) to embed it");
     }
 
-    // -----------------------------------------------------------------------
-    // 3. Idempotency contract: re-running on an empty candidate set is a no-op
-    // -----------------------------------------------------------------------
-
     [Test]
     public async Task RunAsync_CapabilityDisabled_EmptyDb_CompletesCleanly()
     {
-        // Database with no nodes at all — RunAsync should complete without exception.
         using DatabaseFixture fixture = new();
         EmbeddingBackfillService backfill = MakeBackfill(fixture, NullEmbeddingProvider.Instance);
 

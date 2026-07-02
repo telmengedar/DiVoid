@@ -22,6 +22,7 @@ using Pooshit.AspNetCore.Services.Extensions;
 using Pooshit.AspNetCore.Services.Formatters;
 using Pooshit.AspNetCore.Services.Loggers;
 using Pooshit.AspNetCore.Services.Middleware;
+using Pooshit.Http;
 
 namespace Backend;
 
@@ -104,7 +105,8 @@ public class Startup
         services.AddDivoidCors(Configuration);
         services.ConfigureDatabaseService(Configuration);
 
-        services.AddSingleton<IEmbeddingProvider>(BuildEmbeddingProvider(Configuration));
+        services.AddSingleton<IHttpService>(_ => new HttpService(new HttpClientHandler()));
+        services.AddSingleton<IEmbeddingProvider>(sp => BuildEmbeddingProvider(Configuration, sp.GetRequiredService<IHttpService>()));
 
         services.AddTransient<INodeService, NodeService>();
         services.AddTransient<IKeyGenerator, KeyGenerator>();
@@ -256,16 +258,9 @@ public class Startup
 
     /// <summary>
     /// selects and constructs the <see cref="IEmbeddingProvider"/> from configuration.
-    /// reads <c>Embedding:Provider</c>:
-    ///   absent / <c>None</c> → <see cref="NullEmbeddingProvider.Instance"/>
-    ///   <c>GoogleMl</c>     → <see cref="GoogleMlEmbeddingProvider"/> (model from <c>Embedding:Model</c>)
-    ///   <c>Http</c>         → <see cref="HttpEmbeddingProvider"/> (endpoint, model, apiKey, dimension, timeout)
-    ///
-    /// fail-closed dimension gate: when a real provider is selected, its declared
-    /// <c>Dimension</c> must equal <see cref="EmbeddingCompositionPolicy.EmbeddingDimension"/>
-    /// or the service refuses to start.
+    /// fail-closed: dimension mismatch throws so the service refuses to start.
     /// </summary>
-    internal static IEmbeddingProvider BuildEmbeddingProvider(IConfiguration configuration) {
+    internal static IEmbeddingProvider BuildEmbeddingProvider(IConfiguration configuration, IHttpService httpService = null) {
         string providerName = configuration["Embedding:Provider"] ?? "None";
 
         if (string.Equals(providerName, "None", StringComparison.OrdinalIgnoreCase)
@@ -286,13 +281,12 @@ public class Startup
             string apiKey = configuration["Embedding:ApiKey"];
             int dimension = configuration.GetValue("Embedding:Dimension", EmbeddingCompositionPolicy.EmbeddingDimension);
             int timeout = configuration.GetValue("Embedding:TimeoutSeconds", 30);
-            provider = new HttpEmbeddingProvider(endpoint, model, apiKey, dimension, timeout);
+            provider = new HttpEmbeddingProvider(httpService ?? new HttpService(new HttpClientHandler()), endpoint, model, apiKey, dimension, timeout);
         } else {
             throw new InvalidOperationException(
                 $"Unknown Embedding:Provider value '{providerName}'. Valid values: None, GoogleMl, Http.");
         }
 
-        // fail-closed dimension gate: provider dimension must match the column schema
         if (provider.Dimension != EmbeddingCompositionPolicy.EmbeddingDimension)
             throw new InvalidOperationException(
                 $"Embedding provider '{providerName}' declares dimension {provider.Dimension} " +

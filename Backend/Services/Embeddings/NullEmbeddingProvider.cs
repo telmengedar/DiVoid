@@ -8,14 +8,7 @@ using Pooshit.Ocelot.Entities;
 namespace Backend.Services.Embeddings;
 
 /// <summary>
-/// no-op embedding provider registered when no provider is configured in
-/// <c>Embedding:Provider</c> (absent / <c>None</c>), or when running against SQLite
-/// (test / development).  replaces the old <c>IEmbeddingCapability</c> boolean
-/// special-case in <c>Startup.cs</c> and <c>CliDispatcher.cs</c>.
-///
-/// <see cref="IsEnabled"/> is false — every write path and search guard checks this
-/// flag before calling <see cref="RegenerateEmbedding"/> or
-/// <see cref="QueryVectorTokenAsync"/>; those methods are never invoked for the null provider.
+/// no-op embedding provider used when no provider is configured or when running on SQLite.
 /// </summary>
 public class NullEmbeddingProvider : IEmbeddingProvider {
 

@@ -699,7 +699,6 @@ public class NodeService(IEntityManager database, IEmbeddingProvider embeddingPr
         if (!isSemantic && filter.MinSimilarity.HasValue)
             throw new SemanticSearchUnavailableException("minSimilarity requires query");
 
-        // guard: semantic search requires a configured embedding provider
         if (isSemantic && !embeddingProvider.IsEnabled)
             throw new SemanticSearchUnavailableException(
                 "Semantic search requires Postgres with an embedding provider; this deployment does not support the embedding function.");
@@ -786,7 +785,6 @@ public class NodeService(IEntityManager database, IEmbeddingProvider embeddingPr
         if (!isSemantic && filter.MinSimilarity.HasValue)
             throw new SemanticSearchUnavailableException("minSimilarity requires query");
 
-        // guard: semantic search requires a configured embedding provider
         if (isSemantic && !embeddingProvider.IsEnabled)
             throw new SemanticSearchUnavailableException(
                 "Semantic search requires Postgres with an embedding provider; this deployment does not support the embedding function.");
