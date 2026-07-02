@@ -3,7 +3,7 @@ namespace Backend.Services.Embeddings;
 /// <summary>
 /// single source of truth for the composition policy constants consumed by BOTH
 /// the C# composition path (<see cref="EmbeddingInputComposer"/>) and the SQL
-/// composition path (<see cref="GoogleMlEmbeddingProvider.BuildEmbeddingBranchOperations"/>).
+/// composition path (<see cref="GoogleMlEmbeddingProvider.BuildEmbeddingUpdate"/>).
 ///
 /// pure static holder — no I/O, no SQL, no DI.  the parity guard test
 /// (<c>EmbeddingCompositionParityTests</c>) asserts that the two paths stay aligned

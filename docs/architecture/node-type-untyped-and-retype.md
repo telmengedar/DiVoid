@@ -34,7 +34,7 @@ DiVoid stores a node's type as a foreign key (`Node.TypeId : long`) into a separ
 - **PR-C — frontend untyped create.** Make the type field optional on the create form; render untyped nodes.
 - **PR-D — frontend retype control + soft warning.** The type-edit control and the warning heuristic from §9.
 - Migration/canonicalization of the ~13 existing null-named `NodeType` rows (DiVoid #508) — **explicitly not done**; §7 explains why they need no migration.
-- Any change to embedding behaviour — embeddings are name+content based and independent of type (confirmed: `RegenerateEmbeddingViaBranches` and `CreateNode`'s embedding step never read `TypeId`).
+- Any change to embedding behaviour — embeddings are name+content based and independent of type (confirmed: `GoogleMlEmbeddingProvider.BuildEmbeddingUpdate` and `CreateNode`'s embedding step never read `TypeId`).
 - Any new persisted column, sentinel `TypeId` value, or `NodeType` schema change. None is needed.
 
 ## 3. Assumptions & Constraints

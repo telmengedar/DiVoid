@@ -1,7 +1,9 @@
 using Backend;
 using Backend.Services.Embeddings;
 using Microsoft.Extensions.Configuration;
+using Moq;
 using NUnit.Framework;
+using Pooshit.Http;
 
 namespace Backend.tests.Tests;
 
@@ -19,6 +21,9 @@ namespace Backend.tests.Tests;
 [TestFixture]
 public class EmbeddingProviderSelectionTests
 {
+    /// <summary>stub IHttpService passed to BuildEmbeddingProvider for all test cases.</summary>
+    static readonly IHttpService HttpServiceStub = new Mock<IHttpService>().Object;
+
     static IConfiguration BuildConfig(params (string key, string value)[] pairs) {
         Dictionary<string, string?> dict = new();
         foreach ((string key, string value) in pairs)
@@ -30,7 +35,7 @@ public class EmbeddingProviderSelectionTests
     public void PS1_NoProviderConfig_ReturnsNullProvider()
     {
         IConfiguration config = BuildConfig();
-        IEmbeddingProvider provider = Startup.BuildEmbeddingProvider(config);
+        IEmbeddingProvider provider = Startup.BuildEmbeddingProvider(config, HttpServiceStub);
         Assert.That(provider, Is.InstanceOf<NullEmbeddingProvider>(),
             "PS1: absent Embedding:Provider must return NullEmbeddingProvider");
         Assert.That(provider.IsEnabled, Is.False);
@@ -40,7 +45,7 @@ public class EmbeddingProviderSelectionTests
     public void PS2_NoneProvider_ReturnsNullProvider()
     {
         IConfiguration config = BuildConfig(("Embedding:Provider", "None"));
-        IEmbeddingProvider provider = Startup.BuildEmbeddingProvider(config);
+        IEmbeddingProvider provider = Startup.BuildEmbeddingProvider(config, HttpServiceStub);
         Assert.That(provider, Is.InstanceOf<NullEmbeddingProvider>(),
             "PS2: Embedding:Provider=None must return NullEmbeddingProvider");
     }
@@ -49,7 +54,7 @@ public class EmbeddingProviderSelectionTests
     public void PS3_GoogleMlProvider_ReturnsGoogleMlProvider()
     {
         IConfiguration config = BuildConfig(("Embedding:Provider", "GoogleMl"));
-        IEmbeddingProvider provider = Startup.BuildEmbeddingProvider(config);
+        IEmbeddingProvider provider = Startup.BuildEmbeddingProvider(config, HttpServiceStub);
         Assert.That(provider, Is.InstanceOf<GoogleMlEmbeddingProvider>(),
             "PS3: Embedding:Provider=GoogleMl must return GoogleMlEmbeddingProvider");
         Assert.That(provider.IsEnabled, Is.True, "PS3: GoogleMlEmbeddingProvider must have IsEnabled=true");
@@ -66,7 +71,7 @@ public class EmbeddingProviderSelectionTests
             ("Embedding:Model", "nomic-embed-text"),
             ("Embedding:Dimension", EmbeddingCompositionPolicy.EmbeddingDimension.ToString())
         );
-        IEmbeddingProvider provider = Startup.BuildEmbeddingProvider(config);
+        IEmbeddingProvider provider = Startup.BuildEmbeddingProvider(config, HttpServiceStub);
         Assert.That(provider, Is.InstanceOf<HttpEmbeddingProvider>(),
             "PS4: Embedding:Provider=Http must return HttpEmbeddingProvider");
         Assert.That(provider.IsEnabled, Is.True, "PS4: HttpEmbeddingProvider must have IsEnabled=true");
@@ -80,7 +85,7 @@ public class EmbeddingProviderSelectionTests
             ("Embedding:Model", "some-model"),
             ("Embedding:Dimension", EmbeddingCompositionPolicy.EmbeddingDimension.ToString())
         );
-        Assert.Throws<InvalidOperationException>(() => Startup.BuildEmbeddingProvider(config),
+        Assert.Throws<InvalidOperationException>(() => Startup.BuildEmbeddingProvider(config, HttpServiceStub),
             "PS5: Http provider without Endpoint must throw InvalidOperationException");
     }
 
@@ -94,7 +99,7 @@ public class EmbeddingProviderSelectionTests
             ("Embedding:Dimension", "768")
         );
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
-            () => Startup.BuildEmbeddingProvider(config),
+            () => Startup.BuildEmbeddingProvider(config, HttpServiceStub),
             "PS6: provider dimension 768 != EmbeddingDimension 3072 must throw");
         Assert.That(ex.Message, Does.Contain("768").And.Contain("3072"),
             "PS6: error message must mention both the declared dimension and the required dimension");
@@ -104,7 +109,7 @@ public class EmbeddingProviderSelectionTests
     public void PS7_UnknownProvider_ThrowsInvalidOperation()
     {
         IConfiguration config = BuildConfig(("Embedding:Provider", "AwsBedrockXYZ"));
-        Assert.Throws<InvalidOperationException>(() => Startup.BuildEmbeddingProvider(config),
+        Assert.Throws<InvalidOperationException>(() => Startup.BuildEmbeddingProvider(config, HttpServiceStub),
             "PS7: unknown Embedding:Provider value must throw InvalidOperationException");
     }
 }

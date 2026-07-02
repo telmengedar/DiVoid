@@ -38,7 +38,14 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
     /// <param name="queryVectorToken">
     /// pre-computed Ocelot SQL expression token for the query vector, produced by
     /// <c>IEmbeddingProvider.QueryVectorTokenAsync</c>.  pass null for standard list mode
-    /// or when constructing the mapper directly in tests.
+    /// (no semantic search).
+    /// <b>WARNING:</b> when <paramref name="filter"/> carries a non-empty <c>Query</c> but
+    /// <paramref name="queryVectorToken"/> is null, the mapper falls back to a
+    /// Google-specific inline <c>embedding(model, text)</c> expression — a
+    /// test-compatibility aid that emits Google SQL regardless of the configured provider.
+    /// production code on a non-Google deployment MUST pass a non-null token obtained from
+    /// <c>provider.QueryVectorTokenAsync</c>.  the full fix (requiring the token and updating
+    /// the affected unit tests) is tracked as follow-up to PR #154.
     /// </param>
     public NodeMapper(NodeFilter filter, Expression<Func<object, object>> queryVectorToken = null)
     : base(Mappings(filter, queryVectorToken).ToArray(), null, PostProcess)

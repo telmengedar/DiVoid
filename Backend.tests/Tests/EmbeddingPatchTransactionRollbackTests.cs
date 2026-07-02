@@ -17,7 +17,7 @@ namespace Backend.tests.Tests;
 /// PR #68 (task #437) wraps two UPDATEs inside one transaction in
 /// <c>NodeService.Patch</c>:
 ///   UPDATE 1 — apply JSON-Patch operations (name, status, etc.)
-///   UPDATE 2 — regenerate the embedding column via four SQL-side branches
+///   UPDATE 2 — regenerate the embedding column via a single CASE-expression UPDATE
 ///
 /// the invariant: if the embedding regen fails (UPDATE 2 throws), UPDATE 1 must also be
 /// rolled back.  a future refactor that splits the transaction (e.g. pulls the embedding
@@ -30,8 +30,9 @@ namespace Backend.tests.Tests;
 /// CreateNode does not attempt the embedding call), then calls Patch with an
 /// enabled-capability service on the same EntityManager.  with capability enabled,
 /// NodeService.Patch enters the embedding branch, executes UPDATE 1 (name) inside the
-/// open transaction, then calls RegenerateEmbeddingViaBranches which prepares all four
-/// SQL branch UPDATEs including the F1 branch that uses <c>DB.ConvertFrom</c>.  Ocelot
+/// open transaction, then calls RegenerateEmbedding which executes a single
+/// CASE-expression UPDATE (<see cref="GoogleMlEmbeddingProvider.BuildEmbeddingUpdate"/>)
+/// that includes a WHEN branch using <c>DB.ConvertFrom</c>.  Ocelot
 /// throws <c>NotSupportedException</c> ("DB.ConvertFrom is only supported on PostgreSQL")
 /// at SQL-preparation time, before <c>transaction.Commit()</c> is reached.  the
 /// <c>using Transaction</c> scope disposes without committing → SQLite rolls back
@@ -66,7 +67,7 @@ public class EmbeddingPatchTransactionRollbackTests
     ///
     /// substitution proof (DiVoid #275):
     ///   in NodeService.Patch, move transaction.Commit() to BEFORE the nameTouched block
-    ///   (i.e. commit UPDATE 1 before RegenerateEmbeddingViaBranches runs).  re-running
+    ///   (i.e. commit UPDATE 1 before RegenerateEmbedding runs).  re-running
     ///   this test then shows live.Name == "New" — the commit landed before the embedding
     ///   threw, so the name change is permanent even though the embedding step failed.
     ///   the assertion "UPDATE 1 (name) must be rolled back" fails.  restoring the commit

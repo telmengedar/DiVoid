@@ -260,7 +260,7 @@ public class Startup
     /// selects and constructs the <see cref="IEmbeddingProvider"/> from configuration.
     /// fail-closed: dimension mismatch throws so the service refuses to start.
     /// </summary>
-    internal static IEmbeddingProvider BuildEmbeddingProvider(IConfiguration configuration, IHttpService httpService = null) {
+    internal static IEmbeddingProvider BuildEmbeddingProvider(IConfiguration configuration, IHttpService httpService) {
         string providerName = configuration["Embedding:Provider"] ?? "None";
 
         if (string.Equals(providerName, "None", StringComparison.OrdinalIgnoreCase)
@@ -281,7 +281,7 @@ public class Startup
             string apiKey = configuration["Embedding:ApiKey"];
             int dimension = configuration.GetValue("Embedding:Dimension", EmbeddingCompositionPolicy.EmbeddingDimension);
             int timeout = configuration.GetValue("Embedding:TimeoutSeconds", 30);
-            provider = new HttpEmbeddingProvider(httpService ?? new HttpService(new HttpClientHandler()), endpoint, model, apiKey, dimension, timeout);
+            provider = new HttpEmbeddingProvider(httpService, endpoint, model, apiKey, dimension, timeout);
         } else {
             throw new InvalidOperationException(
                 $"Unknown Embedding:Provider value '{providerName}'. Valid values: None, GoogleMl, Http.");

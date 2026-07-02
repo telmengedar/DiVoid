@@ -32,8 +32,13 @@ public static class EmbeddingInputComposer {
     /// <param name="content">raw content bytes (nullable)</param>
     /// <param name="contentType">MIME type of the content (nullable)</param>
     /// <returns>
-    /// the string to embed (≤<see cref="MaxLength"/> chars), or null when both name and
-    /// content are empty/non-text (caller must write Embedding = null in that case).
+    /// the string to embed, or null when both name and content are empty/non-text
+    /// (caller must write Embedding = null in that case).
+    /// note: when both name and content are present, total length may slightly exceed
+    /// <see cref="MaxLength"/> for long names — content is capped at
+    /// <c>MaxLength − Separator.Length</c> chars, matching the SQL composition budget
+    /// in <see cref="GoogleMlEmbeddingProvider.BuildEmbeddingUpdate"/> so the two paths
+    /// are byte-for-byte identical for any (name, content) input.
     /// </returns>
     public static string Compose(string name, byte[] content, string contentType) {
         bool hasName = !string.IsNullOrWhiteSpace(name);
@@ -45,7 +50,7 @@ public static class EmbeddingInputComposer {
 
         if (hasName && hasTextContent) {
             string contentText = Encoding.UTF8.GetString(content);
-            int contentBudget = Math.Max(0, MaxLength - name.Length - Separator.Length);
+            int contentBudget = MaxLength - Separator.Length;
             if (contentText.Length > contentBudget)
                 contentText = contentText[..contentBudget];
             return name + Separator + contentText;
