@@ -1,4 +1,5 @@
 using System;
+using System.Net.Http;
 using System.Threading.Tasks;
 using Backend.Extensions.Startup;
 using Backend.Models.Auth;
@@ -10,6 +11,7 @@ using Backend.Services.Users;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Pooshit.Http;
 
 namespace Backend.Cli;
 
@@ -53,8 +55,8 @@ public static class CliDispatcher {
         services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Information));
         services.ConfigureDatabaseService(configuration);
 
-        bool embeddingEnabled = configuration["Database:Type"] != "Sqlite";
-        services.AddSingleton<IEmbeddingCapability>(new EmbeddingCapability(embeddingEnabled));
+        services.AddSingleton<IHttpService>(_ => new HttpService(new HttpClientHandler()));
+        services.AddSingleton<IEmbeddingProvider>(sp => Startup.BuildEmbeddingProvider(configuration, sp.GetRequiredService<IHttpService>()));
         services.AddTransient<EmbeddingBackfillService>();
 
         await using ServiceProvider provider = services.BuildServiceProvider();

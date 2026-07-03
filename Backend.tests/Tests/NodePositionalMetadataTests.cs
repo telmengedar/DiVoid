@@ -414,8 +414,6 @@ public class NodePositionalMetadataTests
 [TestFixture]
 public class LayoutNodesCliTests
 {
-    static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
-
     // -----------------------------------------------------------------------
     // BT9 — idempotency
     // -----------------------------------------------------------------------
@@ -424,7 +422,7 @@ public class LayoutNodesCliTests
     public async Task LayoutNodes_FirstRun_AssignsPositions()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = new(fixture.EntityManager, DisabledCapability);
+        NodeService svc = new(fixture.EntityManager, NullEmbeddingProvider.Instance);
         LayoutNodesService layoutSvc = new(fixture.EntityManager, Microsoft.Extensions.Logging.Abstractions.NullLogger<LayoutNodesService>.Instance);
 
         // Create three unpositioned nodes and link them
@@ -454,7 +452,7 @@ public class LayoutNodesCliTests
     public async Task LayoutNodes_SecondRun_IsIdempotent()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = new(fixture.EntityManager, DisabledCapability);
+        NodeService svc = new(fixture.EntityManager, NullEmbeddingProvider.Instance);
         LayoutNodesService layoutSvc = new(fixture.EntityManager, Microsoft.Extensions.Logging.Abstractions.NullLogger<LayoutNodesService>.Instance);
 
         NodeDetails a = await svc.CreateNode(new NodeDetails { Type = "task", Name = "IdempotentA" }, callerId: 0);
@@ -495,7 +493,7 @@ public class LayoutNodesCliTests
     public async Task LayoutNodes_AlreadyPositionedNodes_AreUntouched()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = new(fixture.EntityManager, DisabledCapability);
+        NodeService svc = new(fixture.EntityManager, NullEmbeddingProvider.Instance);
         LayoutNodesService layoutSvc = new(fixture.EntityManager, Microsoft.Extensions.Logging.Abstractions.NullLogger<LayoutNodesService>.Instance);
 
         // Create a node and manually set its position to a known non-zero value

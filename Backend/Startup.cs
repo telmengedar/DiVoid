@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using Backend.Auth;
 using Backend.Errors;
@@ -21,6 +22,7 @@ using Pooshit.AspNetCore.Services.Extensions;
 using Pooshit.AspNetCore.Services.Formatters;
 using Pooshit.AspNetCore.Services.Loggers;
 using Pooshit.AspNetCore.Services.Middleware;
+using Pooshit.Http;
 
 namespace Backend;
 
@@ -103,8 +105,8 @@ public class Startup
         services.AddDivoidCors(Configuration);
         services.ConfigureDatabaseService(Configuration);
 
-        bool embeddingEnabled = Configuration["Database:Type"] != "Sqlite";
-        services.AddSingleton<IEmbeddingCapability>(new EmbeddingCapability(embeddingEnabled));
+        services.AddSingleton<IHttpService>(_ => new HttpService(new HttpClientHandler()));
+        services.AddSingleton<IEmbeddingProvider>(sp => BuildEmbeddingProvider(Configuration, sp.GetRequiredService<IHttpService>()));
 
         services.AddTransient<INodeService, NodeService>();
         services.AddTransient<IKeyGenerator, KeyGenerator>();
@@ -253,6 +255,46 @@ public class Startup
         Microsoft.IdentityModel.Tokens.SecurityTokenInvalidSignatureException    => "JWT signature could not be verified",
         _                                                                         => "JWT could not be parsed"
     };
+
+    /// <summary>
+    /// selects and constructs the <see cref="IEmbeddingProvider"/> from configuration.
+    /// fail-closed: dimension mismatch throws so the service refuses to start.
+    /// </summary>
+    internal static IEmbeddingProvider BuildEmbeddingProvider(IConfiguration configuration, IHttpService httpService) {
+        string providerName = configuration["Embedding:Provider"] ?? "None";
+
+        if (string.Equals(providerName, "None", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(providerName, "Null", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(providerName))
+            return NullEmbeddingProvider.Instance;
+
+        IEmbeddingProvider provider;
+
+        if (string.Equals(providerName, "GoogleMl", StringComparison.OrdinalIgnoreCase)) {
+            string model = configuration["Embedding:Model"] ?? TextContentTypePredicate.EmbeddingModel;
+            provider = new GoogleMlEmbeddingProvider(model);
+        } else if (string.Equals(providerName, "Http", StringComparison.OrdinalIgnoreCase)) {
+            string endpoint = configuration["Embedding:Endpoint"]
+                ?? throw new InvalidOperationException("Embedding:Provider=Http requires Embedding:Endpoint to be set.");
+            string model = configuration["Embedding:Model"]
+                ?? throw new InvalidOperationException("Embedding:Provider=Http requires Embedding:Model to be set.");
+            string apiKey = configuration["Embedding:ApiKey"];
+            int dimension = configuration.GetValue("Embedding:Dimension", EmbeddingCompositionPolicy.EmbeddingDimension);
+            int timeout = configuration.GetValue("Embedding:TimeoutSeconds", 30);
+            provider = new HttpEmbeddingProvider(httpService, endpoint, model, apiKey, dimension, timeout);
+        } else {
+            throw new InvalidOperationException(
+                $"Unknown Embedding:Provider value '{providerName}'. Valid values: None, GoogleMl, Http.");
+        }
+
+        if (provider.Dimension != EmbeddingCompositionPolicy.EmbeddingDimension)
+            throw new InvalidOperationException(
+                $"Embedding provider '{providerName}' declares dimension {provider.Dimension} " +
+                $"but the Node.Embedding column requires dimension {EmbeddingCompositionPolicy.EmbeddingDimension}. " +
+                $"Update Embedding:Dimension in configuration or adjust the provider model.");
+
+        return provider;
+    }
 
     /// <summary>
     /// configures service pipeline

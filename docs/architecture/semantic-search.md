@@ -33,7 +33,7 @@ The endpoint must:
 ## Current state
 
 - `Node.Embedding` is a `float[]` `[Size(3072)]` populated for every text-content node on Postgres deployments by the path landed in PR #23. SQLite fixtures leave the column at `null`.
-- `IEmbeddingCapability.IsEnabled` is a singleton boolean fixed at startup, `true` on Postgres and `false` on SQLite. It is the only gate the system needs to consult before invoking `embedding(...)`.
+- `IEmbeddingProvider.IsEnabled` is `false` for the null provider (SQLite / unconfigured) and `true` for any real embedding provider (google, HTTP). It is the only gate the system needs to consult before invoking the embedding write or query path.
 - `NodeService.ListPaged` and `NodeService.ListPagedByPath` already share the controller action `NodeController.ListPaged` via the unified `NodePathFilter` — the dispatch is on `Path` being present. The same multiplex is the natural home for a third mode "semantic search."
 - `mamgo-backend` runs the exact pattern this feature needs, on `CampaignItemTargetMapper`, gated by `filter.FindSemantically`. The SQL shape, the cast strategy, the no-default-threshold posture, and the conditional similarity field-mapping are precedents we adopt directly.
 

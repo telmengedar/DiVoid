@@ -57,12 +57,14 @@ public class EmbeddingInputComposerTests
     }
 
     [Test]
-    public void Compose_WhitespaceNameAndTextContent_ReturnsContentOnly()
+    public void Compose_WhitespaceNameAndTextContent_ReturnsNamePlusSeparatorPlusContent()
     {
         byte[] content = Encoding.UTF8.GetBytes("body text");
         string result = EmbeddingInputComposer.Compose("   ", content, "text/plain");
 
-        Assert.That(result, Is.EqualTo("body text"));
+        Assert.That(result, Is.EqualTo("   \n\nbody text"),
+            "whitespace-only names are treated as non-empty (IsNullOrEmpty, not IsNullOrWhiteSpace) " +
+            "to align with the SQL path where Name != '' passes whitespace — see §3d of embedding-providers.md");
     }
 
     [Test]
@@ -105,18 +107,19 @@ public class EmbeddingInputComposerTests
     public void Compose_LongContent_ContentTruncatedToFitBudget()
     {
         string name = "Short";
-        int separatorLen = 2; // "\n\n"
-        int budget = EmbeddingInputComposer.MaxLength - name.Length - separatorLen;
-        string longBody = new string('x', budget + 100); // exceeds budget
+        string sep = EmbeddingCompositionPolicy.Separator;
+        int contentBudget = EmbeddingInputComposer.MaxLength - sep.Length;
+        string longBody = new string('x', contentBudget + 100);
 
         byte[] content = Encoding.UTF8.GetBytes(longBody);
         string result = EmbeddingInputComposer.Compose(name, content, "text/plain");
 
         Assert.That(result, Is.Not.Null);
-        Assert.That(result.Length, Is.LessThanOrEqualTo(EmbeddingInputComposer.MaxLength),
-            "composed output must not exceed MaxLength");
         Assert.That(result, Does.StartWith("Short\n\n"),
             "name + separator must be preserved at the start");
+        string contentPortion = result[(name.Length + sep.Length)..];
+        Assert.That(contentPortion.Length, Is.EqualTo(contentBudget),
+            $"content portion must be exactly MaxLength−sep.Length = {contentBudget} (constant budget, matching SQL)");
     }
 
     [Test]

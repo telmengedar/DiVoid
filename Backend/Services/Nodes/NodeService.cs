@@ -1,4 +1,6 @@
+using System;
 using System.Linq.Expressions;
+using System.Threading;
 using Backend.Extensions;
 using Backend.Models.Nodes;
 using Backend.Models.Users;
@@ -19,10 +21,10 @@ using Pooshit.Ocelot.Tokens;
 namespace Backend.Services.Nodes;
 
 /// <inheritdoc />
-public class NodeService(IEntityManager database, IEmbeddingCapability embeddingCapability) : INodeService
+public class NodeService(IEntityManager database, IEmbeddingProvider embeddingProvider) : INodeService
 {
     readonly IEntityManager database = database;
-    readonly IEmbeddingCapability embeddingCapability = embeddingCapability;
+    readonly IEmbeddingProvider embeddingProvider = embeddingProvider;
 
     /// <summary>
     /// computes the golden-angle auto-position offset for a new node given its id and an anchor position.
@@ -140,19 +142,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                 await TryAnchorOrphanToPositioned(transaction, nodeId, links);
         }
 
-        if (embeddingCapability.IsEnabled && !string.IsNullOrWhiteSpace(node.Name))
-        {
-            string nameInput = node.Name.Length > EmbeddingInputComposer.MaxLength
-                ? node.Name[..EmbeddingInputComposer.MaxLength]
-                : node.Name;
-
-            await database.Update<Node>()
-                          .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                                      DB.Constant(TextContentTypePredicate.EmbeddingModel),
-                                                                      DB.Constant(nameInput)).Type<float[]>())
-                          .Where(n => n.Id == nodeId)
-                          .ExecuteAsync(transaction);
-        }
+        if (embeddingProvider.IsEnabled)
+            await embeddingProvider.RegenerateEmbedding(database, transaction, nodeId, CancellationToken.None);
 
         transaction.Commit();
         return await GetNodeById(nodeId, callerId, isAdmin: true);
@@ -708,10 +699,9 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (!isSemantic && filter.MinSimilarity.HasValue)
             throw new SemanticSearchUnavailableException("minSimilarity requires query");
 
-        // guard: semantic search requires Postgres (the embedding() function)
-        if (isSemantic && !embeddingCapability.IsEnabled)
+        if (isSemantic && !embeddingProvider.IsEnabled)
             throw new SemanticSearchUnavailableException(
-                "Semantic search requires Postgres; this deployment does not support the embedding function.");
+                "Semantic search requires Postgres with an embedding provider; this deployment does not support the embedding function.");
 
         if (filter.Fields != null
             && filter.Fields.Contains("similarity", StringComparer.OrdinalIgnoreCase)
@@ -724,7 +714,11 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (string.Equals(filter.Sort, "links", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("sort=links is not supported");
 
-        NodeMapper mapper = new(filter);
+        Expression<Func<object, object>> queryToken = null;
+        if (isSemantic)
+            queryToken = await embeddingProvider.QueryVectorTokenAsync(filter.Query, ct);
+
+        NodeMapper mapper = new(filter, queryToken);
         filter.Fields ??= isSemantic
             ? [.. mapper.DefaultListFields, "similarity"]
             : mapper.DefaultListFields;
@@ -791,17 +785,20 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (!isSemantic && filter.MinSimilarity.HasValue)
             throw new SemanticSearchUnavailableException("minSimilarity requires query");
 
-        // guard: semantic search requires Postgres (the embedding() function)
-        if (isSemantic && !embeddingCapability.IsEnabled)
+        if (isSemantic && !embeddingProvider.IsEnabled)
             throw new SemanticSearchUnavailableException(
-                "Semantic search requires Postgres; this deployment does not support the embedding function.");
+                "Semantic search requires Postgres with an embedding provider; this deployment does not support the embedding function.");
 
         if (string.Equals(filter.Sort, "content", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("sort=content is not supported");
         if (string.Equals(filter.Sort, "links", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("sort=links is not supported");
 
-        NodeMapper mapper = new(filter);
+        Expression<Func<object, object>> queryToken = null;
+        if (isSemantic)
+            queryToken = await embeddingProvider.QueryVectorTokenAsync(filter.Query, ct);
+
+        NodeMapper mapper = new(filter, queryToken);
         filter.Fields ??= isSemantic
             ? [.. mapper.DefaultListFields, "similarity"]
             : mapper.DefaultListFields;
@@ -896,7 +893,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         PatchOperation typeOp = Array.Find(patches, p => string.Equals(p.Path, "/type", StringComparison.OrdinalIgnoreCase));
         PatchOperation[] remainingPatches = typeOp == null ? patches : patches.Where(p => p != typeOp).ToArray();
 
-        bool nameTouched = embeddingCapability.IsEnabled && TouchesName(patches);
+        bool nameTouched = embeddingProvider.IsEnabled && TouchesName(patches);
         using Transaction transaction = database.Transaction();
 
         if (remainingPatches.Length > 0)
@@ -928,113 +925,13 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (nameTouched)
         {
             ct.ThrowIfCancellationRequested();
-            await RegenerateEmbeddingViaBranches(database, transaction, nodeId, ct);
+            await embeddingProvider.RegenerateEmbedding(database, transaction, nodeId, ct);
         }
 
         transaction.Commit();
         return await GetNodeById(nodeId, callerId, isAdmin: true);
     }
 
-    /// <summary>
-    /// issues four mutually-exclusive UPDATE statements that regenerate the embedding column
-    /// entirely on the Postgres side — no Content blob is fetched into .NET.
-    /// </summary>
-    /// <remarks>
-    /// implements the four branches of #440 Decision 3 (composition matrix); each branch
-    /// corresponds to one row of the truth table.  the WHEREs are mutually exclusive so exactly
-    /// one UPDATE writes a row; the others return 0 affected rows and are no-ops.
-    ///
-    /// text-content detection mirrors <see cref="TextContentTypePredicate.IsText"/>:
-    ///   ILIKE 'text/%' covers the text/* family;
-    ///   IN (ApplicationTextTypes) covers application/json, application/xml, etc.
-    ///
-    /// accepted divergence from <see cref="EmbeddingInputComposer.Compose"/>: the C# composer
-    /// uses <c>string.IsNullOrWhiteSpace(name)</c>; the SQL form uses
-    /// <c>name IS NULL OR name = ''</c>.  a name patched to pure whitespace is treated as
-    /// "name present" here but "name absent" by the composer.  the controller layer should
-    /// reject pure-whitespace names before they reach this path.
-    /// </remarks>
-    /// <param name="database">entity manager (shared with the surrounding transaction)</param>
-    /// <param name="transaction">the open transaction that wraps the patch UPDATE</param>
-    /// <param name="nodeId">id of the row whose embedding is being regenerated</param>
-    /// <param name="ct">cancellation token threaded from the controller</param>
-    private static async Task RegenerateEmbeddingViaBranches(IEntityManager database, Transaction transaction, long nodeId, CancellationToken ct)
-    {
-        (UpdateValuesOperation<Node> f1, UpdateValuesOperation<Node> f2,
-         UpdateValuesOperation<Node> f3, UpdateValuesOperation<Node> f4) =
-            BuildEmbeddingBranchOperations(database, nodeId);
-
-        await f1.ExecuteAsync(transaction);
-        ct.ThrowIfCancellationRequested();
-
-        await f2.ExecuteAsync(transaction);
-        ct.ThrowIfCancellationRequested();
-
-        await f3.ExecuteAsync(transaction);
-        ct.ThrowIfCancellationRequested();
-
-        await f4.ExecuteAsync(transaction);
-    }
-
-    /// <summary>
-    /// Constructs the four UPDATE operation trees for embedding regeneration.
-    /// Single source of truth — called by <see cref="RegenerateEmbeddingViaBranches"/>
-    /// (production execution) and directly by <c>EmbeddingPatchSqlShapeTests.RenderAllBranches</c>
-    /// (test SQL-shape assertions).  Any change to the SQL shape is
-    /// automatically reflected in both callers.
-    ///
-    /// Branches:
-    ///   F1 — name + text content → embed(name ++ '\n\n' ++ LEFT(convert_from(content,'UTF8'),8000))
-    ///   F2 — name only, non-text or no content → embed(name)
-    ///   F3 — content only, empty/null name, text content → embed(LEFT(convert_from(content,'UTF8'),8000))
-    ///   F4 — neither name nor text content → NULL
-    /// </summary>
-    internal static (UpdateValuesOperation<Node> F1,
-                    UpdateValuesOperation<Node> F2,
-                    UpdateValuesOperation<Node> F3,
-                    UpdateValuesOperation<Node> F4)
-        BuildEmbeddingBranchOperations(IEntityManager database, long nodeId)
-    {
-        string model = TextContentTypePredicate.EmbeddingModel;
-        string[] allowlist = TextContentTypePredicate.ApplicationTextTypes;
-
-        UpdateValuesOperation<Node> f1 = database.Update<Node>()
-                                                 .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                                                             DB.Constant(model),
-                                                                                             DB.CustomFunction("concat",
-                                                                                                 DB.Property<Node>(x => x.Name),
-                                                                                                 DB.Constant("\n\n"),
-                                                                                                 DB.Left(DB.ConvertFrom(DB.Property<Node>(x => x.Content), "UTF8"), 8000))).Type<float[]>())
-                                                 .Where(n => n.Id == nodeId
-                                                          && n.Name != null && n.Name != ""
-                                                          && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
-                                                          && n.Content != null);
-
-        UpdateValuesOperation<Node> f2 = database.Update<Node>()
-                                                 .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                                                             DB.Constant(model),
-                                                                                             DB.Property<Node>(x => x.Name)).Type<float[]>())
-                                                 .Where(n => n.Id == nodeId
-                                                          && n.Name != null && n.Name != ""
-                                                          && (!(n.ContentType.Like("text/%") || n.ContentType.In(allowlist)) || n.Content == null));
-
-        UpdateValuesOperation<Node> f3 = database.Update<Node>()
-                                                 .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                                                             DB.Constant(model),
-                                                                                             DB.Left(DB.ConvertFrom(DB.Property<Node>(x => x.Content), "UTF8"), 8000)).Type<float[]>())
-                                                 .Where(n => n.Id == nodeId
-                                                          && (n.Name == null || n.Name == "")
-                                                          && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
-                                                          && n.Content != null);
-
-        UpdateValuesOperation<Node> f4 = database.Update<Node>()
-                                                 .Set(n => n.Embedding == (float[]) null)
-                                                 .Where(n => n.Id == nodeId
-                                                          && (n.Name == null || n.Name == "")
-                                                          && (!(n.ContentType.Like("text/%") || n.ContentType.In(allowlist)) || n.Content == null));
-
-        return (f1, f2, f3, f4);
-    }
 
     /// <inheritdoc />
     public async Task UnlinkNodes(long sourceNodeId, long targetNodeId, long callerId, bool isAdmin)
@@ -1071,26 +968,9 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                           .ExecuteAsync(transaction) == 0)
             throw new NotFoundException<Node>(nodeId);
 
-        if (embeddingCapability.IsEnabled) {
+        if (embeddingProvider.IsEnabled) {
             ct.ThrowIfCancellationRequested();
-            Node row = await database.Load<Node>(n => n.Name)
-                                     .Where(n => n.Id == nodeId)
-                                     .ExecuteEntityAsync(transaction);
-
-            string composed = EmbeddingInputComposer.Compose(row.Name, blob, contentType);
-            if (composed != null) {
-                await database.Update<Node>()
-                              .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                                          DB.Constant(TextContentTypePredicate.EmbeddingModel),
-                                                                          DB.Constant(composed)).Type<float[]>())
-                              .Where(n => n.Id == nodeId)
-                              .ExecuteAsync(transaction);
-            } else {
-                await database.Update<Node>()
-                              .Set(n => n.Embedding == (float[]) null)
-                              .Where(n => n.Id == nodeId)
-                              .ExecuteAsync(transaction);
-            }
+            await embeddingProvider.RegenerateEmbedding(database, transaction, nodeId, ct);
         }
 
         transaction.Commit();

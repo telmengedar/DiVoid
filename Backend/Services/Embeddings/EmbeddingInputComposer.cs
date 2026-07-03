@@ -13,19 +13,17 @@ public static class EmbeddingInputComposer {
 
     /// <summary>
     /// maximum number of characters in the composed output string.
-    /// the content portion is truncated to fit within this budget while the
-    /// name + separator prefix is always preserved.
-    /// heuristic for ~2k-token Gemini embedding budget (≈4 chars/token on average
-    /// English+German prose); treat as a tunable constant, not a contract.
+    /// delegated to <see cref="EmbeddingCompositionPolicy.MaxLength"/> — single source
+    /// of truth shared with the SQL composition path.
     /// </summary>
-    public const int MaxLength = 8000;
+    public const int MaxLength = EmbeddingCompositionPolicy.MaxLength;
 
     /// <summary>
     /// the separator placed between name and content in the composed string.
-    /// double newline — markdown-natural paragraph boundary, unlikely to collide
-    /// with names, clearly delimits "title" from "body".
+    /// delegated to <see cref="EmbeddingCompositionPolicy.Separator"/> — single source
+    /// of truth shared with the SQL composition path.
     /// </summary>
-    const string Separator = "\n\n";
+    const string Separator = EmbeddingCompositionPolicy.Separator;
 
     /// <summary>
     /// composes the embedding input from a node's name, content bytes, and content type.
@@ -34,11 +32,22 @@ public static class EmbeddingInputComposer {
     /// <param name="content">raw content bytes (nullable)</param>
     /// <param name="contentType">MIME type of the content (nullable)</param>
     /// <returns>
-    /// the string to embed (≤<see cref="MaxLength"/> chars), or null when both name and
-    /// content are empty/non-text (caller must write Embedding = null in that case).
+    /// the string to embed, or null when both name and content are empty/non-text
+    /// (caller must write Embedding = null in that case).
+    /// note: the C# and SQL paths use identical content-type classification, name gate, and
+    /// truncation budget.  residual divergences (both unreachable in the current corpus):
+    /// (1) empty-but-non-null content embeds <c>""</c> on the SQL path vs. <c>null</c> here —
+    /// Ocelot exposes no <c>octet_length</c> predicate to mirror the <c>content.Length &gt; 0</c>
+    /// gate in the <see cref="GoogleMlEmbeddingProvider.BuildEmbeddingUpdate"/> WHERE conditions;
+    /// (2) astral-plane characters at exactly the budget boundary may cut at a different offset —
+    /// C# truncates by UTF-16 code unit, SQL <c>LEFT</c> by code point.
+    ///
+    /// the name gate uses <see cref="string.IsNullOrEmpty"/> — not IsNullOrWhiteSpace —
+    /// so that both paths agree on whitespace-only names: SQL cannot express TRIM so
+    /// "Name != ''" passes whitespace, and <see cref="string.IsNullOrEmpty"/> matches that.
     /// </returns>
     public static string Compose(string name, byte[] content, string contentType) {
-        bool hasName = !string.IsNullOrWhiteSpace(name);
+        bool hasName = !string.IsNullOrEmpty(name);
         bool isTextContent = TextContentTypePredicate.IsText(contentType);
         bool hasTextContent = isTextContent && content != null && content.Length > 0;
 
@@ -47,7 +56,7 @@ public static class EmbeddingInputComposer {
 
         if (hasName && hasTextContent) {
             string contentText = Encoding.UTF8.GetString(content);
-            int contentBudget = Math.Max(0, MaxLength - name.Length - Separator.Length);
+            int contentBudget = MaxLength - Separator.Length;
             if (contentText.Length > contentBudget)
                 contentText = contentText[..contentBudget];
             return name + Separator + contentText;

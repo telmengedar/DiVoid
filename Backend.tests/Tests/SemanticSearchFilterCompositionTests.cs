@@ -54,8 +54,11 @@ namespace Backend.tests.Tests;
 [TestFixture]
 public class SemanticSearchFilterCompositionTests
 {
-    static readonly IEmbeddingCapability EnabledCapability = new EmbeddingCapability(true);
-    static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
+    static IEmbeddingProvider EnabledProviderMock() {
+        Mock<IEmbeddingProvider> mock = new();
+        mock.SetupGet(p => p.IsEnabled).Returns(true);
+        return mock.Object;
+    }
 
     // -----------------------------------------------------------------------
     // Infrastructure
@@ -77,7 +80,7 @@ public class SemanticSearchFilterCompositionTests
     /// enabled embedding capability (no real Postgres needed — we only build the
     /// operation tree and render SQL via <see cref="OperationPreparator"/>).
     /// </summary>
-    static NodeService CreateService(IEntityManager em) => new(em, EnabledCapability);
+    static NodeService CreateService(IEntityManager em) => new(em, EnabledProviderMock());
 
     /// <summary>
     /// renders a <see cref="LoadOperation{T}"/> to SQL text via
@@ -383,7 +386,7 @@ public class SemanticSearchFilterCompositionTests
     public void SF7a_ListPaged_TypeFilter_WithQuery_OnSqlite_ThrowsCorrectGuardException()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = new(fixture.EntityManager, DisabledCapability);
+        NodeService svc = new(fixture.EntityManager, NullEmbeddingProvider.Instance);
 
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPaged(new NodeFilter { Query = "hivemind", Type = ["task"], Count = 10 }, callerId: 0, isAdmin: true),
@@ -395,7 +398,7 @@ public class SemanticSearchFilterCompositionTests
     public void SF7b_ListPaged_StatusFilter_WithQuery_OnSqlite_ThrowsCorrectGuardException()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = new(fixture.EntityManager, DisabledCapability);
+        NodeService svc = new(fixture.EntityManager, NullEmbeddingProvider.Instance);
 
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPaged(new NodeFilter { Query = "open work", Status = ["open"], Count = 10 }, callerId: 0, isAdmin: true),
@@ -406,7 +409,7 @@ public class SemanticSearchFilterCompositionTests
     public void SF7c_ListPaged_LinkedToFilter_WithQuery_OnSqlite_ThrowsCorrectGuardException()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = new(fixture.EntityManager, DisabledCapability);
+        NodeService svc = new(fixture.EntityManager, NullEmbeddingProvider.Instance);
 
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPaged(new NodeFilter { Query = "linked", LinkedTo = [42L], Count = 10 }, callerId: 0, isAdmin: true),
@@ -417,7 +420,7 @@ public class SemanticSearchFilterCompositionTests
     public void SF7d_ListPagedByPath_WithQuery_OnSqlite_ThrowsCorrectGuardException()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = new(fixture.EntityManager, DisabledCapability);
+        NodeService svc = new(fixture.EntityManager, NullEmbeddingProvider.Instance);
 
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPagedByPath(

@@ -21,31 +21,31 @@ namespace Backend.tests.Tests;
 ///
 /// two layers:
 ///
-/// 1. SQLite regression (all fixtures, capability disabled): asserts that the four-branch
-///    code path is entered without crash and that embedding stays null on SQLite.
+/// 1. SQLite regression (all fixtures, capability disabled): asserts that the CASE-expression
+///    UPDATE (<see cref="GoogleMlEmbeddingProvider.BuildEmbeddingUpdate"/>) is entered without
+///    crash and that embedding stays null on SQLite (capability off).
 ///
-/// 2. Postgres parity (all fixtures, gated on POSTGRES_CONNECTION env var): asserts that
-///    the SQL form's output string — derived by calling <c>RegenerateEmbeddingViaBranches</c>
-///    indirectly via PATCH and then selecting the composed input string — equals the C#
-///    <see cref="EmbeddingInputComposer.Compose"/> output byte-for-byte.  Postgres tests are
-///    skipped with <see cref="Assert.Inconclusive"/> when the env var is absent so the rest of
-///    the suite continues normally.
+/// 2. Postgres execution parity (all fixtures, gated on POSTGRES_CONNECTION env var): verifies
+///    on a real Postgres instance that the SQL form's composed output equals the C#
+///    <see cref="EmbeddingInputComposer.Compose"/> output byte-for-byte.  These tests are
+///    skipped with <see cref="Assert.Inconclusive"/> when POSTGRES_CONNECTION is absent —
+///    they do NOT prove parity while running on Null/SQLite; that level is covered by
+///    <see cref="EmbeddingCompositionParityTests"/> CP-PARITY.
 ///
 /// fixtures R1–R7 correspond to the composition-matrix rows in #626 §10.1.
 ///
 /// load-bearing tests per DiVoid #275:
 ///   R6 proves Option A (char-aware decode-then-truncate) over Option B (byte-aware; Postgres
 ///   errors on a split multi-byte boundary).
-///   R7 proves the ApplicationTextTypes allowlist branch is honoured (application/json goes
-///   through F1, not silently dropped into the name-only F2).
+///   R7 proves the prefix LIKE gate is honoured (application/json matches 'application/json%'
+///   via ILIKE and goes through F1, not silently dropped into the name-only F2).
 /// </summary>
 [TestFixture]
 public class EmbeddingPatchSqlCompositionTests
 {
-    static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
 
     static NodeService MakeSqliteService(DatabaseFixture fixture)
-        => new(fixture.EntityManager, DisabledCapability);
+        => new(fixture.EntityManager, NullEmbeddingProvider.Instance);
 
 
     static async Task<NodeDetails> SeedNode(NodeService svc, string name, byte[]? content = null, string? contentType = null)
@@ -176,9 +176,10 @@ public class EmbeddingPatchSqlCompositionTests
     /// (truncate-then-decode, which errors on Postgres when a byte sequence is split).
     ///
     /// construction: 7999 ASCII chars followed by an em-dash (U+2014, 3 UTF-8 bytes) and then
-    /// more content.  the budget for content after name "X" + separator "\n\n" is
-    /// MaxLength - 1 - 2 = 7997 chars.  so the cap lands before the em-dash, which must be
-    /// fully excluded (not split mid-byte).
+    /// more content.  the constant content budget is MaxLength − sep.Length = 7998 chars
+    /// (name length is not deducted — see §6.7 of the embedding-providers design doc).
+    /// so the cap lands before the em-dash at position 7999, which must be fully excluded
+    /// (not split mid-byte).
     ///
     /// on SQLite: no crash, embedding null.  Postgres parity test verifies byte-equality.
     /// </summary>
@@ -188,10 +189,6 @@ public class EmbeddingPatchSqlCompositionTests
         using DatabaseFixture fixture = new();
         NodeService svc = MakeSqliteService(fixture);
 
-        // Build content: 7999 ASCII 'x', then an em-dash (3 UTF-8 bytes), then 1000 more 'y'.
-        // After name "X" (1 char) + separator "\n\n" (2 chars), budget = 8000 - 1 - 2 = 7997.
-        // The em-dash is at position 7999 in the content text — beyond the 7997-char budget,
-        // so it will be fully excluded by LEFT(convert_from(content,'UTF8'),7997) on Postgres.
         string contentText = new string('x', 7999) + "—" + new string('y', 1000);
         byte[] content = Encoding.UTF8.GetBytes(contentText);
         NodeDetails node = await SeedNode(svc, "Original", content, "text/markdown");
@@ -209,9 +206,9 @@ public class EmbeddingPatchSqlCompositionTests
     }
 
     /// <summary>
-    /// R7 (load-bearing for allowlist): name + application/json content → F1 branch.
-    /// proves that the ApplicationTextTypes allowlist IN-clause is honoured: application/json
-    /// must NOT be silently treated as non-text and dropped into the name-only F2 branch.
+    /// R7 (load-bearing for prefix gate): name + application/json content → F1 branch.
+    /// proves that the prefix ILIKE gate is honoured: application/json matches 'application/json%'
+    /// via ILIKE and must NOT be silently treated as non-text and dropped into the name-only F2 branch.
     ///
     /// on SQLite: no crash, embedding null.  Postgres parity test verifies byte-equality.
     /// </summary>
@@ -269,7 +266,7 @@ public class EmbeddingPatchSqlCompositionTests
         await ApplySchema(em);
         PurgeTestData(em);
 
-        NodeService svc = new(em, DisabledCapability);
+        NodeService svc = new(em, NullEmbeddingProvider.Instance);
 
         byte[] content = Encoding.UTF8.GetBytes("# foo\n\nsome markdown body");
         NodeDetails node = await SeedNode(svc, "Before", content, "text/markdown");
@@ -277,7 +274,6 @@ public class EmbeddingPatchSqlCompositionTests
 
         string expected = EmbeddingInputComposer.Compose("Hivemind Protocol", content, "text/markdown");
 
-        // the SQL form computes the same input string — verify the composer agrees
         Assert.That(expected, Is.EqualTo("Hivemind Protocol\n\n# foo\n\nsome markdown body"),
             "R1 Postgres: composer output must equal expected F1 embedding input");
     }
@@ -296,7 +292,7 @@ public class EmbeddingPatchSqlCompositionTests
         await ApplySchema(em);
         PurgeTestData(em);
 
-        NodeService svc = new(em, DisabledCapability);
+        NodeService svc = new(em, NullEmbeddingProvider.Instance);
 
         byte[] content = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
         NodeDetails node = await SeedNode(svc, "Before", content, "image/png");
@@ -321,7 +317,7 @@ public class EmbeddingPatchSqlCompositionTests
         await ApplySchema(em);
         PurgeTestData(em);
 
-        NodeService svc = new(em, DisabledCapability);
+        NodeService svc = new(em, NullEmbeddingProvider.Instance);
         NodeDetails node = await SeedNode(svc, "Before");
         await PatchName(svc, node.Id, "Group node");
 
@@ -344,7 +340,7 @@ public class EmbeddingPatchSqlCompositionTests
         await ApplySchema(em);
         PurgeTestData(em);
 
-        NodeService svc = new(em, DisabledCapability);
+        NodeService svc = new(em, NullEmbeddingProvider.Instance);
 
         byte[] content = Encoding.UTF8.GetBytes("# untitled doc\n\nbody");
         NodeDetails node = await SeedNode(svc, "Before", content, "text/markdown");
@@ -369,7 +365,7 @@ public class EmbeddingPatchSqlCompositionTests
         await ApplySchema(em);
         PurgeTestData(em);
 
-        NodeService svc = new(em, DisabledCapability);
+        NodeService svc = new(em, NullEmbeddingProvider.Instance);
         NodeDetails node = await SeedNode(svc, "Before");
         await PatchName(svc, node.Id, "");
 
@@ -379,16 +375,19 @@ public class EmbeddingPatchSqlCompositionTests
     }
 
     /// <summary>
-    /// R6 Postgres (load-bearing): multi-byte UTF-8 char straddling the 8000-char boundary.
+    /// R6 Postgres (load-bearing): multi-byte UTF-8 char straddling the budget boundary.
     ///
     /// content: 7999 ASCII 'x' + em-dash (U+2014) + 1000 'y'.
-    /// name "X" (1 char) + separator (2 chars) → content budget = 7997 chars.
-    /// C# composer: content[..7997] = 7997 'x' chars (em-dash at 7999 is fully excluded).
-    /// SQL form: LEFT(convert_from(content,'UTF8'), 7997) = same, because decode-then-truncate
-    /// is char-aware.  Option B (LEFT(content,7997) then convert_from) would attempt to decode
-    /// 7997 bytes of a 3-byte em-dash partially — Postgres raises "invalid byte sequence".
+    /// constant budget = MaxLength − sep.Length = 7998 chars (name length not deducted).
+    /// C# composer: content[..7998] = 7998 'x' chars (em-dash at 7999 is fully excluded).
+    /// SQL form: LEFT(convert_from(content,'UTF8'), 7998) = same, because decode-then-truncate
+    /// is char-aware.  Option B (LEFT(content,7998) then convert_from) would attempt to decode
+    /// 7998 bytes of a 3-byte em-dash partially — Postgres raises "invalid byte sequence".
     ///
     /// if this test fails on the SQL side it means Option B (byte-aware) is being used.
+    ///
+    /// note: total composed length for "X" + "\n\n" + content[..7998] = 8001 chars, which
+    /// slightly exceeds MaxLength=8000 — accepted trade of the constant budget (see §6.7).
     /// </summary>
     [Test]
     public async Task R6_Postgres_MultiByteBoundary_SqlComposedInputMatchesComposer()
@@ -401,24 +400,19 @@ public class EmbeddingPatchSqlCompositionTests
         await ApplySchema(em);
         PurgeTestData(em);
 
-        NodeService svc = new(em, DisabledCapability);
+        NodeService svc = new(em, NullEmbeddingProvider.Instance);
 
         string contentText = new string('x', 7999) + "—" + new string('y', 1000);
         byte[] content = Encoding.UTF8.GetBytes(contentText);
         NodeDetails node = await SeedNode(svc, "Before", content, "text/markdown");
         await PatchName(svc, node.Id, "X");
 
-        // name = "X" (1), separator = "\n\n" (2) → content budget = 8000 - 1 - 2 = 7997
-        // em-dash is at content position 7999 → fully beyond budget → excluded, not split
         string expected = EmbeddingInputComposer.Compose("X", content, "text/markdown");
-        int budget = EmbeddingInputComposer.MaxLength - "X".Length - 2;
+        int budget = EmbeddingCompositionPolicy.MaxLength - EmbeddingCompositionPolicy.Separator.Length;
 
         Assert.Multiple(() => {
             Assert.That(expected, Is.Not.Null, "R6: composer must not return null");
             Assert.That(expected, Does.StartWith("X\n\n"), "R6: must start with name + separator");
-            Assert.That(expected.Length, Is.LessThanOrEqualTo(EmbeddingInputComposer.MaxLength),
-                "R6: composed output must not exceed MaxLength");
-            // the em-dash at text position 7999 is beyond the budget (7997); must not appear
             Assert.That(expected, Does.Not.Contain("—"),
                 "R6: em-dash beyond the char budget must be fully excluded — never split mid-byte");
             // the first (budget) chars of content text are all 'x'
@@ -428,12 +422,12 @@ public class EmbeddingPatchSqlCompositionTests
     }
 
     /// <summary>
-    /// R7 Postgres (load-bearing for allowlist): name + application/json content → F1 branch.
+    /// R7 Postgres (load-bearing for prefix gate): name + application/json content → F1 branch.
     ///
-    /// application/json is in TextContentTypePredicate.ApplicationTextTypes (allowlist).
-    /// the SQL predicate must include the IN(allowlist) clause alongside ILIKE 'text/%'.
-    /// without the IN clause, application/json drops into F2 (name-only) and the embedding
-    /// misses the content — this fixture detects that regression.
+    /// application/json matches 'application/json%' via ILIKE (one of TextContentTypePredicate.TextPrefixes).
+    /// the SQL predicate must include the ILIKE 'application/json%' clause.
+    /// without that prefix in the ILIKE OR-chain, application/json drops into F2 (name-only)
+    /// and the embedding misses the content — this fixture detects that regression.
     /// </summary>
     [Test]
     public async Task R7_Postgres_ApplicationJsonContent_SqlComposedInputMatchesComposer()
@@ -446,7 +440,7 @@ public class EmbeddingPatchSqlCompositionTests
         await ApplySchema(em);
         PurgeTestData(em);
 
-        NodeService svc = new(em, DisabledCapability);
+        NodeService svc = new(em, NullEmbeddingProvider.Instance);
 
         byte[] content = Encoding.UTF8.GetBytes("{\"key\":\"value\"}");
         NodeDetails node = await SeedNode(svc, "Before", content, "application/json");

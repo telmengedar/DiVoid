@@ -31,7 +31,7 @@ namespace Backend.tests.Tests;
 ///
 /// All tests run against the SQLite in-memory fixture.  Postgres-only paths
 /// (the actual <c>embedding()</c> / <c>&lt;=&gt;</c> execution) cannot be
-/// exercised in CI — they are gated by <see cref="IEmbeddingCapability.IsEnabled"/>
+/// exercised in CI — they are gated by <see cref="IEmbeddingProvider.IsEnabled"/>
 /// and deferred to a manual smoke test on the live Postgres instance before merge.
 ///
 /// SQL-construction-level assertions (operation tree shape, ORDER BY criteria,
@@ -48,11 +48,8 @@ namespace Backend.tests.Tests;
 [TestFixture]
 public class SemanticSearchTests
 {
-    static readonly IEmbeddingCapability EnabledCapability = new EmbeddingCapability(true);
-    static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
-
-    static NodeService MakeService(DatabaseFixture fixture, IEmbeddingCapability? capability = null)
-        => new(fixture.EntityManager, capability ?? DisabledCapability);
+    static NodeService MakeService(DatabaseFixture fixture, IEmbeddingProvider? provider = null)
+        => new(fixture.EntityManager, provider ?? NullEmbeddingProvider.Instance);
 
     static Task<NodeDetails> CreateNode(NodeService svc, string type = "task", string name = "node")
         => svc.CreateNode(new NodeDetails { Type = type, Name = name }, callerId: 0);
@@ -80,7 +77,7 @@ public class SemanticSearchTests
     public async Task ListPaged_QueryAbsent_CapabilityDisabled_ReturnsNormalListing()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = MakeService(fixture, DisabledCapability);
+        NodeService svc = MakeService(fixture, NullEmbeddingProvider.Instance);
 
         NodeDetails n1 = await CreateNode(svc, name: "Alpha");
         NodeDetails n2 = await CreateNode(svc, name: "Beta");
@@ -107,7 +104,7 @@ public class SemanticSearchTests
     public void ListPaged_QueryPopulated_CapabilityDisabled_ThrowsSemanticSearchUnavailableException()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = MakeService(fixture, DisabledCapability);
+        NodeService svc = MakeService(fixture, NullEmbeddingProvider.Instance);
 
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPaged(new NodeFilter { Query = "find something useful", Count = 10 }, callerId: 0, isAdmin: true));
@@ -117,7 +114,7 @@ public class SemanticSearchTests
     public void ListPaged_QueryPopulated_CapabilityDisabled_ExceptionMessageMentionsPostgres()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = MakeService(fixture, DisabledCapability);
+        NodeService svc = MakeService(fixture, NullEmbeddingProvider.Instance);
 
         SemanticSearchUnavailableException ex = Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPaged(new NodeFilter { Query = "find something", Count = 10 }, callerId: 0, isAdmin: true));
@@ -131,7 +128,7 @@ public class SemanticSearchTests
     {
         // Capability gate must fire on query regardless of whether Path is also present (arch doc §10).
         using DatabaseFixture fixture = new();
-        NodeService svc = MakeService(fixture, DisabledCapability);
+        NodeService svc = MakeService(fixture, NullEmbeddingProvider.Instance);
 
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPagedByPath(
@@ -147,7 +144,7 @@ public class SemanticSearchTests
     public void ListPaged_MinSimilarityWithoutQuery_ThrowsSemanticSearchUnavailableException()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = MakeService(fixture, DisabledCapability);
+        NodeService svc = MakeService(fixture, NullEmbeddingProvider.Instance);
 
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPaged(new NodeFilter { MinSimilarity = 0.5f, Count = 10 }, callerId: 0, isAdmin: true));
@@ -157,7 +154,7 @@ public class SemanticSearchTests
     public void ListPaged_MinSimilarityWithoutQuery_ExceptionMessageMentionsQuery()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = MakeService(fixture, DisabledCapability);
+        NodeService svc = MakeService(fixture, NullEmbeddingProvider.Instance);
 
         SemanticSearchUnavailableException ex = Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPaged(new NodeFilter { MinSimilarity = 0.7f, Count = 10 }, callerId: 0, isAdmin: true));
@@ -170,7 +167,7 @@ public class SemanticSearchTests
     public void ListPagedByPath_MinSimilarityWithoutQuery_ThrowsSemanticSearchUnavailableException()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = MakeService(fixture, DisabledCapability);
+        NodeService svc = MakeService(fixture, NullEmbeddingProvider.Instance);
 
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPagedByPath(
