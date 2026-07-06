@@ -64,6 +64,18 @@ public class NodeFilter : ListFilter
     public bool NoSeverity { get; set; }
 
     /// <summary>
+    /// root-node ids to filter for; returns only nodes grouped under one of the listed root nodes.
+    /// OR-composed with <see cref="NoRootNodeId"/> when both are present.
+    /// </summary>
+    public long[] RootNodeId { get; set; }
+
+    /// <summary>
+    /// when true, only return nodes with no root node set (null, i.e. ungrouped).
+    /// OR-composed with <see cref="RootNodeId"/> when both are present.
+    /// </summary>
+    public bool NoRootNodeId { get; set; }
+
+    /// <summary>
     /// minimum cosine similarity floor (0–1) for semantic search results.
     /// only meaningful when <see cref="Pooshit.AspNetCore.Services.Data.ListFilter.Query"/> is also supplied;
     /// supplying <c>minSimilarity</c> without <c>query</c> returns HTTP 400.

@@ -118,8 +118,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         double insertY = node.Y ?? 0.0;
         DateTime now = DateTime.UtcNow;
         long nodeId = await database.Insert<Node>()
-                              .Columns(n => n.TypeId, n => n.Name, n => n.Status, n => n.Severity, n => n.X, n => n.Y, n => n.OwnerId, n => n.Access, n => n.Created, n => n.LastUpdate)
-                              .Values(typeId, node.Name, node.Status, node.Severity, insertX, insertY, callerId, node.Access ?? (NodeAccess.Read | NodeAccess.Write), now, now)
+                              .Columns(n => n.TypeId, n => n.Name, n => n.Status, n => n.Severity, n => n.RootNodeId, n => n.X, n => n.Y, n => n.OwnerId, n => n.Access, n => n.Created, n => n.LastUpdate)
+                              .Values(typeId, node.Name, node.Status, node.Severity, node.RootNodeId, insertX, insertY, callerId, node.Access ?? (NodeAccess.Read | NodeAccess.Write), now, now)
                               .ReturnID()
                               .ExecuteAsync(transaction);
 
@@ -397,6 +397,24 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         } else if (filter.NoSeverity)
         {
             predicate &= n => n.Severity == null;
+        }
+
+        if (filter.RootNodeId?.Length > 0)
+        {
+            long[] rootIds = filter.RootNodeId;
+            PredicateExpression<Node> rootNodeIdValuePredicate =
+                new PredicateExpression<Node>(n => n.RootNodeId.In(rootIds));
+
+            if (filter.NoRootNodeId)
+            {
+                predicate &= rootNodeIdValuePredicate | new PredicateExpression<Node>(n => n.RootNodeId == null);
+            } else
+            {
+                predicate &= rootNodeIdValuePredicate;
+            }
+        } else if (filter.NoRootNodeId)
+        {
+            predicate &= n => n.RootNodeId == null;
         }
 
         if (filter.SeverityMin.HasValue)
