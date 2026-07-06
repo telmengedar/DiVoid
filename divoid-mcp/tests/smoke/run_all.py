@@ -2998,6 +2998,105 @@ async def smoke_create_node_untyped(config: Any) -> None:
 ### rootNodeId lifecycle (DiVoid #3375 Deliverable 2)
 ### -----------------------------------------------------------------------
 
+async def smoke_patch_node_root_node_id(config: Any) -> None:
+    """
+    divoid_patch_node: set rootNodeId, then clear it — full patch lifecycle.
+
+    Creates a scratch documentation node, patches its rootNodeId to a known
+    integer, verifies the server accepted the value, then clears it via
+    clear_root_node_id=True and confirms the field returns to NULL.
+    Cleans up the scratch node in a finally block.
+
+    Load-bearing proof: _execute is imported by name at the top of run_all.py.
+    Deleting _execute from patch_node.py causes an ImportError that aborts the runner.
+    Removing the root_node_id op from _execute causes the GET verification to
+    return rootNodeId != target_root_id and the assertion fails.
+    Removing the clear_root_node_id branch causes the GET after clear to
+    return rootNodeId != None and the assertion fails.
+    """
+    print("\n--- divoid_patch_node (rootNodeId: set + verify + clear + verify + cleanup) ---")
+
+    # Step 1: Create a scratch documentation node.
+    create_result = await http_client.post_json("nodes", {
+        "name": "[smoke] patch_node rootNodeId — delete me",
+        "type": "documentation",
+    })
+    _assert("POST scratch node returns 2xx", create_result.ok, f"status={create_result.status}")
+    if not create_result.ok:
+        return
+
+    try:
+        node_id = create_result.json()["id"]
+    except Exception as exc:
+        _record("parse created node id", False, str(exc))
+        return
+
+    _assert("scratch node has integer id", isinstance(node_id, int), f"id={node_id!r}")
+
+    try:
+        # Step 2: Patch rootNodeId to the DiVoid Docs group (#7) as a representative root.
+        target_root_id = _DIVOID_DOCS_GROUP_ID
+        patch_result = await _execute_patch_node(
+            id=node_id,
+            config=config,
+            root_node_id=target_root_id,
+        )
+
+        _assert(
+            "patch root_node_id returns no isError",
+            not patch_result.get("isError", False),
+            str(patch_result.get("content", "")),
+        )
+        if patch_result.get("isError"):
+            return
+
+        # Step 3: GET the node to confirm the server stored rootNodeId.
+        get_result = await http_client.get(f"nodes/{node_id}")
+        _assert("GET node after patch returns 2xx", get_result.ok, f"status={get_result.status}")
+        if get_result.ok and get_result.body.strip():
+            node_data = get_result.json()
+            _assert(
+                f"rootNodeId equals {target_root_id} after patch",
+                node_data.get("rootNodeId") == target_root_id,
+                f"rootNodeId={node_data.get('rootNodeId')!r} expected={target_root_id}",
+            )
+
+        # Step 4: Clear rootNodeId via clear_root_node_id=True.
+        clear_result = await _execute_patch_node(
+            id=node_id,
+            config=config,
+            clear_root_node_id=True,
+        )
+
+        _assert(
+            "patch clear_root_node_id=True returns no isError",
+            not clear_result.get("isError", False),
+            str(clear_result.get("content", "")),
+        )
+        if clear_result.get("isError"):
+            return
+
+        # Step 5: GET the node to confirm rootNodeId is now NULL.
+        get_result2 = await http_client.get(f"nodes/{node_id}")
+        _assert("GET node after clear returns 2xx", get_result2.ok, f"status={get_result2.status}")
+        if get_result2.ok and get_result2.body.strip():
+            node_data2 = get_result2.json()
+            _assert(
+                "rootNodeId is null after clear_root_node_id=True",
+                node_data2.get("rootNodeId") is None,
+                f"rootNodeId={node_data2.get('rootNodeId')!r} expected=null",
+            )
+
+    finally:
+        # Cleanup: always delete the scratch node.
+        delete_result = await http_client.delete(f"nodes/{node_id}")
+        _assert(
+            f"DELETE scratch node ({node_id}) returns 2xx (cleanup)",
+            delete_result.ok,
+            f"status={delete_result.status}",
+        )
+
+
 async def smoke_root_node_id_lifecycle(config: Any) -> None:
     """
     rootNodeId end-to-end: create root + child, list scoped, get child,
@@ -3275,6 +3374,7 @@ async def _run_all(config: Any) -> None:
         smoke_create_node_happy_path,
         smoke_create_node_untyped,
         # rootNodeId lifecycle (DiVoid #3375 Deliverable 2)
+        smoke_patch_node_root_node_id,
         smoke_root_node_id_lifecycle,
         # Bootstrap: subprocess spawn verifies FastMCP API compat at startup
         smoke_server_bootstrap,

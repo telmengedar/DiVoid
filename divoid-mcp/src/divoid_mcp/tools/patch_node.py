@@ -1,23 +1,26 @@
 """
 divoid_patch_node -- primitive JSON-Patch wrapper around PATCH /api/nodes/{id}.
 
-Accepts the patchable properties (name, status, x, y, access, owner_id) as
-explicit parameters and composes the JSON-Patch array internally. The caller
-does not need to know the patch format.
+Accepts the patchable properties (name, status, x, y, access, owner_id,
+severity, root_node_id) as explicit parameters and composes the JSON-Patch
+array internally. The caller does not need to know the patch format.
 
 Supported paths per DiVoid #8:
-  /name     -- node name (string)
-  /status   -- node status (string)
-  /X        -- canvas X position (number)
-  /Y        -- canvas Y position (number)
-  /access   -- visibility flags: None=0, Read=1, Write=2, Read|Write=3 (default)
-               Accepts int 0-3 or string "None"/"Read"/"Write"/"Read, Write".
-               Canonicalized to int before composing the patch op.
-               Owner-or-admin gated on the server.
-  /ownerId  -- transfer ownership (admin-only on the server; 404 if unauthorized).
+  /name       -- node name (string)
+  /status     -- node status (string)
+  /X          -- canvas X position (number)
+  /Y          -- canvas Y position (number)
+  /access     -- visibility flags: None=0, Read=1, Write=2, Read|Write=3 (default)
+                 Accepts int 0-3 or string "None"/"Read"/"Write"/"Read, Write".
+                 Canonicalized to int before composing the patch op.
+                 Owner-or-admin gated on the server.
+  /ownerId    -- transfer ownership (admin-only on the server; 404 if unauthorized).
+  /severity   -- node severity (positive integer); use clear_severity=True to set NULL.
+  /rootNodeId -- structural group pointer (positive integer); use clear_root_node_id=True
+                 to ungroup (set NULL).
 
-At least one of the six must be provided — the invariant guard fires before
-any HTTP call with code 'no_fields_to_patch'.
+At least one of the supported fields must be provided — the invariant guard fires
+before any HTTP call with code 'no_fields_to_patch'.
 
 Note: for status changes with lifecycle validation, use divoid_set_status
 instead. divoid_patch_node accepts any string for status without checking the
@@ -41,17 +44,20 @@ from ..errors import InvariantViolation, make_error_content, map_http_error, map
 logger = logging.getLogger(__name__)
 
 _TOOL_DESCRIPTION = """\
-Primitive JSON-Patch update for a DiVoid node. Accepts name, status, severity, x, y, \
-access, and owner_id as explicit parameters and composes the PATCH /api/nodes/{id} call \
-internally. At least one field must be provided (invariant guard: no_fields_to_patch). \
-Returns the updated node on success. For status changes that should enforce the \
-type's lifecycle (task/bug), use divoid_set_status instead — this tool accepts \
-any string for status without validation. access accepts int 0-3 or the string \
-representation ("None", "Read", "Write", "Read, Write") and is canonicalized to int \
-before patching. owner_id transfer is admin-only on the server (returns 404 if \
-unauthorized — the MCP does not gate it). severity accepts a positive integer; \
-to clear severity, pass clear_severity=True — the tool composes a replace /severity null op \
-internally and sends it to the server.\
+Primitive JSON-Patch update for a DiVoid node. Accepts name, status, severity, \
+root_node_id, x, y, access, and owner_id as explicit parameters and composes the \
+PATCH /api/nodes/{id} call internally. At least one field must be provided \
+(invariant guard: no_fields_to_patch). Returns the updated node on success. For \
+status changes that should enforce the type's lifecycle (task/bug), use \
+divoid_set_status instead — this tool accepts any string for status without \
+validation. access accepts int 0-3 or the string representation ("None", "Read", \
+"Write", "Read, Write") and is canonicalized to int before patching. owner_id \
+transfer is admin-only on the server (returns 404 if unauthorized — the MCP does \
+not gate it). severity accepts a positive integer; to clear severity, pass \
+clear_severity=True — the tool composes a replace /severity null op internally. \
+root_node_id assigns a structural group pointer (set/reassign group); to ungroup \
+(set to NULL), pass clear_root_node_id=True — the tool composes a replace \
+/rootNodeId null op internally.\
 """
 
 _ACCESS_STRING_MAP: dict[str, int] = {
@@ -85,6 +91,8 @@ def _check_invariants(
     owner_id: int | None,
     severity: int | None = None,
     clear_severity: bool = False,
+    root_node_id: int | None = None,
+    clear_root_node_id: bool = False,
 ) -> None:
     """
     Check runtime invariants before making any HTTP call.
@@ -95,12 +103,14 @@ def _check_invariants(
     cross-parameter constraints; enforcement is entirely here.
     """
     has_severity_op = severity is not None or clear_severity
+    has_root_node_id_op = root_node_id is not None or clear_root_node_id
     if (name is None and status is None and x is None and y is None
-            and access is None and owner_id is None and not has_severity_op):
+            and access is None and owner_id is None and not has_severity_op
+            and not has_root_node_id_op):
         raise InvariantViolation(
             "no_fields_to_patch",
-            "At least one of name, status, severity, x, y, access, or owner_id must be provided. "
-            "A PATCH with no fields is a no-op.",
+            "At least one of name, status, severity, root_node_id, x, y, access, or owner_id "
+            "must be provided. A PATCH with no fields is a no-op.",
         )
     if access is not None:
         _canonicalize_access(access)
@@ -117,6 +127,8 @@ async def _execute(
     owner_id: int | None = None,
     severity: int | None = None,
     clear_severity: bool = False,
+    root_node_id: int | None = None,
+    clear_root_node_id: bool = False,
 ) -> dict[str, Any]:
     """
     Core implementation of divoid_patch_node.
@@ -144,6 +156,10 @@ async def _execute(
         ops.append({"op": "replace", "path": "/severity", "value": severity})
     elif clear_severity:
         ops.append({"op": "replace", "path": "/severity", "value": None})
+    if root_node_id is not None:
+        ops.append({"op": "replace", "path": "/rootNodeId", "value": root_node_id})
+    elif clear_root_node_id:
+        ops.append({"op": "replace", "path": "/rootNodeId", "value": None})
 
     logger.info(
         "divoid_patch_node id=%d ops=%s",
@@ -192,6 +208,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         owner_id: int | None = None,
         severity: int | None = None,
         clear_severity: bool = False,
+        root_node_id: int | None = None,
+        clear_root_node_id: bool = False,
     ) -> dict[str, Any]:
         """
         Patch one or more properties of a DiVoid node.
@@ -218,12 +236,25 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             clear_severity: If True, sets severity to NULL on the server. Mutually
                             implied exclusive with severity — if both are set, the
                             explicit severity value wins.
+            root_node_id: Assign this node to a structural group by setting its
+                          rootNodeId pointer (set/reassign group). Accepts a positive
+                          integer (the id of the root/group node). Soft pointer — no
+                          existence validation on the server. To ungroup (set to
+                          NULL), pass clear_root_node_id=True instead.
+            clear_root_node_id: If True, sets rootNodeId to NULL on the server,
+                                removing the node from its current group (ungroup).
+                                Mutually implied exclusive with root_node_id — if
+                                both are set, the explicit root_node_id value wins.
 
-        At least one of name, status, severity, clear_severity, x, y, access, or
-        owner_id must be provided (invariant guard: no_fields_to_patch).
+        At least one of name, status, severity, clear_severity, root_node_id,
+        clear_root_node_id, x, y, access, or owner_id must be provided
+        (invariant guard: no_fields_to_patch).
         """
         try:
-            _check_invariants(name, status, x, y, access, owner_id, severity, clear_severity)
+            _check_invariants(
+                name, status, x, y, access, owner_id, severity, clear_severity,
+                root_node_id, clear_root_node_id,
+            )
         except InvariantViolation as exc:
             logger.debug("divoid_patch_node invariant violation: %s", exc.code)
             return {"isError": True, "content": make_error_content(exc.code, exc.message)}
@@ -239,4 +270,6 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             owner_id=owner_id,
             severity=severity,
             clear_severity=clear_severity,
+            root_node_id=root_node_id,
+            clear_root_node_id=clear_root_node_id,
         )

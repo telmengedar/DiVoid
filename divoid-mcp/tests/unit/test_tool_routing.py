@@ -2413,3 +2413,98 @@ async def test_create_session_log_root_node_id_in_post_body(server: FastMCP) -> 
     assert create_body["rootNodeId"] == 7, (
         f"Expected rootNodeId=7, got: {create_body['rootNodeId']!r}."
     )
+
+
+# ---------------------------------------------------------------------------
+# patch_node — rootNodeId (DiVoid #3375)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_patch_node_root_node_id_appends_op(server: FastMCP) -> None:
+    """root_node_id=42 → JSON-Patch body contains replace /rootNodeId op with value 42.
+
+    Substitution probe: remove the root_node_id block from patch_node._execute — the
+    /rootNodeId op is absent from the patch body and this test fails.
+    """
+    node_id = 101
+    captured_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_body.append(json.loads(request.content))
+            return httpx.Response(200, json={"id": node_id, "rootNodeId": 42})
+
+        mock.patch(_NODE_URL.format(id=node_id)).mock(side_effect=capture)
+        result = await _call(server, "divoid_patch_node", {"id": node_id, "root_node_id": 42})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_body) == 1
+    ops = captured_body[0]
+    rni_ops = [op for op in ops if op.get("path") == "/rootNodeId"]
+    assert len(rni_ops) == 1, f"Expected exactly one /rootNodeId op, got ops: {ops!r}"
+    assert rni_ops[0]["op"] == "replace", f"Expected op=replace, got: {rni_ops[0]!r}"
+    assert rni_ops[0]["value"] == 42, (
+        f"Expected value=42, got: {rni_ops[0]['value']!r}. "
+        "Substitution probe: removing the root_node_id block from _execute causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_patch_node_clear_root_node_id_sends_null(server: FastMCP) -> None:
+    """clear_root_node_id=True → JSON-Patch body contains replace /rootNodeId op with value null.
+
+    Substitution probe: remove the clear_root_node_id branch from patch_node._execute —
+    the /rootNodeId op is absent and this test fails.
+    """
+    node_id = 102
+    captured_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_body.append(json.loads(request.content))
+            return httpx.Response(200, json={"id": node_id, "rootNodeId": None})
+
+        mock.patch(_NODE_URL.format(id=node_id)).mock(side_effect=capture)
+        result = await _call(server, "divoid_patch_node", {"id": node_id, "clear_root_node_id": True})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_body) == 1
+    ops = captured_body[0]
+    rni_ops = [op for op in ops if op.get("path") == "/rootNodeId"]
+    assert len(rni_ops) == 1, f"Expected exactly one /rootNodeId op, got ops: {ops!r}"
+    assert rni_ops[0]["op"] == "replace", f"Expected op=replace, got: {rni_ops[0]!r}"
+    assert rni_ops[0]["value"] is None, (
+        f"Expected value=null for clear_root_node_id=True, got: {rni_ops[0]['value']!r}. "
+        "Substitution probe: removing the clear_root_node_id branch from _execute causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_patch_node_lone_root_node_id_passes_invariant(server: FastMCP) -> None:
+    """A lone root_node_id (no other fields) passes the no_fields_to_patch invariant guard.
+
+    Substitution probe: remove root_node_id from the _check_invariants guard condition —
+    the invariant fires and returns isError with no_fields_to_patch, causing this test
+    to fail on the isError assertion.
+    """
+    node_id = 103
+    captured_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_body.append(json.loads(request.content))
+            return httpx.Response(200, json={"id": node_id, "rootNodeId": 7})
+
+        mock.patch(_NODE_URL.format(id=node_id)).mock(side_effect=capture)
+        result = await _call(server, "divoid_patch_node", {"id": node_id, "root_node_id": 7})
+
+    assert result.get("isError") is not True, (
+        f"Expected success for lone root_node_id (no other fields), got error: {result}. "
+        "Substitution probe: removing root_node_id from the _check_invariants guard condition "
+        "causes no_fields_to_patch to fire and this test fails."
+    )
+    assert len(captured_body) == 1, (
+        f"Expected exactly one HTTP PATCH call, got {len(captured_body)}. "
+        "Substitution probe: if the invariant guard fires, no HTTP call is made and this fails."
+    )
