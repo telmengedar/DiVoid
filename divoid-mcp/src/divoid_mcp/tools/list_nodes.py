@@ -100,7 +100,14 @@ SEVERITY FILTERS:
   - no_severity=true: return only nodes with no severity set (NULL). Mutually
     exclusive with severity[].
   - sort="severity": order by severity ascending (combine with descending=true for DESC).
-    Each result row always includes severity: int | null.\
+    Each result row always includes severity: int | null.
+
+ROOT NODE FILTERS:
+  - root_node_id=[N]: return only nodes whose rootNodeId is N (or one of the listed ids).
+    Use to enumerate all nodes grouped under a root — e.g. all docs belonging to a
+    specific docs-group node. Mutually exclusive with no_root_node_id (invariant guard).
+  - no_root_node_id=true: return only nodes with no rootNodeId set (ungrouped). Mutually
+    exclusive with root_node_id[] (invariant guard).\
 """
 
 
@@ -116,6 +123,8 @@ def _check_invariants(
     severity: list[int] | None = None,
     severity_min: int | None = None,
     severity_max: int | None = None,
+    no_root_node_id: bool = False,
+    root_node_id: list[int] | None = None,
 ) -> None:
     """
     Enforce runtime invariants before making any HTTP call.
@@ -161,6 +170,13 @@ def _check_invariants(
             "simultaneously is contradictory. Provide one or the other.",
         )
 
+    if no_root_node_id and root_node_id:
+        raise InvariantViolation(
+            "mutually_exclusive_norootnodeid_rootnodeid",
+            "no_root_node_id=true returns ungrouped nodes (rootNodeId IS NULL); providing "
+            "root_node_id[] simultaneously is contradictory. Provide one or the other.",
+        )
+
 
 _DEFAULT_FIELDS = ["id", "type", "name", "status", "contentType"]
 
@@ -190,6 +206,8 @@ async def _execute(
     severity_min: int | None = None,
     severity_max: int | None = None,
     no_severity: bool = False,
+    root_node_id: list[int] | None = None,
+    no_root_node_id: bool = False,
 ) -> dict[str, Any]:
     """
     Core implementation of divoid_list.
@@ -252,6 +270,10 @@ async def _execute(
         params["severityMax"] = severity_max
     if no_severity:
         params["noSeverity"] = "true"
+    if root_node_id:
+        params["rootNodeId"] = root_node_id
+    if no_root_node_id:
+        params["noRootNodeId"] = "true"
 
     logger.info(
         "divoid_list path=%r linkedto=%s type=%s status=%s count=%d",
@@ -316,6 +338,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         severity_min: int | None = None,
         severity_max: int | None = None,
         no_severity: bool = False,
+        root_node_id: list[int] | None = None,
+        no_root_node_id: bool = False,
     ) -> dict[str, Any]:
         """
         List DiVoid nodes with structural filters, pagination, and optional path-query.
@@ -371,6 +395,12 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                           Forwarded as ?severityMax=.
             no_severity: If true, return only nodes with no severity set (NULL). Mutually
                          exclusive with severity[] (invariant guard). Forwarded as ?noSeverity=true.
+            root_node_id: Filter by rootNodeId value(s). Multiple values = OR. Returns only
+                          nodes grouped under one of these root nodes. Mutually exclusive with
+                          no_root_node_id (invariant guard). Forwarded as ?rootNodeId=.
+            no_root_node_id: If true, return only ungrouped nodes (rootNodeId IS NULL). Mutually
+                             exclusive with root_node_id[] (invariant guard). Forwarded as
+                             ?noRootNodeId=true.
         """
         try:
             _check_invariants(
@@ -385,6 +415,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                 severity=severity,
                 severity_min=severity_min,
                 severity_max=severity_max,
+                no_root_node_id=no_root_node_id,
+                root_node_id=root_node_id,
             )
         except InvariantViolation as exc:
             logger.debug("divoid_list invariant violation: %s", exc.code)
@@ -415,4 +447,6 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             severity_min=severity_min,
             severity_max=severity_max,
             no_severity=no_severity,
+            root_node_id=root_node_id,
+            no_root_node_id=no_root_node_id,
         )

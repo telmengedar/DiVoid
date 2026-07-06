@@ -1968,3 +1968,448 @@ async def test_create_node_meeting_type_post_body_correct(server: FastMCP) -> No
     assert isinstance(result.get("content_length"), int) and result["content_length"] > 0, (
         f"Expected positive content_length, got: {result.get('content_length')!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# rootNodeId — list, search, get_node, create_* (DiVoid #3375)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_root_node_id_forwarded(server: FastMCP) -> None:
+    """root_node_id=[42] → ?rootNodeId=42 appears in the backend URL.
+
+    Substitution probe: remove the root_node_id forwarding block from list_nodes._execute —
+    the rootNodeId param is absent from the URL and this test fails.
+    """
+    api_response = {"result": [], "total": 0}
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_list", {"root_node_id": [42]})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url = str(captured_request[0].url)
+    assert "rootNodeId=42" in url, (
+        f"Expected 'rootNodeId=42' in URL, got: {url!r}. "
+        "Substitution probe: removing the root_node_id forwarding block in list_nodes._execute causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_no_root_node_id_forwarded(server: FastMCP) -> None:
+    """no_root_node_id=True → ?noRootNodeId=true appears in the backend URL.
+
+    Substitution probe: remove the no_root_node_id forwarding block from _execute —
+    the noRootNodeId param is absent from the URL and this test fails.
+    """
+    api_response = {"result": [], "total": 0}
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_list", {"no_root_node_id": True})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url = str(captured_request[0].url)
+    assert "noRootNodeId=true" in url, (
+        f"Expected 'noRootNodeId=true' in URL, got: {url!r}. "
+        "Substitution probe: removing the noRootNodeId forwarding block in _execute causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_no_root_node_id_and_root_node_id_mutually_exclusive(server: FastMCP) -> None:
+    """no_root_node_id=True and root_node_id=[5] → invariant guard returns isError before HTTP call.
+
+    Substitution probe: remove the no_root_node_id/root_node_id mutual-exclusion check from
+    _check_invariants — the guard no longer fires and this test fails on isError assertion.
+    """
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODES_URL).mock(return_value=httpx.Response(200, json={"result": [], "total": 0}))
+        result = await _call(server, "divoid_list", {"no_root_node_id": True, "root_node_id": [5]})
+
+    assert result.get("isError") is True, (
+        f"Expected isError=True for no_root_node_id+root_node_id conflict, got: {result}"
+    )
+    content_text: str = result["content"][0]["text"]
+    assert "mutually_exclusive_norootnodeid_rootnodeid" in content_text, (
+        f"Expected mutually_exclusive_norootnodeid_rootnodeid error code, got: {content_text!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_root_node_id_forwarded(server: FastMCP) -> None:
+    """root_node_id=[7] on divoid_search → ?rootNodeId=7 in the backend URL.
+
+    Substitution probe: remove the root_node_id forwarding block from search.py —
+    rootNodeId is absent from the URL and this test fails.
+    """
+    api_response = {"result": [], "total": 0}
+    captured_request: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_request.append(request)
+            return httpx.Response(200, json=api_response)
+
+        mock.get(_NODES_URL).mock(side_effect=capture)
+        result = await _call(server, "divoid_search", {"query": "scoped search", "root_node_id": [7]})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_request) == 1
+    url = str(captured_request[0].url)
+    assert "rootNodeId=7" in url, (
+        f"Expected 'rootNodeId=7' in URL, got: {url!r}. "
+        "Substitution probe: removing the root_node_id forwarding block in search.py causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_root_node_id_in_result_rows(server: FastMCP) -> None:
+    """search result rows include rootNodeId field when present in API response.
+
+    Substitution probe: remove the rootNodeId key from the row construction in search.py —
+    rootNodeId is absent from the result rows and this test fails.
+    """
+    api_response = {
+        "result": [
+            {
+                "id": 55,
+                "name": "Grouped doc",
+                "type": "documentation",
+                "status": None,
+                "similarity": 0.88,
+                "rootNodeId": 7,
+            }
+        ],
+        "total": 1,
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODES_URL).mock(return_value=httpx.Response(200, json=api_response))
+        result = await _call(server, "divoid_search", {"query": "grouped doc"})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    rows = result.get("results", [])
+    assert len(rows) == 1
+    assert rows[0].get("rootNodeId") == 7, (
+        f"Expected rootNodeId=7 in search result row, got: {rows[0].get('rootNodeId')!r}. "
+        "Substitution probe: removing the rootNodeId key from search row construction causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_root_node_id_null_in_result_rows(server: FastMCP) -> None:
+    """search result rows carry rootNodeId=None when the node is ungrouped.
+
+    Substitution probe: remove the rootNodeId key from search.py row construction —
+    the key is absent and this wire-shape regression assertion fails.
+    """
+    api_response = {
+        "result": [
+            {
+                "id": 99,
+                "name": "Ungrouped doc",
+                "type": "documentation",
+                "status": None,
+                "similarity": 0.75,
+            }
+        ],
+        "total": 1,
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODES_URL).mock(return_value=httpx.Response(200, json=api_response))
+        result = await _call(server, "divoid_search", {"query": "ungrouped doc"})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    rows = result.get("results", [])
+    assert len(rows) == 1
+    assert "rootNodeId" in rows[0], (
+        f"Expected 'rootNodeId' key present in search result row even when null, "
+        f"got keys: {list(rows[0].keys())!r}. "
+        "Substitution probe: removing rootNodeId from search row construction causes this failure."
+    )
+    assert rows[0].get("rootNodeId") is None, (
+        f"Expected rootNodeId=None for ungrouped node, got: {rows[0].get('rootNodeId')!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_node_root_node_id_set(server: FastMCP) -> None:
+    """get_node returns rootNodeId integer when the server sends it.
+
+    Substitution probe: remove the 'rootNodeId' key from get_node.py's return dict —
+    the key is absent from the result and the assertion fails.
+    """
+    node_id = 55
+    server_response = {
+        "id": node_id,
+        "type": "documentation",
+        "name": "Grouped doc",
+        "status": None,
+        "severity": None,
+        "rootNodeId": 7,
+        "contentType": "text/markdown",
+        "x": 0.0,
+        "y": 0.0,
+        "access": "Read, Write",
+        "ownerId": 2,
+        "created": "2026-06-01T10:00:00Z",
+        "lastUpdate": "2026-06-01T10:00:00Z",
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODE_URL.format(id=node_id)).mock(
+            return_value=httpx.Response(200, json=server_response)
+        )
+        result = await _call(server, "divoid_get_node", {"id": node_id})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert "rootNodeId" in result, (
+        f"Expected 'rootNodeId' key in result, got: {list(result.keys())!r}. "
+        "Substitution probe: removing 'rootNodeId' from get_node return dict causes this failure."
+    )
+    assert result.get("rootNodeId") == 7, (
+        f"Expected rootNodeId=7, got: {result.get('rootNodeId')!r}. "
+        "Substitution probe: removing the rootNodeId key from the return dict causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_node_root_node_id_null(server: FastMCP) -> None:
+    """get_node returns rootNodeId=None for ungrouped nodes.
+
+    Substitution probe: remove the 'rootNodeId' key from get_node.py's return dict —
+    the key is absent and the wire-shape regression assertion fails.
+    """
+    node_id = 88
+    server_response = {
+        "id": node_id,
+        "type": "documentation",
+        "name": "Ungrouped doc",
+        "status": None,
+        "contentType": "text/markdown",
+        "x": 0.0,
+        "y": 0.0,
+        "access": "Read, Write",
+        "ownerId": 2,
+        "created": "2026-06-01T00:00:00Z",
+        "lastUpdate": "2026-06-01T00:00:00Z",
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODE_URL.format(id=node_id)).mock(
+            return_value=httpx.Response(200, json=server_response)
+        )
+        result = await _call(server, "divoid_get_node", {"id": node_id})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert "rootNodeId" in result, (
+        f"Expected 'rootNodeId' key present even when null, got keys: {list(result.keys())!r}. "
+        "The key must always be present so callers can distinguish absent from ungrouped."
+    )
+    assert result.get("rootNodeId") is None, (
+        f"Expected rootNodeId=None for ungrouped node, got: {result.get('rootNodeId')!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_node_root_node_id_in_post_body(server: FastMCP) -> None:
+    """root_node_id=99 on divoid_create_node → POST /nodes body carries rootNodeId=99.
+
+    Substitution probe: remove node_body['rootNodeId'] = root_node_id from create_node.py —
+    rootNodeId is absent from the POST body and this test fails.
+    """
+    from divoid_mcp.tools.create_node import register as register_create_node
+
+    cn_server = FastMCP("divoid-mcp-create-node-rni-test")
+    cn_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    register_create_node(cn_server)
+
+    node_id = 1500
+    captured_create_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture_create(request: httpx.Request) -> httpx.Response:
+            captured_create_body.append(json.loads(request.content))
+            return httpx.Response(201, json={"id": node_id, "name": "grouped node", "type": "meeting"})
+
+        mock.post(_NODES_URL).mock(side_effect=capture_create)
+
+        result = await _call(cn_server, "divoid_create_node", {
+            "name": "grouped node",
+            "type": "meeting",
+            "root_node_id": 99,
+        })
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_create_body) >= 1
+    create_body = captured_create_body[0]
+    assert "rootNodeId" in create_body, (
+        f"Expected 'rootNodeId' key in POST body, got: {create_body!r}. "
+        "Substitution probe: removing node_body['rootNodeId'] in create_node.py causes this failure."
+    )
+    assert create_body["rootNodeId"] == 99, (
+        f"Expected rootNodeId=99, got: {create_body['rootNodeId']!r}."
+    )
+    assert result.get("rootNodeId") == 99, (
+        f"Expected rootNodeId=99 in return value, got: {result.get('rootNodeId')!r}. "
+        "Substitution probe: removing rootNodeId from the return dict in create_node.py causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_task_root_node_id_in_post_body(server: FastMCP) -> None:
+    """root_node_id=42 on divoid_create_task → POST /nodes body carries rootNodeId=42.
+
+    Substitution probe: remove node_body['rootNodeId'] = root_node_id from create_task.py —
+    rootNodeId is absent from the POST body and this test fails.
+    """
+    from divoid_mcp.tools.create_task import register as register_create_task
+
+    ct_server = FastMCP("divoid-mcp-create-task-rni-test")
+    ct_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    register_create_task(ct_server)
+
+    task_id = 1600
+    captured_create_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture_create(request: httpx.Request) -> httpx.Response:
+            captured_create_body.append(json.loads(request.content))
+            return httpx.Response(201, json={"id": task_id, "name": "grouped task", "type": "task"})
+
+        mock.post(_NODES_URL).mock(side_effect=capture_create)
+        mock.post(f"{_DUMMY_BASE}/nodes/{task_id}/content").mock(
+            return_value=httpx.Response(200, content=b"")
+        )
+        mock.post(f"{_DUMMY_BASE}/nodes/{task_id}/links").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        result = await _call(ct_server, "divoid_create_task", {
+            "name": "grouped task",
+            "tasks_group_id": 314,
+            "content": "This task belongs to a root group.",
+            "root_node_id": 42,
+        })
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_create_body) >= 1
+    create_body = captured_create_body[0]
+    assert "rootNodeId" in create_body, (
+        f"Expected 'rootNodeId' key in POST body, got: {create_body!r}. "
+        "Substitution probe: removing node_body['rootNodeId'] in create_task.py causes this failure."
+    )
+    assert create_body["rootNodeId"] == 42, (
+        f"Expected rootNodeId=42, got: {create_body['rootNodeId']!r}."
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_documentation_root_node_id_in_post_body(server: FastMCP) -> None:
+    """root_node_id=7 on divoid_create_documentation → POST /nodes body carries rootNodeId=7.
+
+    Substitution probe: remove node_body['rootNodeId'] = root_node_id from create_documentation.py —
+    rootNodeId is absent from the POST body and this test fails.
+    """
+    from divoid_mcp.tools.create_documentation import register as register_create_documentation
+
+    doc_server = FastMCP("divoid-mcp-create-doc-rni-test")
+    doc_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    register_create_documentation(doc_server)
+
+    doc_id = 1700
+    captured_create_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture_create(request: httpx.Request) -> httpx.Response:
+            captured_create_body.append(json.loads(request.content))
+            return httpx.Response(201, json={"id": doc_id, "name": "scoped doc", "type": "documentation"})
+
+        mock.post(_NODES_URL).mock(side_effect=capture_create)
+        mock.post(f"{_DUMMY_BASE}/nodes/{doc_id}/content").mock(
+            return_value=httpx.Response(200, content=b"")
+        )
+        mock.post(f"{_DUMMY_BASE}/nodes/{doc_id}/links").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        result = await _call(doc_server, "divoid_create_documentation", {
+            "name": "scoped doc",
+            "docs_group_id": 7,
+            "content": "This doc is scoped to a root group node.",
+            "root_node_id": 7,
+        })
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_create_body) >= 1
+    create_body = captured_create_body[0]
+    assert "rootNodeId" in create_body, (
+        f"Expected 'rootNodeId' key in POST body, got: {create_body!r}. "
+        "Substitution probe: removing node_body['rootNodeId'] in create_documentation.py causes this failure."
+    )
+    assert create_body["rootNodeId"] == 7, (
+        f"Expected rootNodeId=7, got: {create_body['rootNodeId']!r}."
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_session_log_root_node_id_in_post_body(server: FastMCP) -> None:
+    """root_node_id=7 on divoid_create_session_log → POST /nodes body carries rootNodeId=7.
+
+    Substitution probe: remove node_body['rootNodeId'] = root_node_id from create_session_log.py —
+    rootNodeId is absent from the POST body and this test fails.
+    """
+    from divoid_mcp.tools.create_session_log import register as register_create_session_log
+
+    sl_server = FastMCP("divoid-mcp-create-sl-rni-test")
+    sl_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    register_create_session_log(sl_server)
+
+    sl_id = 1800
+    captured_create_body: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture_create(request: httpx.Request) -> httpx.Response:
+            captured_create_body.append(json.loads(request.content))
+            return httpx.Response(201, json={"id": sl_id, "name": "scoped log", "type": "session-log"})
+
+        mock.post(_NODES_URL).mock(side_effect=capture_create)
+        mock.post(f"{_DUMMY_BASE}/nodes/{sl_id}/content").mock(
+            return_value=httpx.Response(200, content=b"")
+        )
+        mock.post(f"{_DUMMY_BASE}/nodes/{sl_id}/links").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        result = await _call(sl_server, "divoid_create_session_log", {
+            "name": "scoped log",
+            "docs_group_id": 7,
+            "content": "This session-log is scoped to a root group node.",
+            "root_node_id": 7,
+        })
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured_create_body) >= 1
+    create_body = captured_create_body[0]
+    assert "rootNodeId" in create_body, (
+        f"Expected 'rootNodeId' key in POST body, got: {create_body!r}. "
+        "Substitution probe: removing node_body['rootNodeId'] in create_session_log.py causes this failure."
+    )
+    assert create_body["rootNodeId"] == 7, (
+        f"Expected rootNodeId=7, got: {create_body['rootNodeId']!r}."
+    )

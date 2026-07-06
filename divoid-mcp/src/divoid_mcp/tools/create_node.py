@@ -85,6 +85,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         severity: int | None = None,
         access: int | str | None = None,
         extra_links: list[int] | None = None,
+        root_node_id: int | None = None,
     ) -> dict[str, Any]:
         """
         Create a DiVoid node of any type atomically.
@@ -111,6 +112,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             extra_links: Optional list of node ids to link the new node to atomically.
                          Each id receives one POST /nodes/{id}/links call. No dedup is
                          applied — the server treats duplicate links as idempotent.
+            root_node_id: Optional group pointer. When set, the node is filed under the
+                          specified root node (soft pointer — no existence validation). Use
+                          to group related nodes under a shared root for scoped search.
+                          Null (default) = ungrouped. Forwarded as rootNodeId in the POST body.
         """
         if extra_links is None:
             extra_links = []
@@ -133,6 +138,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             node_body["status"] = status
         if severity is not None:
             node_body["severity"] = severity
+        if root_node_id is not None:
+            node_body["rootNodeId"] = root_node_id
         if access is not None:
             try:
                 node_body["access"] = _canonicalize_access(access)
@@ -264,6 +271,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             "type": type,
             "name": name,
             "status": status,
+            "rootNodeId": root_node_id,
             "extra_links_attached": links_created,
             "content_length": content_length,
         }

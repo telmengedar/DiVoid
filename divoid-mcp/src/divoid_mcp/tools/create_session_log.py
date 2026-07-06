@@ -103,6 +103,7 @@ async def _execute(
     extra_links: list[int] | None = None,
     access: int | str | None = None,
     severity: int | None = None,
+    root_node_id: int | None = None,
 ) -> dict[str, Any]:
     """
     Core implementation of divoid_create_session_log.
@@ -135,6 +136,8 @@ async def _execute(
     node_body: dict[str, Any] = {"name": name, "type": "session-log"}
     if severity is not None:
         node_body["severity"] = severity
+    if root_node_id is not None:
+        node_body["rootNodeId"] = root_node_id
     if access is not None:
         node_body["access"] = _canonicalize_access(access)
     try:
@@ -293,6 +296,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         extra_links: list[int] | None = None,
         access: int | str | None = None,
         severity: int | None = None,
+        root_node_id: int | None = None,
     ) -> dict[str, Any]:
         """
         Create a session-log node in DiVoid atomically.
@@ -324,6 +328,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                     private node visible only to owner/admin.
             severity: Optional integer severity for this node. When absent the server
                       defaults to NULL (no severity set).
+            root_node_id: Optional group pointer. When set, the session-log is filed
+                          under the specified root node (soft pointer — no existence
+                          validation). Null (default) = ungrouped. Forwarded as
+                          rootNodeId in the POST body.
         """
         try:
             _check_invariants(name, content, project_id, docs_group_id)
@@ -347,4 +355,5 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             extra_links=extra_links,
             access=access,
             severity=severity,
+            root_node_id=root_node_id,
         )

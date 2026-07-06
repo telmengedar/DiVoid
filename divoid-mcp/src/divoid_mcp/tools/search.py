@@ -35,15 +35,20 @@ probably relevant, < 0.4 as no useful hit. Compose with type, linkedto, or \
 status filters to narrow scope when you already know the structural shape. \
 Always prefer this over divoid_list for question-shaped queries.
 
-Return shape: each result has id, name, similarity, and optionally type, \
+Return shape: each result has id, name, similarity, rootNodeId, and optionally type, \
 status, and contentType. type is null for structural group nodes (Tasks, Docs \
 containers); status is null for nodes whose type does not carry a lifecycle \
-(most types other than task / bug). Use n.get() rather than direct key access \
-when consuming results. Set include_content=True to fetch the body inline on \
-each row — opt-in for research / lookup flows that need to read the bodies of \
-the top hits; costs bandwidth. Set include_links=True to fetch direct neighbor \
-ids inline on each row — opt-in for graph-walking / fan-out-avoidance flows; \
-costs bandwidth proportional to adjacency density.\
+(most types other than task / bug); rootNodeId is null for ungrouped nodes. \
+Use n.get() rather than direct key access when consuming results. \
+Set include_content=True to fetch the body inline on each row — opt-in for \
+research / lookup flows that need to read the bodies of the top hits; costs bandwidth. \
+Set include_links=True to fetch direct neighbor ids inline on each row — opt-in for \
+graph-walking / fan-out-avoidance flows; costs bandwidth proportional to adjacency density.
+
+SCOPED SEARCH: supply root_node_id=[N] to constrain results to nodes grouped \
+under root N. This is the primary use case for the rootNodeId grouping feature — \
+a semantic search scoped to a single docs-group or project-group runs faster and \
+does not bleed in documents from other groups.\
 """
 
 
@@ -63,6 +68,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         created_to: str | None = None,
         updated_from: str | None = None,
         updated_to: str | None = None,
+        root_node_id: list[int] | None = None,
     ) -> dict[str, Any]:
         """
         Semantic search over the DiVoid graph.
@@ -96,6 +102,12 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                           after this timestamp (inclusive). Forwarded as-is to the backend.
             updated_to: ISO 8601 datetime string. Return only nodes last updated before this
                         timestamp (exclusive). Forwarded as-is to the backend.
+            root_node_id: Optional filter: only return nodes whose rootNodeId is one of these
+                          values. Use to scope semantic search to a specific docs-group or
+                          project-group (e.g. root_node_id=[7] returns only docs grouped under
+                          node #7). Forwarded as ?rootNodeId=. Null = ungrouped nodes are
+                          excluded from a root-scoped search. Each result row includes
+                          rootNodeId: int | null regardless of whether this filter is set.
         """
         if not query or not query.strip():
             return {
@@ -140,6 +152,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             params["UpdatedFrom"] = updated_from
         if updated_to is not None:
             params["UpdatedTo"] = updated_to
+        if root_node_id:
+            params["rootNodeId"] = root_node_id
 
         logger.info(
             "divoid_search query=%r type=%s linkedto=%s status=%s count=%d",
@@ -175,6 +189,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                 "status": n.get("status"),
                 "severity": n.get("severity"),
                 "similarity": n.get("similarity"),
+                "rootNodeId": n.get("rootNodeId"),
             }
             if "contentType" in n:
                 row["contentType"] = n["contentType"]

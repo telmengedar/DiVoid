@@ -2995,6 +2995,135 @@ async def smoke_create_node_untyped(config: Any) -> None:
 
 
 ### -----------------------------------------------------------------------
+### rootNodeId lifecycle (DiVoid #3375 Deliverable 2)
+### -----------------------------------------------------------------------
+
+async def smoke_root_node_id_lifecycle(config: Any) -> None:
+    """
+    rootNodeId end-to-end: create root + child, list scoped, get child,
+    no_root_node_id exclusion, cleanup.
+
+    Verifies the full lifecycle added in DiVoid #3375 (Deliverable 2):
+    - POST /nodes with rootNodeId -> server stores the pointer
+    - list_nodes with root_node_id=[N] -> returns only nodes in that group
+    - list_nodes with no_root_node_id=True -> excludes grouped nodes
+    - GET /nodes/{id} -> rootNodeId is surfaced in the response
+
+    rootNodeId is a soft pointer (no FK): any integer id is valid on the wire.
+    We use a freshly created scratch node as the root to keep the test
+    self-contained and avoid polluting real project groups.
+    """
+    print("\n--- rootNodeId lifecycle (create + list scoped + get + no_root_node_id + cleanup) ---")
+
+    # Step 1: Create a scratch root node.  Any node can serve as a group
+    # pointer — rootNodeId is a soft pointer with no FK validation.
+    root_result = await http_client.post_json("nodes", {
+        "name": "[smoke] root_node_id-root — delete me",
+        "type": "documentation",
+    })
+    _assert("POST root node returns 2xx", root_result.ok, f"status={root_result.status}")
+    if not root_result.ok:
+        return
+
+    try:
+        root_id = root_result.json()["id"]
+    except Exception as exc:
+        _record("parse root node id", False, str(exc))
+        return
+
+    _assert("root node has integer id", isinstance(root_id, int), f"id={root_id!r}")
+
+    # Step 2: Create a child node whose rootNodeId points to root_id.
+    child_result = await http_client.post_json("nodes", {
+        "name": "[smoke] root_node_id-child — delete me",
+        "type": "documentation",
+        "rootNodeId": root_id,
+    })
+    _assert(
+        "POST child node (rootNodeId set) returns 2xx",
+        child_result.ok,
+        f"status={child_result.status}",
+    )
+    if not child_result.ok:
+        await http_client.delete(f"nodes/{root_id}")
+        return
+
+    try:
+        child_id = child_result.json()["id"]
+    except Exception as exc:
+        _record("parse child node id", False, str(exc))
+        await http_client.delete(f"nodes/{root_id}")
+        return
+
+    _assert("child node has integer id", isinstance(child_id, int), f"id={child_id!r}")
+
+    try:
+        # Step 3: list_nodes with root_node_id=[root_id] — child must appear;
+        # root itself (rootNodeId=NULL) must not.
+        list_scoped = await _execute_list(config=config, root_node_id=[root_id], count=50)
+        _assert(
+            "list root_node_id=[N] returns no isError",
+            not list_scoped.get("isError", False),
+            str(list_scoped.get("content", "")),
+        )
+        if not list_scoped.get("isError"):
+            scoped_ids = {n.get("id") for n in list_scoped.get("result", [])}
+            _assert(
+                "child node appears in root_node_id=[root_id] list",
+                child_id in scoped_ids,
+                f"child_id={child_id} scoped_ids_sample={list(scoped_ids)[:5]}",
+            )
+            _assert(
+                "root node does NOT appear in scoped list (root itself has rootNodeId=NULL)",
+                root_id not in scoped_ids,
+                f"root_id={root_id} unexpectedly in scoped list",
+            )
+
+        # Step 4: list_nodes with no_root_node_id=True — returns only ungrouped nodes
+        # (rootNodeId IS NULL).  Child has rootNodeId set, so it must not appear
+        # regardless of how many ungrouped nodes we fetch.
+        list_ungrouped = await _execute_list(config=config, no_root_node_id=True, count=50)
+        _assert(
+            "list no_root_node_id=True returns no isError",
+            not list_ungrouped.get("isError", False),
+            str(list_ungrouped.get("content", "")),
+        )
+        if not list_ungrouped.get("isError"):
+            ungrouped_ids = {n.get("id") for n in list_ungrouped.get("result", [])}
+            _assert(
+                "child node (rootNodeId set) NOT in no_root_node_id=True list",
+                child_id not in ungrouped_ids,
+                f"child_id={child_id} unexpectedly appeared in ungrouped list",
+            )
+
+        # Step 5: GET the child node directly — verify rootNodeId is surfaced.
+        get_result = await http_client.get(f"nodes/{child_id}")
+        _assert("GET child node returns 2xx", get_result.ok, f"status={get_result.status}")
+        if get_result.ok:
+            node_data = get_result.json()
+            _assert(
+                "GET child node rootNodeId equals root_id",
+                node_data.get("rootNodeId") == root_id,
+                f"rootNodeId={node_data.get('rootNodeId')!r} expected={root_id}",
+            )
+
+    finally:
+        # Cleanup: always delete both scratch nodes.
+        del_child = await http_client.delete(f"nodes/{child_id}")
+        del_root = await http_client.delete(f"nodes/{root_id}")
+        _assert(
+            f"DELETE child node ({child_id}) returns 2xx (cleanup)",
+            del_child.ok,
+            f"status={del_child.status}",
+        )
+        _assert(
+            f"DELETE root node ({root_id}) returns 2xx (cleanup)",
+            del_root.ok,
+            f"status={del_root.status}",
+        )
+
+
+### -----------------------------------------------------------------------
 ### Server bootstrap smoke test (the one that catches FastMCP API mismatches)
 ### -----------------------------------------------------------------------
 
@@ -3145,6 +3274,8 @@ async def _run_all(config: Any) -> None:
         smoke_create_node_invariant_violation,
         smoke_create_node_happy_path,
         smoke_create_node_untyped,
+        # rootNodeId lifecycle (DiVoid #3375 Deliverable 2)
+        smoke_root_node_id_lifecycle,
         # Bootstrap: subprocess spawn verifies FastMCP API compat at startup
         smoke_server_bootstrap,
     ]

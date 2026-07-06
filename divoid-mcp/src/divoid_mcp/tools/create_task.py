@@ -129,6 +129,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         extra_links: list[int] | None = None,
         access: int | str | None = None,
         severity: int | None = None,
+        root_node_id: int | None = None,
     ) -> dict[str, Any]:
         """
         Create a task node in DiVoid atomically.
@@ -160,6 +161,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             severity: Optional integer severity for this task. Application scope
                       fills in meaning (e.g. priority). When absent the server
                       defaults to NULL (no severity set).
+            root_node_id: Optional group pointer. When set, the task is filed under
+                          the specified root node (soft pointer — no existence validation).
+                          Use to group related tasks under a shared root for scoped search.
+                          Null (default) = ungrouped. Forwarded as rootNodeId in the POST body.
         """
         if extra_links is None:
             extra_links = []
@@ -188,6 +193,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         node_body: dict[str, Any] = {"name": name, "type": "task", "status": status}
         if severity is not None:
             node_body["severity"] = severity
+        if root_node_id is not None:
+            node_body["rootNodeId"] = root_node_id
         if access is not None:
             try:
                 node_body["access"] = _canonicalize_access(access)
