@@ -33,6 +33,13 @@ public class NodeDetails
     public int? Severity { get; set; }
 
     /// <summary>
+    /// id of the root node under which this node is grouped; null means ungrouped.
+    /// set on create, patchable via <c>PATCH replace /RootNodeId</c>.
+    /// soft pointer — the referenced node's existence is not validated.
+    /// </summary>
+    public long? RootNodeId { get; set; }
+
+    /// <summary>
     /// MIME content type of the node's blob content, if any (e.g. "text/markdown", "application/json", "image/png").
     /// Absent when the node has no content.
     /// </summary>

@@ -101,6 +101,14 @@ public class Node
     public NodeAccess Access { get; set; }
 
     /// <summary>
+    /// groups this node under a root node for scoped operations; null means ungrouped.
+    /// soft pointer — no FK check or existence validation is performed on set or patch.
+    /// </summary>
+    [AllowPatch]
+    [Index("rootnode")]
+    public long? RootNodeId { get; set; }
+
+    /// <summary>
     /// UTC timestamp when this node was created.
     /// </summary>
     [Index("created")]
