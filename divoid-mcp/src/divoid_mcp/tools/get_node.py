@@ -22,11 +22,12 @@ from ..errors import make_error_content, map_http_error, map_unreachable
 logger = logging.getLogger(__name__)
 
 _TOOL_DESCRIPTION = """\
-Fetch a single node's properties (id, type, name, status, severity, contentType, \
-position, access, ownerId, created, lastUpdate). Use this when you have a node \
-id (from search results, a link, a memory pointer) and need its metadata. For \
-the content body, use divoid_get_content separately — properties and content are \
-intentionally split because content can be large and is not always needed.\
+Fetch a single node's properties (id, type, name, status, severity, rootNodeId, \
+contentType, position, access, ownerId, created, lastUpdate). Use this when you \
+have a node id (from search results, a link, a memory pointer) and need its \
+metadata. For the content body, use divoid_get_content separately — properties \
+and content are intentionally split because content can be large and is not \
+always needed.\
 """
 
 
@@ -40,7 +41,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
 
         Args:
             id: The node id. Must be a positive integer. Returns id, type, name,
-                status, severity, contentType, x, y, access, ownerId, created, lastUpdate.
+                status, severity, rootNodeId, contentType, x, y, access, ownerId,
+                created, lastUpdate. rootNodeId is null for ungrouped nodes.
         """
         if id < 1:
             return {
@@ -71,6 +73,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             "name": data.get("name"),
             "status": data.get("status"),
             "severity": data.get("severity"),
+            "rootNodeId": data.get("rootNodeId"),
             "contentType": data.get("contentType"),
             "x": data.get("x"),
             "y": data.get("y"),
