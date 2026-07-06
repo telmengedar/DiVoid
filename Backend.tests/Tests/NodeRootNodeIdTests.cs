@@ -41,10 +41,6 @@ public class NodeRootNodeIdTests
 
     static NodeService MakeService(DatabaseFixture fixture) => new(fixture.EntityManager, DisabledCapability);
 
-    // -----------------------------------------------------------------------
-    // Helpers — service layer
-    // -----------------------------------------------------------------------
-
     static Task<NodeDetails> Create(NodeService svc, string type = "task", string name = "Test node")
         => svc.CreateNode(new NodeDetails { Type = type, Name = name }, callerId: 0);
 
@@ -64,10 +60,6 @@ public class NodeRootNodeIdTests
         Page<NodeDetails> page = Json.Read<Page<NodeDetails>>(json);
         return page.Result?.ToList() ?? [];
     }
-
-    // -----------------------------------------------------------------------
-    // Create — round-trip
-    // -----------------------------------------------------------------------
 
     /// <summary>
     /// Verifies that a <see cref="Node.RootNodeId"/> supplied on create survives
@@ -119,10 +111,6 @@ public class NodeRootNodeIdTests
         Assert.That(fetched.RootNodeId, Is.Null,
             "nodes created without a rootNodeId must have null rootNodeId (no server-side default)");
     }
-
-    // -----------------------------------------------------------------------
-    // Patch — [AllowPatch] round-trip
-    // -----------------------------------------------------------------------
 
     /// <summary>
     /// Verifies that PATCH replace /RootNodeId updates the stored value.
@@ -178,10 +166,6 @@ public class NodeRootNodeIdTests
         Assert.That(cleared.RootNodeId, Is.Null,
             "PATCH replace /rootNodeId -> null must clear the stored value");
     }
-
-    // -----------------------------------------------------------------------
-    // List filter — rootNodeId=<list>
-    // -----------------------------------------------------------------------
 
     /// <summary>
     /// Verifies that filtering by rootNodeId returns only nodes grouped under those root nodes.
@@ -354,10 +338,6 @@ public class NodeRootNodeIdTests
             "§6.6: list response JSON must contain the key 'rootNodeId' — " +
             "absent means rootNodeId is missing from DefaultListFields or the FieldMapping was not registered");
     }
-
-    // -----------------------------------------------------------------------
-    // SQL-shape — rootNodeId filter composes with semantic search (§6.6 semantic gate)
-    // -----------------------------------------------------------------------
 
     /// <summary>
     /// Verifies that a <c>rootNodeId</c> filter ANDs correctly with the semantic-search
