@@ -2262,7 +2262,7 @@ async def smoke_patch_node_invariant_no_fields(config: Any) -> None:
     raised = False
     violation_code = None
     try:
-        _check_patch_node_invariants(name=None, status=None, x=None, y=None)
+        _check_patch_node_invariants(name=None, status=None, x=None, y=None, access=None, owner_id=None)
     except InvariantViolation as exc:
         raised = True
         violation_code = exc.code
