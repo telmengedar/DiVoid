@@ -54,7 +54,6 @@ from divoid_mcp.tools.list_nodes import _check_invariants as _check_list_invaria
 from divoid_mcp.tools.list_nodes import _execute as _execute_list
 from divoid_mcp.tools.patch_node import _check_invariants as _check_patch_node_invariants
 from divoid_mcp.tools.patch_node import _execute as _execute_patch_node
-from divoid_mcp.tools.set_status import _validate_status_for_type
 from divoid_mcp.tools.set_status import _execute as _execute_set_status
 from divoid_mcp.tools.set_content import _check_invariants as _check_set_content_invariants
 from divoid_mcp.tools.set_content import _execute as _execute_set_content
@@ -2375,64 +2374,83 @@ async def smoke_patch_node_happy_path(config: Any) -> None:
 
 ### -----------------------------------------------------------------------
 
-async def smoke_set_status_invariant_task_wrong_status(config: Any) -> None:
-    """divoid_set_status: 'fixed' is not valid for task -> status_not_in_task_lifecycle."""
-    print("\n--- divoid_set_status (invariant: task status_not_in_task_lifecycle) ---")
+async def smoke_set_status_freeform_round_trip(config: Any) -> None:
+    """
+    divoid_set_status: free-form status values accepted on any node type (DiVoid #5837 fix).
 
-    raised = False
-    violation_code = None
+    Before the fix, 'norepro' on a task raised status_not_in_task_lifecycle and
+    any status on a documentation node raised status_not_supported_for_type.
+    After the fix both must succeed — the backend (DiVoid #24) is the authority.
+
+    Creates a scratch task, sets status to 'norepro' (previously rejected), verifies
+    the backend accepted it, then creates a scratch documentation node, sets its
+    status to 'superseded' (previously rejected for any non-task/bug type), verifies
+    that too, then cleans up both nodes.
+
+    Load-bearing proof: _execute is imported by name at the top of run_all.py.
+    Deleting _execute from set_status.py causes an ImportError. The assertions
+    on result.get("status") fail if the PATCH is not reaching the backend.
+    """
+    print("\n--- divoid_set_status (free-form round-trip: norepro on task, superseded on doc) ---")
+
+    # --- Part A: free-form status 'norepro' on a task (was: status_not_in_task_lifecycle) ---
+    task_result = await http_client.post_json("nodes", {
+        "name": "[smoke] set_status freeform task — delete me",
+        "type": "task",
+        "status": "open",
+    })
+    _assert("POST task returns 2xx", task_result.ok, f"status={task_result.status}")
+    if not task_result.ok:
+        return
+
+    task_id = task_result.json()["id"]
+    _assert("task has integer id", isinstance(task_id, int), f"id={task_id!r}")
+
     try:
-        _validate_status_for_type("task", "fixed")
-    except InvariantViolation as exc:
-        raised = True
-        violation_code = exc.code
+        result = await _execute_set_status(id=task_id, status="norepro", config=config)
+        _assert(
+            "set_status('norepro') on task returns no isError (was rejected before fix)",
+            not result.get("isError", False),
+            str(result.get("content", "")),
+        )
+        if not result.get("isError"):
+            _assert(
+                "task status is now 'norepro'",
+                result.get("status") == "norepro",
+                f"status={result.get('status')!r}",
+            )
+    finally:
+        del_task = await http_client.delete(f"nodes/{task_id}")
+        _assert(f"cleanup task #{task_id} returns 2xx", del_task.ok, f"status={del_task.status}")
 
-    _assert("'fixed' on task raises InvariantViolation", raised)
-    _assert(
-        "violation code is 'status_not_in_task_lifecycle'",
-        violation_code == "status_not_in_task_lifecycle",
-        f"code={violation_code!r}",
-    )
+    # --- Part B: free-form status 'superseded' on documentation (was: status_not_supported_for_type) ---
+    doc_result = await http_client.post_json("nodes", {
+        "name": "[smoke] set_status freeform doc — delete me",
+        "type": "documentation",
+    })
+    _assert("POST documentation returns 2xx", doc_result.ok, f"status={doc_result.status}")
+    if not doc_result.ok:
+        return
 
+    doc_id = doc_result.json()["id"]
+    _assert("doc has integer id", isinstance(doc_id, int), f"id={doc_id!r}")
 
-async def smoke_set_status_invariant_documentation(config: Any) -> None:
-    """divoid_set_status: any status on 'documentation' -> status_not_supported_for_type."""
-    print("\n--- divoid_set_status (invariant: documentation status_not_supported_for_type) ---")
-
-    raised = False
-    violation_code = None
     try:
-        _validate_status_for_type("documentation", "open")
-    except InvariantViolation as exc:
-        raised = True
-        violation_code = exc.code
-
-    _assert("status on documentation raises InvariantViolation", raised)
-    _assert(
-        "violation code is 'status_not_supported_for_type'",
-        violation_code == "status_not_supported_for_type",
-        f"code={violation_code!r}",
-    )
-
-
-async def smoke_set_status_invariant_bug_wrong_status(config: Any) -> None:
-    """divoid_set_status: 'closed' is not valid for bug -> status_not_in_bug_lifecycle."""
-    print("\n--- divoid_set_status (invariant: bug status_not_in_bug_lifecycle) ---")
-
-    raised = False
-    violation_code = None
-    try:
-        _validate_status_for_type("bug", "closed")
-    except InvariantViolation as exc:
-        raised = True
-        violation_code = exc.code
-
-    _assert("'closed' on bug raises InvariantViolation", raised)
-    _assert(
-        "violation code is 'status_not_in_bug_lifecycle'",
-        violation_code == "status_not_in_bug_lifecycle",
-        f"code={violation_code!r}",
-    )
+        result2 = await _execute_set_status(id=doc_id, status="superseded", config=config)
+        _assert(
+            "set_status('superseded') on documentation returns no isError (was rejected before fix)",
+            not result2.get("isError", False),
+            str(result2.get("content", "")),
+        )
+        if not result2.get("isError"):
+            _assert(
+                "documentation status is now 'superseded'",
+                result2.get("status") == "superseded",
+                f"status={result2.get('status')!r}",
+            )
+    finally:
+        del_doc = await http_client.delete(f"nodes/{doc_id}")
+        _assert(f"cleanup doc #{doc_id} returns 2xx", del_doc.ok, f"status={del_doc.status}")
 
 
 async def smoke_set_status_not_found(config: Any) -> None:
@@ -2454,10 +2472,12 @@ async def smoke_set_status_not_found(config: Any) -> None:
 
 async def smoke_set_status_happy_path(config: Any) -> None:
     """
-    divoid_set_status: happy path — create task, set status to in-progress, then closed, delete.
+    divoid_set_status: happy path — create task, set status through open/in-progress/closed, delete.
 
-    Load-bearing proof: _execute is imported by name at the top of run_all.py.
-    Deleting _execute from set_status.py causes an ImportError that aborts the runner.
+    Also verifies that cross-type free-form statuses (e.g. 'norepro') are accepted,
+    consistent with the DiVoid #5837 fix. Load-bearing proof: _execute is imported
+    by name at the top of run_all.py — deleting it causes an ImportError that aborts
+    the runner.
     """
     print("\n--- divoid_set_status (happy path + cleanup) ---")
 
@@ -2489,21 +2509,21 @@ async def smoke_set_status_happy_path(config: Any) -> None:
                 f"status={result.get('status')!r}",
             )
 
-        # Step 3: Try setting 'fixed' (bug-only status) — should fire invariant.
-        inv_result = await _execute_set_status(id=node_id, status="fixed", config=config)
+        # Step 3: Set a free-form status ('fixed') — now accepted on any node type (DiVoid #5837).
+        result_fixed = await _execute_set_status(id=node_id, status="fixed", config=config)
         _assert(
-            "set_status('fixed') on task returns isError",
-            inv_result.get("isError", False),
+            "set_status('fixed') on task returns no isError (free-form, DiVoid #5837)",
+            not result_fixed.get("isError", False),
+            str(result_fixed.get("content", "")),
         )
-        if inv_result.get("isError"):
-            error_text = inv_result.get("content", [{}])[0].get("text", "")
+        if not result_fixed.get("isError"):
             _assert(
-                "error code is status_not_in_task_lifecycle",
-                error_text.startswith("status_not_in_task_lifecycle"),
-                f"text={error_text[:80]!r}",
+                "returned node has status='fixed'",
+                result_fixed.get("status") == "fixed",
+                f"status={result_fixed.get('status')!r}",
             )
 
-        # Step 4: Set status to closed — valid.
+        # Step 4: Set status to closed — valid lifecycle value and a free-form string.
         result2 = await _execute_set_status(id=node_id, status="closed", config=config)
         _assert(
             "set_status(closed) returns no isError",
@@ -3357,9 +3377,7 @@ async def _run_all(config: Any) -> None:
         smoke_patch_node_invariant_no_fields,
         smoke_patch_node_not_found,
         smoke_patch_node_happy_path,
-        smoke_set_status_invariant_task_wrong_status,
-        smoke_set_status_invariant_documentation,
-        smoke_set_status_invariant_bug_wrong_status,
+        smoke_set_status_freeform_round_trip,
         smoke_set_status_not_found,
         smoke_set_status_happy_path,
         smoke_set_content_invariant_empty,
