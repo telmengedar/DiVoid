@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Repository layout — this is a monorepo
+
+**DiVoid is a monorepo. The backend, the MCP server, and the frontend all live in this one repository.** Do not go looking for a separate repo when a task touches the MCP or the frontend — it is here. The top-level directories:
+
+- `Backend/` — ASP.NET Core Web API (.NET 9). The REST API and persistence layer.
+- `Backend.tests/` — NUnit tests for the backend.
+- `divoid-mcp/` — Python MCP server that wraps the DiVoid REST API (the `mcp__divoid__*` tools). Has its own `CLAUDE.md` (`divoid-mcp/CLAUDE.md`) — read it before touching MCP code.
+- `frontend/` — the web frontend.
+- `docs/` — architecture and design documents (deliverables committed here).
+
+`DiVoid.sln` is only the .NET half (Backend + Backend.tests); the MCP and frontend are separate toolchains (Python / Node) rooted in their own subdirectories. When a report says "the MCP does X" or "the frontend does Y", the code is in `divoid-mcp/` or `frontend/` respectively — start there, don't assume it lives elsewhere.
+
 ## Code contracts (READ BEFORE IMPLEMENTING)
 
 Two contract documents define the engineering standards for this repo. Both are enforced by `jenny-qa-reviewer` during PR review — a violation cites the section number, not personal preference.

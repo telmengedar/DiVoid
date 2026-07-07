@@ -26,6 +26,8 @@ New tools require human sign-off from the repo owner before implementation — t
 
 5. **Invariant guard runs before any HTTP call** in composite tools. Violations raise `InvariantViolation`; the dispatcher wraps it in an MCP error. Do not call HTTP before the guard.
 
+6. **The system layer never enforces client *vocabulary*.** DiVoid provides the system; the *convention* — which status values a type carries, what they mean, which types even use status — is the client's scope and evolves as the client refines its process. So the MCP must **never** hard-code an allow-list of status values, node types, or any other free-form vocabulary and reject what the backend would accept. If the backend takes it, the tool passes it through. This is why `divoid_set_status` is a thin free-form PATCH wrapper with no lifecycle check (PR #157 / DiVoid #5837 removed the old `{new,open,in-progress,closed}` allow-list — it forced a REST fallback every time a new status was coined, and citing a client-convention doc like `#493 §5` as justification was the exact mistake). Invariant 5's guard is for *structural* invariants the backend genuinely requires (content-required types, lifecycle ORDER of operations) — not for policing vocabulary the backend leaves open. When unsure whether a rule is "structural invariant" or "client convention": if the backend accepts the value, it's convention — do not enforce it here.
+
 ## Repo layout
 
 ```
