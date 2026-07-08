@@ -62,6 +62,7 @@ from divoid_mcp.tools.get_links import _execute as _execute_get_links
 from divoid_mcp.tools.create_node import _check_invariants as _check_create_node_invariants
 from divoid_mcp.tools.edit_content import _check_invariants as _check_edit_content_invariants
 from divoid_mcp.tools.edit_content import _execute as _execute_edit_content
+from divoid_mcp.tools.delete_node import _execute as _execute_delete_node
 from divoid_mcp.errors import InvariantViolation
 
 # Pinned group ids for the smoke-test target project (DiVoid project #3).
@@ -3500,6 +3501,85 @@ async def smoke_edit_content_happy_path(config: Any) -> None:
 
 ### -----------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# divoid_delete_node (DiVoid #6319)
+# ---------------------------------------------------------------------------
+
+async def smoke_delete_node_lifecycle(config: Any) -> None:
+    """
+    divoid_delete_node: create a throwaway node -> delete it -> verify it is gone.
+
+    Uses _execute directly (load-bearing: deleting _execute from delete_node.py
+    causes an ImportError that aborts the entire runner).
+
+    Arc: POST /nodes (scratch documentation) -> _execute_delete_node -> GET /nodes/{id}
+    must return 404. The test is wrapped in try/finally to clean up the scratch
+    node even if the delete call itself fails, so repeated runs do not accumulate
+    residue.
+    """
+    print("\n--- divoid_delete_node (create -> delete -> verify gone) ---")
+
+    # Step 1: Create a throwaway node.
+    create_result = await http_client.post_json("nodes", {
+        "name": "[smoke-test] divoid_delete_node — delete me",
+        "type": "documentation",
+    })
+    _assert("POST /nodes (scratch) returns 2xx", create_result.ok, f"status={create_result.status}")
+    if not create_result.ok:
+        return
+
+    try:
+        node_id = create_result.json()["id"]
+    except Exception as exc:
+        _record("parse created node id", False, str(exc))
+        return
+
+    _assert("created node has integer id", isinstance(node_id, int), f"id={node_id!r}")
+    if not isinstance(node_id, int):
+        return
+
+    delete_result: dict[str, Any] = {"isError": True}
+    try:
+        # Step 2: Delete via _execute.
+        delete_result = await _execute_delete_node(id=node_id, config=config)
+        _assert(
+            "_execute_delete_node returns no isError",
+            not delete_result.get("isError", False),
+            str(delete_result.get("content", "")),
+        )
+        _assert(
+            "_execute_delete_node returns success=True",
+            delete_result.get("success") is True,
+            f"delete_result={delete_result!r}",
+        )
+        _assert(
+            "_execute_delete_node echoes back the id",
+            delete_result.get("id") == node_id,
+            f"expected id={node_id}, got={delete_result.get('id')!r}",
+        )
+
+        # Step 3: Verify the node is gone (GET returns 404).
+        verify = await http_client.get(f"nodes/{node_id}")
+        _assert(
+            f"GET /nodes/{node_id} returns 404 after delete",
+            verify.status == 404,
+            f"status={verify.status}",
+        )
+
+    finally:
+        # Safety net: if delete failed, try direct HTTP cleanup so we do not
+        # leave residue on repeated runs.
+        if delete_result.get("isError", False):
+            fallback = await http_client.delete(f"nodes/{node_id}")
+            _assert(
+                f"fallback cleanup DELETE /nodes/{node_id} returns 2xx",
+                fallback.ok,
+                f"status={fallback.status}",
+            )
+
+
+### -----------------------------------------------------------------------
+
 async def _run_all(config: Any) -> None:
     tests = [
         smoke_search,
@@ -3575,6 +3655,8 @@ async def _run_all(config: Any) -> None:
         # divoid_edit_content (DiVoid #6285 / PR #159 backend dependency)
         smoke_edit_content_invariant,
         smoke_edit_content_happy_path,
+        # divoid_delete_node (DiVoid #6319)
+        smoke_delete_node_lifecycle,
         # Bootstrap: subprocess spawn verifies FastMCP API compat at startup
         smoke_server_bootstrap,
     ]

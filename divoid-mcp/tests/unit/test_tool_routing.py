@@ -28,6 +28,7 @@ from mcp.server.fastmcp import FastMCP
 from divoid_mcp import http_client
 from divoid_mcp.config import DivoidConfig
 from divoid_mcp.tools.delete_message import register as register_delete_message
+from divoid_mcp.tools.delete_node import register as register_delete_node
 from divoid_mcp.tools.get_content import register as register_get_content
 from divoid_mcp.tools.get_node import register as register_get_node
 from divoid_mcp.tools.list_nodes import register as register_list_nodes
@@ -76,6 +77,7 @@ def server() -> FastMCP:
     register_patch_node(mcp_server)
     register_search(mcp_server)
     register_delete_message(mcp_server)
+    register_delete_node(mcp_server)
 
     return mcp_server
 
@@ -1506,6 +1508,101 @@ async def test_list_no_severity_forwarded(server: FastMCP) -> None:
     assert "noSeverity=true" in url, (
         f"Expected 'noSeverity=true' in URL, got: {url!r}. "
         "Substitution probe: removing the noSeverity forwarding block in _execute causes this failure."
+    )
+
+
+# ---------------------------------------------------------------------------
+# divoid_delete_node — 3 hermetic branches (DiVoid #6319)
+#
+# The server returns:
+#   204 No Content on success (ok=True, empty body)
+#   404 JSON {code, text} when the node does not exist
+#   403 JSON {code, text} when the caller lacks permission
+#
+# This is a pure REST-parity tool: thin wrapper over DELETE /nodes/{id}.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_node_success(server: FastMCP) -> None:
+    """204 No Content → tool returns {success: True, id: N} and DELETE was issued.
+
+    Substitution probe: remove the http_client.delete call from _execute —
+    no DELETE is issued; captured_requests is empty and the method assertion fails.
+    """
+    node_id = 100
+    captured_requests: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(request: httpx.Request) -> httpx.Response:
+            captured_requests.append(request)
+            return httpx.Response(204, content=b"")
+
+        mock.delete(_NODE_URL.format(id=node_id)).mock(side_effect=capture)
+        result = await _call(server, "divoid_delete_node", {"id": node_id})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert result.get("success") is True, f"Expected success=True, got: {result.get('success')!r}"
+    assert result.get("id") == node_id, f"Expected id={node_id}, got: {result.get('id')!r}"
+    assert len(captured_requests) >= 1, (
+        "Expected at least one DELETE request to be issued, got 0. "
+        "Substitution probe: if this fails after removing the http_client.delete call, "
+        "that is the expected failure — the test correctly guards the HTTP behaviour."
+    )
+    assert captured_requests[0].method == "DELETE", (
+        f"Expected DELETE method, got: {captured_requests[0].method!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_node_not_found(server: FastMCP) -> None:
+    """404 → tool returns isError with node_not_found code mapped through shared helper.
+
+    Substitution probe: remove the `if not result.ok` branch in _execute —
+    the 404 is treated as success; isError is absent and the assertion fails.
+    """
+    node_id = 999_999_999
+    body = json.dumps({
+        "code": "data_entitynotfound",
+        "text": f"'Node' with id '{node_id}' not found",
+    }).encode()
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.delete(_NODE_URL.format(id=node_id)).mock(
+            return_value=httpx.Response(404, content=body)
+        )
+        result = await _call(server, "divoid_delete_node", {"id": node_id})
+
+    assert result.get("isError") is True, f"Expected isError=True for missing node, got: {result}"
+    content_text: str = result["content"][0]["text"]
+    assert "node_not_found" in content_text, (
+        f"Expected 'node_not_found' in error text, got: {content_text!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_node_forbidden(server: FastMCP) -> None:
+    """403 → tool returns isError (4xx fallback code).
+
+    Substitution probe: remove the `if not result.ok` branch in _execute —
+    the 403 is treated as success; the isError assertion fails.
+    """
+    node_id = 42
+    body = json.dumps({
+        "code": "forbidden",
+        "text": "caller does not have permission to delete this node",
+    }).encode()
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.delete(_NODE_URL.format(id=node_id)).mock(
+            return_value=httpx.Response(403, content=body)
+        )
+        result = await _call(server, "divoid_delete_node", {"id": node_id})
+
+    assert result.get("isError") is True, f"Expected isError=True for forbidden, got: {result}"
+    content_text: str = result["content"][0]["text"]
+    assert "divoid_bad_request" in content_text or "403" in content_text, (
+        f"Expected 403-mapped error code in text, got: {content_text!r}"
     )
 
 
