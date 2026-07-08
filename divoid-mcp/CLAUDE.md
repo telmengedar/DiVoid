@@ -26,6 +26,8 @@ New tools require human sign-off from the repo owner before implementation — t
 
 5. **Invariant guard runs before any HTTP call** in composite tools. Violations raise `InvariantViolation`; the dispatcher wraps it in an MCP error. Do not call HTTP before the guard.
 
+6. **The system layer never enforces client *vocabulary*.** DiVoid provides the system; the *convention* — which status values a type carries, what they mean, which types even use status — is the client's scope and evolves as the client refines its process. So the MCP must **never** hard-code an allow-list of status values, node types, or any other free-form vocabulary and reject what the backend would accept. If the backend takes it, the tool passes it through. This is why `divoid_set_status` is a thin free-form PATCH wrapper with no lifecycle check (PR #157 / DiVoid #5837 removed the old `{new,open,in-progress,closed}` allow-list — it forced a REST fallback every time a new status was coined, and citing a client-convention doc like `#493 §5` as justification was the exact mistake). Invariant 5's guard is for *structural* invariants the backend genuinely requires (content-required types, lifecycle ORDER of operations) — not for policing vocabulary the backend leaves open. When unsure whether a rule is "structural invariant" or "client convention": if the backend accepts the value, it's convention — do not enforce it here.
+
 ## Repo layout
 
 ```
@@ -45,11 +47,36 @@ examples/              # .mcp.json registration examples
 
 ## Running
 
+**Dev/test the code in an ISOLATED virtualenv — never `pip install -e .` into the environment that backs the operational MCP registration.** The machine's operational MCP (registered as `python -m divoid_mcp`, used by every session) must be the **pinned, non-editable** install from git — see the "Install / update the operational MCP" section below. An editable install into that same env silently overrides the pin and makes the running server float with whatever this working tree currently holds (wrong branch, uncommitted edits, half-finished work). That has bitten us more than once: an agent runs the smoke suite here, does `pip install -e .` as this section used to say, and every other session on the box is suddenly running unreviewed working-tree code.
+
+So, to work on the code:
+
 ```bash
-pip install -e .
-python -m divoid_mcp          # run server (will block on stdio)
-python tests/smoke/run_all.py # run smoke tests against live DiVoid
+python -m venv .venv && . .venv/Scripts/activate   # isolated; Scripts/ on Windows, bin/ on POSIX
+pip install -e .                                   # editable, but ONLY inside this throwaway venv
+python -m divoid_mcp                               # run server (blocks on stdio; Ctrl+C to stop)
+python tests/smoke/run_all.py                      # smoke tests against live DiVoid
+deactivate                                         # the operational install is untouched
 ```
+
+## Install / update the operational MCP (pinned, non-editable)
+
+The MCP every session loads is a **frozen git install in site-packages**, decoupled from this repo working tree. This is the ONLY supported form for the operational server. To install or update it after a change merges to `main`:
+
+```bash
+pip uninstall -y divoid-mcp   # if a stray editable install is present, clear it first
+pip install --force-reinstall "git+https://github.com/telmengedar/DiVoid.git#subdirectory=divoid-mcp"
+# private repo → prefix the host with a token: git+https://x-access-token:$(~/.claude/secrets/gh-app-token.sh --profile pooshit)@github.com/...
+```
+
+Then fully restart the MCP host (Claude Code / Desktop) — a running session does NOT pick up a reinstall. Verify it is pinned, not editable:
+
+```bash
+pip show divoid-mcp | grep -i editable        # must print NOTHING (an "Editable project location:" line is the bug)
+python -c "import divoid_mcp,os; print(os.path.dirname(divoid_mcp.__file__))"  # must be site-packages, NOT this repo
+```
+
+Full human-facing install/upgrade walkthrough: DiVoid **#829**.
 
 ## Code style
 
