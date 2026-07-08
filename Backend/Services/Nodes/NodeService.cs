@@ -1089,29 +1089,78 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                           .ExecuteAsync(transaction) == 0)
             throw new NotFoundException<Node>(nodeId);
 
-        if (embeddingCapability.IsEnabled) {
-            ct.ThrowIfCancellationRequested();
-            Node row = await database.Load<Node>(n => n.Name)
-                                     .Where(n => n.Id == nodeId)
-                                     .ExecuteEntityAsync(transaction);
-
-            string composed = EmbeddingInputComposer.Compose(row.Name, blob, contentType);
-            if (composed != null) {
-                await database.Update<Node>()
-                              .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                                          DB.Constant(TextContentTypePredicate.EmbeddingModel),
-                                                                          DB.Constant(composed)).Type<float[]>())
-                              .Where(n => n.Id == nodeId)
-                              .ExecuteAsync(transaction);
-            } else {
-                await database.Update<Node>()
-                              .Set(n => n.Embedding == (float[]) null)
-                              .Where(n => n.Id == nodeId)
-                              .ExecuteAsync(transaction);
-            }
-        }
+        await RegenerateContentEmbedding(transaction, nodeId, blob, contentType, ct);
 
         transaction.Commit();
+    }
+
+    /// <summary>
+    /// regenerates the node's embedding from its current name and the supplied content, inside
+    /// <paramref name="transaction"/>.  no-op when the embedding capability is disabled (SQLite).
+    /// composes name + content via <see cref="EmbeddingInputComposer"/> and writes the vector, or
+    /// writes null when there is no embeddable surface.  shared by content upload and content patch.
+    /// </summary>
+    /// <param name="transaction">the open transaction wrapping the content write</param>
+    /// <param name="nodeId">id of the row whose embedding is regenerated</param>
+    /// <param name="content">the content bytes now stored on the node</param>
+    /// <param name="contentType">MIME type of the content, for text classification</param>
+    /// <param name="ct">cancellation token threaded from the controller</param>
+    async Task RegenerateContentEmbedding(Transaction transaction, long nodeId, byte[] content, string contentType, CancellationToken ct)
+    {
+        if (!embeddingCapability.IsEnabled)
+            return;
+
+        ct.ThrowIfCancellationRequested();
+        Node row = await database.Load<Node>(n => n.Name)
+                                 .Where(n => n.Id == nodeId)
+                                 .ExecuteEntityAsync(transaction);
+
+        string composed = EmbeddingInputComposer.Compose(row.Name, content, contentType);
+        if (composed != null) {
+            await database.Update<Node>()
+                          .Set(n => n.Embedding == DB.CustomFunction("embedding",
+                                                                      DB.Constant(TextContentTypePredicate.EmbeddingModel),
+                                                                      DB.Constant(composed)).Type<float[]>())
+                          .Where(n => n.Id == nodeId)
+                          .ExecuteAsync(transaction);
+        } else {
+            await database.Update<Node>()
+                          .Set(n => n.Embedding == (float[]) null)
+                          .Where(n => n.Id == nodeId)
+                          .ExecuteAsync(transaction);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<NodeDetails> PatchContent(long nodeId, ContentEdit[] edits, long callerId, bool isAdmin, CancellationToken ct)
+    {
+        PredicateExpression<Node> gate = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write: true);
+        PredicateExpression<Node> predicate = new PredicateExpression<Node>(n => n.Id == nodeId);
+        if (gate != null)
+            predicate &= gate;
+
+        using Transaction transaction = database.Transaction();
+
+        Node node = await database.Load<Node>(n => n.ContentType, n => n.Content)
+                                  .Where(predicate.Content)
+                                  .ExecuteEntityAsync(transaction);
+        if (node == null)
+            throw new NotFoundException<Node>(nodeId);
+        if (node.Content == null)
+            throw new NotFoundException<Node>($"Node '{nodeId}' has no content");
+
+        byte[] edited = ContentEditor.Apply(node.Content, node.ContentType, edits);
+
+        DateTime editedAt = DateTime.UtcNow;
+        await database.Update<Node>()
+                      .Set(n => n.Content == edited, n => n.LastUpdate == editedAt)
+                      .Where(n => n.Id == nodeId)
+                      .ExecuteAsync(transaction);
+
+        await RegenerateContentEmbedding(transaction, nodeId, edited, node.ContentType, ct);
+
+        transaction.Commit();
+        return await GetNodeById(nodeId, callerId, isAdmin: true);
     }
 
     /// <inheritdoc />

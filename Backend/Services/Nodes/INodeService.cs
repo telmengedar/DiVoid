@@ -86,6 +86,26 @@ public interface INodeService
     Task UploadContent(long nodeId, string contentType, Stream data, long callerId, bool isAdmin, CancellationToken ct = default);
 
     /// <summary>
+    /// applies an ordered set of range replacements to a node's existing text content and
+    /// persists the result, regenerating the embedding (on Postgres) in the same transaction.
+    /// all edits are addressed against the content as read; the node's content type is unchanged.
+    /// </summary>
+    /// <param name="nodeId">id of the node whose content is edited</param>
+    /// <param name="edits">ordered range replacements to apply</param>
+    /// <param name="callerId">DiVoid user-id of the caller; write required on the node</param>
+    /// <param name="isAdmin">true when the caller holds the admin permission</param>
+    /// <param name="ct">cancellation token</param>
+    /// <returns>the updated node</returns>
+    /// <exception cref="Pooshit.AspNetCore.Services.Errors.Exceptions.NotFoundException{Node}">
+    /// thrown when the node does not exist, is not writable by the caller, or has no content (→ 404).
+    /// </exception>
+    /// <exception cref="ArgumentException">
+    /// thrown when the content is not text, is not valid UTF-8, or the edits are empty, out of
+    /// bounds, or overlapping (→ 400).
+    /// </exception>
+    Task<NodeDetails> PatchContent(long nodeId, ContentEdit[] edits, long callerId, bool isAdmin, CancellationToken ct);
+
+    /// <summary>
     /// lists link adjacency rows where either endpoint is in <paramref name="ids"/>.
     /// used by the workspace viewport to fetch edges incident to visible nodes in a single round-trip.
     /// </summary>

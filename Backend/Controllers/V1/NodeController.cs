@@ -187,6 +187,26 @@ namespace Backend.Controllers.V1
         }
 
         /// <summary>
+        /// applies partial edits to a node's existing text content — an ordered list of
+        /// range replacements (replace / insert / delete / append) addressed by line or
+        /// character, all against the content as read.  a safer alternative to a wholesale
+        /// content re-upload via <c>POST /content</c>.
+        /// on Postgres the embedding is regenerated in the same transaction.
+        /// </summary>
+        /// <param name="nodeId">id of the node whose content is edited</param>
+        /// <param name="edits">ordered range replacements to apply</param>
+        /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
+        /// <returns>the updated node</returns>
+        [HttpPatch("{nodeId:long}/content")]
+        [Authorize(Policy = "write")]
+        public Task<NodeDetails> PatchContent(long nodeId, [FromBody] ContentEdit[] edits, CancellationToken ct)
+        {
+            logger.LogInformation("Editing content of node '{nodeId}' with {count} edit(s)", nodeId, edits?.Length ?? 0);
+            (long callerId, bool isAdmin) = ResolveCaller();
+            return nodeService.PatchContent(nodeId, edits, callerId, isAdmin, ct);
+        }
+
+        /// <summary>
         /// deletes an existing node
         /// </summary>
         /// <param name="nodeId">id of node to delete</param>
