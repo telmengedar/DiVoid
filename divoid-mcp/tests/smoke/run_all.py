@@ -60,6 +60,8 @@ from divoid_mcp.tools.set_content import _execute as _execute_set_content
 from divoid_mcp.tools.get_links import _check_invariants as _check_get_links_invariants
 from divoid_mcp.tools.get_links import _execute as _execute_get_links
 from divoid_mcp.tools.create_node import _check_invariants as _check_create_node_invariants
+from divoid_mcp.tools.edit_content import _check_invariants as _check_edit_content_invariants
+from divoid_mcp.tools.edit_content import _execute as _execute_edit_content
 from divoid_mcp.errors import InvariantViolation
 
 # Pinned group ids for the smoke-test target project (DiVoid project #3).
@@ -3321,6 +3323,182 @@ async def smoke_server_bootstrap(config: Any) -> None:
 
 
 ### -----------------------------------------------------------------------
+# divoid_edit_content (DiVoid #6285 / PR #159 dependency)
+# ---------------------------------------------------------------------------
+
+async def smoke_edit_content_invariant(config: Any) -> None:
+    """
+    divoid_edit_content: invariant guard rejects structural violations before HTTP.
+
+    Exercises _check_invariants directly — no network call needed.
+    Load-bearing: importing _check_edit_content_invariants at the top of this file
+    fails at import time if the symbol is removed from edit_content.py.
+    """
+    print("\n--- divoid_edit_content (invariant: empty_edits) ---")
+
+    # Empty edits list -> empty_edits violation.
+    raised, code = False, None
+    try:
+        _check_edit_content_invariants([])
+    except InvariantViolation as exc:
+        raised, code = True, exc.code
+    _assert("empty edits raises InvariantViolation", raised)
+    _assert("code is 'empty_edits'", code == "empty_edits", f"code={code!r}")
+
+    # Unknown op -> unknown_op violation.
+    raised, code = False, None
+    try:
+        _check_edit_content_invariants([{"op": "teleport_lines"}])
+    except InvariantViolation as exc:
+        raised, code = True, exc.code
+    _assert("unknown op raises InvariantViolation", raised)
+    _assert("code is 'unknown_op'", code == "unknown_op", f"code={code!r}")
+
+    # end_line < start_line -> end_before_start violation.
+    raised, code = False, None
+    try:
+        _check_edit_content_invariants([{"op": "replace_lines", "start_line": 5, "end_line": 3, "value": "x"}])
+    except InvariantViolation as exc:
+        raised, code = True, exc.code
+    _assert("end_line < start_line raises InvariantViolation", raised)
+    _assert("code is 'end_before_start'", code == "end_before_start", f"code={code!r}")
+
+    # line=0 for insert_before_line -> non_positive_index violation.
+    raised, code = False, None
+    try:
+        _check_edit_content_invariants([{"op": "insert_before_line", "line": 0, "value": "x"}])
+    except InvariantViolation as exc:
+        raised, code = True, exc.code
+    _assert("line=0 raises InvariantViolation", raised)
+    _assert("code is 'non_positive_index'", code == "non_positive_index", f"code={code!r}")
+
+
+async def smoke_edit_content_happy_path(config: Any) -> None:
+    """
+    divoid_edit_content: live round-trip via PATCH /nodes/{id}/content (DiVoid PR #159).
+
+    Creates a scratch node, sets content, edits it via _execute_edit_content, verifies
+    the edit was applied by reading the content back, then cleans up.
+
+    SKIP gracefully if the endpoint is not yet deployed (404/405 from the backend):
+    PR #159 is not merged/deployed on every environment. The invariant smoke above
+    covers the tool's logic without a live backend; this test covers the wire contract
+    once the endpoint is available.
+    """
+    print("\n--- divoid_edit_content (live round-trip via PATCH /content) ---")
+
+    # Step 1: Create a scratch node.
+    create_result = await http_client.post_json("nodes", {
+        "name": "[smoke-test] divoid_edit_content -- delete me",
+        "type": "documentation",
+    })
+    _assert("POST node returns 2xx", create_result.ok, f"status={create_result.status}")
+    if not create_result.ok:
+        return
+
+    try:
+        node_id = create_result.json()["id"]
+    except Exception as exc:
+        _record("parse created node id", False, str(exc))
+        return
+
+    _assert("created node has integer id", isinstance(node_id, int), f"id={node_id!r}")
+
+    try:
+        # Step 2: Upload initial content.
+        initial = "line one\nline two\nline three\n"
+        upload = await http_client.post_bytes(
+            f"nodes/{node_id}/content",
+            initial.encode("utf-8"),
+            "text/plain; charset=utf-8",
+        )
+        _assert("POST content returns 2xx", upload.ok, f"status={upload.status}")
+        if not upload.ok:
+            return
+
+        # Step 3: Probe the PATCH endpoint — skip tolerantly if not deployed.
+        probe = await http_client.patch_json(f"nodes/{node_id}/content", [
+            {"unit": "line", "start": 1, "length": 1, "value": "LINE TWO REPLACED\n"}
+        ])
+        if probe.status in (404, 405):
+            print(
+                f"  [SKIP] PATCH /nodes/{node_id}/content returned {probe.status} — "
+                "backend PR #159 not yet deployed. Skipping live round-trip."
+            )
+            return
+
+        # Step 4: Call _execute directly with the ergonomic replace_lines verb.
+        result = await _execute_edit_content(
+            id=node_id,
+            edits=[{"op": "replace_lines", "start_line": 2, "end_line": 2, "value": "LINE TWO EDITED\n"}],
+            config=config,
+        )
+        _assert(
+            "_execute returns no isError",
+            not result.get("isError", False),
+            str(result.get("content", "")),
+        )
+        if result.get("isError"):
+            return
+
+        # Step 5: Read back content and verify the edit was applied.
+        read_back = await http_client.get(f"nodes/{node_id}/content")
+        _assert("GET content after edit returns 2xx", read_back.ok, f"status={read_back.status}")
+        if read_back.ok:
+            edited_text = read_back.body.decode("utf-8")
+            _assert(
+                "edited content contains 'LINE TWO EDITED'",
+                "LINE TWO EDITED" in edited_text,
+                f"content={edited_text!r}",
+            )
+            _assert(
+                "edited content still contains 'line one'",
+                "line one" in edited_text,
+                f"content={edited_text!r}",
+            )
+            _assert(
+                "edited content still contains 'line three'",
+                "line three" in edited_text,
+                f"content={edited_text!r}",
+            )
+            _assert(
+                "original 'line two' is gone",
+                "line two\n" not in edited_text,
+                f"content={edited_text!r}",
+            )
+
+        # Step 6: Test append verb via _execute.
+        append_result = await _execute_edit_content(
+            id=node_id,
+            edits=[{"op": "append", "value": "appended line\n"}],
+            config=config,
+        )
+        _assert(
+            "append via _execute returns no isError",
+            not append_result.get("isError", False),
+            str(append_result.get("content", "")),
+        )
+        if not append_result.get("isError"):
+            read_after_append = await http_client.get(f"nodes/{node_id}/content")
+            if read_after_append.ok:
+                appended_text = read_after_append.body.decode("utf-8")
+                _assert(
+                    "appended content ends with 'appended line\\n'",
+                    appended_text.endswith("appended line\n"),
+                    f"tail={appended_text[-40:]!r}",
+                )
+
+    finally:
+        # Cleanup: always delete the scratch node.
+        del_result = await http_client.delete(f"nodes/{node_id}")
+        _assert(
+            f"DELETE /nodes/{node_id} returns 2xx (cleanup)",
+            del_result.ok,
+            f"status={del_result.status}",
+        )
+
+
+### -----------------------------------------------------------------------
 
 async def _run_all(config: Any) -> None:
     tests = [
@@ -3394,6 +3572,9 @@ async def _run_all(config: Any) -> None:
         # rootNodeId lifecycle (DiVoid #3375 Deliverable 2)
         smoke_patch_node_root_node_id,
         smoke_root_node_id_lifecycle,
+        # divoid_edit_content (DiVoid #6285 / PR #159 backend dependency)
+        smoke_edit_content_invariant,
+        smoke_edit_content_happy_path,
         # Bootstrap: subprocess spawn verifies FastMCP API compat at startup
         smoke_server_bootstrap,
     ]
@@ -3411,7 +3592,7 @@ async def _run_all(config: Any) -> None:
 
 
 def main() -> None:
-    print("divoid-mcp smoke tests: read-side + composites + messaging + list + primitives + bootstrap")
+    print("divoid-mcp smoke tests: read-side + composites + messaging + list + primitives + edit-content + bootstrap")
     print("=" * 60)
 
     config = _setup()
