@@ -63,6 +63,7 @@ from divoid_mcp.tools.create_node import _check_invariants as _check_create_node
 from divoid_mcp.tools.edit_content import _check_invariants as _check_edit_content_invariants
 from divoid_mcp.tools.edit_content import _execute as _execute_edit_content
 from divoid_mcp.tools.delete_node import _execute as _execute_delete_node
+from divoid_mcp.tools.download_content import _execute as _execute_download_content
 from divoid_mcp.errors import InvariantViolation
 
 # Pinned group ids for the smoke-test target project (DiVoid project #3).
@@ -3580,6 +3581,125 @@ async def smoke_delete_node_lifecycle(config: Any) -> None:
 
 ### -----------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# divoid_download_content (DiVoid task #6597)
+# ---------------------------------------------------------------------------
+
+async def smoke_download_content_binary_round_trip(config: Any) -> None:
+    """
+    divoid_download_content: upload binary content with a non-UTF-8 byte,
+    download it to a temp file, assert byte-identity, clean up both.
+
+    Load-bearing proof: _execute_download_content is imported at the top of
+    this file — deleting it causes an ImportError before any test runs.
+
+    The binary payload includes b'\\xff' which is invalid UTF-8. Any
+    decode/re-encode step in the tool would mangle or raise on that byte;
+    byte-identity of the downloaded file proves the raw-bytes path is taken.
+    """
+    import tempfile
+    import os
+
+    print("\n--- divoid_download_content (binary round-trip) ---")
+
+    # Binary payload with a non-UTF-8 byte.
+    binary_content = b"\x89PNG\r\n\x1a\n\xff\xd8\xff\xe0Hello binary"
+
+    # Step 1: Create a scratch node.
+    create_result = await http_client.post_json("nodes", {
+        "name": "[smoke-test] divoid_download_content -- delete me",
+        "type": "documentation",
+    })
+    _assert("POST /nodes (scratch) returns 2xx", create_result.ok, f"status={create_result.status}")
+    if not create_result.ok:
+        return
+
+    try:
+        node_id = create_result.json()["id"]
+    except Exception as exc:
+        _record("parse created node id", False, str(exc))
+        return
+
+    _assert("created node has integer id", isinstance(node_id, int), f"id={node_id!r}")
+    if not isinstance(node_id, int):
+        return
+
+    tmp_file_path = None
+    try:
+        # Step 2: Upload binary content (include the non-UTF-8 byte).
+        upload_result = await http_client.post_bytes(
+            f"nodes/{node_id}/content",
+            binary_content,
+            "application/octet-stream",
+        )
+        _assert(
+            f"POST /nodes/{node_id}/content (binary) returns 2xx",
+            upload_result.ok,
+            f"status={upload_result.status}",
+        )
+        if not upload_result.ok:
+            return
+
+        # Step 3: Download via _execute to a temp file.
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as tf:
+            tmp_file_path = tf.name
+
+        download_result = await _execute_download_content(
+            node_id=node_id,
+            path=tmp_file_path,
+            config=config,
+        )
+        _assert(
+            "_execute_download_content returns no isError",
+            not download_result.get("isError", False),
+            str(download_result.get("content", "")),
+        )
+        if download_result.get("isError"):
+            return
+
+        _assert(
+            "download result has success=True",
+            download_result.get("success") is True,
+            f"result={download_result!r}",
+        )
+        _assert(
+            "download result bytes_written matches payload length",
+            download_result.get("bytes_written") == len(binary_content),
+            f"bytes_written={download_result.get('bytes_written')!r}, expected={len(binary_content)}",
+        )
+
+        # Step 4: Assert byte-identity — the non-UTF-8 byte must survive intact.
+        with open(tmp_file_path, "rb") as fh:
+            downloaded_bytes = fh.read()
+
+        _assert(
+            "downloaded file bytes are byte-identical to uploaded payload",
+            downloaded_bytes == binary_content,
+            (
+                f"mismatch: expected {binary_content!r}, got {downloaded_bytes!r}. "
+                "The non-UTF-8 byte (0xff) must survive unmodified."
+            ),
+        )
+
+    finally:
+        # Clean up temp file.
+        if tmp_file_path and os.path.exists(tmp_file_path):
+            try:
+                os.unlink(tmp_file_path)
+            except Exception:
+                pass
+
+        # Clean up scratch node.
+        del_result = await http_client.delete(f"nodes/{node_id}")
+        _assert(
+            f"DELETE /nodes/{node_id} returns 2xx (cleanup)",
+            del_result.ok,
+            f"status={del_result.status}",
+        )
+
+
+### -----------------------------------------------------------------------
+
 async def _run_all(config: Any) -> None:
     tests = [
         smoke_search,
@@ -3657,6 +3777,8 @@ async def _run_all(config: Any) -> None:
         smoke_edit_content_happy_path,
         # divoid_delete_node (DiVoid #6319)
         smoke_delete_node_lifecycle,
+        # divoid_download_content (DiVoid #6597)
+        smoke_download_content_binary_round_trip,
         # Bootstrap: subprocess spawn verifies FastMCP API compat at startup
         smoke_server_bootstrap,
     ]
@@ -3674,7 +3796,7 @@ async def _run_all(config: Any) -> None:
 
 
 def main() -> None:
-    print("divoid-mcp smoke tests: read-side + composites + messaging + list + primitives + edit-content + bootstrap")
+    print("divoid-mcp smoke tests: read-side + composites + messaging + list + primitives + edit-content + download-content + bootstrap")
     print("=" * 60)
 
     config = _setup()
