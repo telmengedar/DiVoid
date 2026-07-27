@@ -167,4 +167,10 @@ export interface PositionedNodeDetails extends NodeDetails {
    * Absent when the query did not opt into fields=links.
    */
   links?: number[];
+  /**
+   * Inline edge objects carrying true source→target orientation, linkType, and
+   * context — present when the viewport query includes fields=linkDetails.
+   * Absent when the query did not opt into fields=linkDetails (backend: DiVoid #167).
+   */
+  linkDetails?: NodeLink[];
 }

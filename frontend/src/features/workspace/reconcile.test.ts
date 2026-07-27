@@ -1,5 +1,5 @@
 /**
- * Load-bearing pure-function tests for reconcile.ts (DiVoid #1261 / #275).
+ * Load-bearing pure-function tests for reconcile.ts (DiVoid #1261 / #275 / #7142).
  *
  * Each test has a mental-deletion check — what production line to revert to
  * cause it to fail — documented inline.
@@ -12,12 +12,14 @@
  *  R5. reconcileEdges — changed edge (other refs preserved)
  *  R6. reconcileNodes — dragging node scrolled out of viewport is retained
  *  R7. reconcileNodes — links array equality (same ids = reuse ref)
+ *  R8. reconcileEdges — edge data (linkType/context) content-equality reuses prev ref
+ *  R9. reconcileEdges — CRUX: edge data change alone forces a new reference
  */
 
 import { describe, it, expect } from 'vitest';
 import { reconcileNodes, reconcileEdges } from './reconcile';
 import type { WorkspaceNode } from './NodeCardRenderer';
-import type { Edge } from '@xyflow/react';
+import type { WorkspaceEdge, WorkspaceEdgeData } from './FloatingEdge';
 
 function makeNode(
   id: string,
@@ -43,8 +45,13 @@ function makeNode(
   };
 }
 
-function makeEdge(id: string, source = 'a', target = 'b'): Edge {
-  return { id, source, target, type: 'floating' };
+function makeEdge(
+  id: string,
+  source = 'a',
+  target = 'b',
+  data?: WorkspaceEdgeData,
+): WorkspaceEdge {
+  return { id, source, target, type: 'floating', data };
 }
 
 describe('reconcileNodes', () => {
@@ -210,5 +217,71 @@ describe('reconcileEdges', () => {
     expect(result[0]).toBe(edge1);
     expect(result[1]).not.toBe(edge2);
     expect(result[1].target).toBe('99');
+  });
+
+  /**
+   * R8: Edge data (linkType/context) that is content-equal across fresh
+   * object references still reuses the prev edge reference — source/target/
+   * type/data are all unchanged, so the bail-out applies.
+   *
+   * Mental-deletion: remove the `!changed → return prev` bail-out (same as
+   * R4) → returns a new array even though nothing changed → `toBe(prev)` fails.
+   */
+  it('R8: returns prev reference when edge data is content-equal across fresh objects', () => {
+    const edge1 = makeEdge('1-2', '1', '2', { linkType: 'Unidirectional', context: 'blocks' });
+    const prev = [edge1];
+    const incoming = [makeEdge('1-2', '1', '2', { linkType: 'Unidirectional', context: 'blocks' })];
+
+    const result = reconcileEdges(prev, incoming);
+
+    expect(result).toBe(prev);
+    expect(result[0]).toBe(edge1);
+  });
+
+  /**
+   * R9 (the crux, DiVoid #7142): a metadata-only change — context text edited,
+   * or linkType flipped — on the backend must produce a NEW edge reference so
+   * FloatingEdge repaints its markers/label, even though source/target/type
+   * are unchanged.
+   *
+   * Mental-deletion: remove `edgeDataEqual(existing.data, incomingEdge.data)`
+   * from the equality condition in reconcileEdges → this edge is judged
+   * unchanged on source/target/type alone → `result[1]` would be the SAME
+   * reference as `edge2` (stale 'Unidirectional' data) → both the
+   * `not.toBe(edge2)` assertion and the `data?.linkType` assertion below FAIL,
+   * proving a metadata update was silently dropped.
+   */
+  it('R9: CRUX — edge data change alone forces a new reference (source/target/type unchanged)', () => {
+    const edge1 = makeEdge('1-2', '1', '2');
+    const edge2 = makeEdge('3-4', '3', '4', { linkType: 'Unidirectional', context: 'blocks' });
+    const prev = [edge1, edge2];
+
+    const incoming = [
+      { ...edge1 },
+      makeEdge('3-4', '3', '4', { linkType: 'Bidirectional', context: 'blocks' }),
+    ];
+
+    const result = reconcileEdges(prev, incoming);
+
+    expect(result[0]).toBe(edge1);
+    expect(result[1]).not.toBe(edge2);
+    expect(result[1].data?.linkType).toBe('Bidirectional');
+  });
+
+  /**
+   * NEGATIVE PROOF for R9's guard: when data goes from present to absent (a
+   * link's linkDetails match disappears — e.g. the query didn't opt in on a
+   * given refetch), the edge must also repaint rather than silently keep
+   * stale markers.
+   */
+  it('reuses prev reference is NOT returned when data flips from present to absent', () => {
+    const edge = makeEdge('1-2', '1', '2', { linkType: 'Unidirectional', context: 'blocks' });
+    const prev = [edge];
+    const incoming = [makeEdge('1-2', '1', '2')];
+
+    const result = reconcileEdges(prev, incoming);
+
+    expect(result[0]).not.toBe(edge);
+    expect(result[0].data).toBeUndefined();
   });
 });

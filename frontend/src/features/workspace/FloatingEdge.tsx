@@ -15,12 +15,27 @@
  * bounding box (not to a specific Handle), handle positions are irrelevant
  * and the existing invisible handles in NodeCardRenderer are untouched.
  *
- * Design: docs/architecture/workspace-mode.md §5.7
- * Task: DiVoid node #352
+ * Direction + context (DiVoid #7142 PR2): `markerStart`/`markerEnd` are set on
+ * the Edge object by WorkspaceCanvas's `markersForLinkType` (resolved by
+ * ReactFlow into `url(#...)` strings before reaching this component) — this
+ * component only forwards them to <BaseEdge>. The context string, joined onto
+ * `data` by `joinLinkMetadata`, renders as a midpoint label via
+ * <EdgeLabelRenderer> when present.
+ *
+ * Design: docs/architecture/workspace-mode.md §5.7; DiVoid #7143 §3
+ * Task: DiVoid node #352 / #7142
  */
 
 import { memo } from 'react';
-import { useInternalNode, BaseEdge, getStraightPath, type EdgeProps } from '@xyflow/react';
+import {
+  useInternalNode,
+  BaseEdge,
+  EdgeLabelRenderer,
+  getStraightPath,
+  type Edge,
+  type EdgeProps,
+} from '@xyflow/react';
+import type { NodeLink } from '@/types/divoid';
 
 // ─── Geometry helpers ─────────────────────────────────────────────────────────
 
@@ -106,21 +121,41 @@ export function getEdgeParams(source: NodeRect, target: NodeRect): EdgeParams {
   return { sx, sy, tx, ty };
 }
 
+/**
+ * Direction + context joined onto a workspace edge from inline `linkDetails`.
+ * Intersected with `Record<string, unknown>` to satisfy xyflow's `TData
+ * extends Record<string, unknown>` constraint (mirrors NodeCardData).
+ */
+export type WorkspaceEdgeData = Pick<NodeLink, 'linkType' | 'context'> & Record<string, unknown>;
+
+/** Full xyflow Edge type for workspace edges, carrying `WorkspaceEdgeData`. */
+export type WorkspaceEdge = Edge<WorkspaceEdgeData>;
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 /**
  * FloatingEdge renders a straight SVG path between the nearest bounding-box
- * intersection points of the source and target nodes.
+ * intersection points of the source and target nodes, with direction markers
+ * and an optional context label.
  *
  * The component is registered as `edgeTypes.floating` in WorkspaceCanvas.
  * Edges must be created with `type: 'floating'` to use this renderer.
  *
- * Wrapped with memo (shallow comparison) — id, source, target, markerEnd, and
- * style are primitives or stable references for unchanged edges after #1261
- * reference-preserving reconciliation lands. Prevents edge body re-execution
- * when the reconciler returns the same edge reference.
+ * Wrapped with memo (shallow comparison) — id, source, target, markerStart,
+ * markerEnd, style, and data are primitives or stable references for
+ * unchanged edges after #1261 / #7142 reference-preserving reconciliation
+ * lands. Prevents edge body re-execution when the reconciler returns the
+ * same edge reference.
  */
-export const FloatingEdge = memo(function FloatingEdge({ id, source, target, markerEnd, style }: EdgeProps) {
+export const FloatingEdge = memo(function FloatingEdge({
+  id,
+  source,
+  target,
+  markerStart,
+  markerEnd,
+  style,
+  data,
+}: EdgeProps<WorkspaceEdge>) {
   const sourceNode = useInternalNode(source);
   const targetNode = useInternalNode(target);
 
@@ -149,14 +184,27 @@ export const FloatingEdge = memo(function FloatingEdge({ id, source, target, mar
 
   const { sx, sy, tx, ty } = getEdgeParams(sourceRect, targetRect);
 
-  const [edgePath] = getStraightPath({ sourceX: sx, sourceY: sy, targetX: tx, targetY: ty });
+  const [edgePath, labelX, labelY] = getStraightPath({ sourceX: sx, sourceY: sy, targetX: tx, targetY: ty });
 
   return (
-    <BaseEdge
-      id={id}
-      path={edgePath}
-      markerEnd={markerEnd}
-      style={style}
-    />
+    <>
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        markerStart={markerStart}
+        markerEnd={markerEnd}
+        style={style}
+      />
+      {data?.context && (
+        <EdgeLabelRenderer>
+          <div
+            className="nodrag nopan absolute rounded border border-border bg-background px-1.5 py-0.5 text-[10px] text-foreground shadow-sm"
+            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+          >
+            {data.context}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
   );
 });
