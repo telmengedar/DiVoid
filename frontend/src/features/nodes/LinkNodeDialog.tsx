@@ -1,12 +1,15 @@
 /**
  * LinkNodeDialog — "Add link" dialog on the node detail page.
  *
- * Uses semantic search (useNodeSemantic) as the node picker.
+ * Uses semantic search (useNodeSemantic) as the node picker. Also carries a
+ * link-type selector (None/Unidirectional/Bidirectional, default None) and
+ * an optional context text field, both forwarded to useLinkNodes.
  * On confirmation: calls useLinkNodes to POST the link; the linkedto query
  * is invalidated by the mutation hook so the neighbours list updates.
  *
- * Design: docs/architecture/frontend-bootstrap.md §5.6, §6.6
- * Task: DiVoid node #229
+ * Design: docs/architecture/frontend-bootstrap.md §5.6, §6.6;
+ *         docs/architecture/link-direction-context-frontend.md §16 PR 1
+ * Task: DiVoid node #229; DiVoid #7142/#7143
  */
 
 import { useState, useEffect } from 'react';
@@ -16,8 +19,8 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { X, Search, Link2 } from 'lucide-react';
 import { useLinkNodes } from './mutations';
 import { useNodeSemantic } from './useNodeSemantic';
-import { linkSearchSchema, type LinkSearchFormValues } from './schemas';
-import type { NodeDetails } from '@/types/divoid';
+import { linkSearchSchema, LINK_TYPE_OPTIONS, type LinkSearchFormValues } from './schemas';
+import type { LinkType, NodeDetails } from '@/types/divoid';
 import { ROUTES } from '@/lib/constants';
 
 interface LinkNodeDialogProps {
@@ -30,6 +33,8 @@ export function LinkNodeDialog({ open, onOpenChange, sourceId }: LinkNodeDialogP
   const mutation = useLinkNodes();
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<NodeDetails | null>(null);
+  const [linkType, setLinkType] = useState<LinkType>('None');
+  const [context, setContext] = useState('');
 
   const { data: searchResults, isFetching: isSearching } = useNodeSemantic(query);
 
@@ -53,6 +58,8 @@ export function LinkNodeDialog({ open, onOpenChange, sourceId }: LinkNodeDialogP
       reset();
       setQuery('');
       setSelected(null);
+      setLinkType('None');
+      setContext('');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -74,7 +81,7 @@ export function LinkNodeDialog({ open, onOpenChange, sourceId }: LinkNodeDialogP
   const handleConfirm = async () => {
     if (!selected) return;
     try {
-      await mutation.mutateAsync({ sourceId, targetId: selected.id });
+      await mutation.mutateAsync({ sourceId, targetId: selected.id, linkType, context });
       handleOpenChange(false);
     } catch {
       // Error toast was already shown by the mutation's onError handler.
@@ -182,6 +189,42 @@ export function LinkNodeDialog({ open, onOpenChange, sourceId }: LinkNodeDialogP
               <span className="text-xs font-mono text-muted-foreground ml-auto">#{selected.id}</span>
             </div>
           )}
+
+          {/* Link type + context */}
+          <div className="flex flex-col gap-3 mb-4">
+            <div className="flex flex-col gap-1">
+              <label htmlFor="link-type" className="text-sm font-medium">
+                Link type
+              </label>
+              <select
+                id="link-type"
+                value={linkType}
+                onChange={(e) => setLinkType(e.target.value as LinkType)}
+                className="h-9 rounded-md border border-border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+              >
+                {LINK_TYPE_OPTIONS.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label htmlFor="link-context" className="text-sm font-medium">
+                Context <span className="text-muted-foreground font-normal">(optional)</span>
+              </label>
+              <input
+                id="link-context"
+                type="text"
+                autoComplete="off"
+                value={context}
+                onChange={(e) => setContext(e.target.value)}
+                placeholder="e.g. subtask"
+                className="h-9 rounded-md border border-border bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+              />
+            </div>
+          </div>
 
           {/* Actions */}
           <div className="flex justify-end gap-2">
