@@ -692,8 +692,42 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         return result;
     }
 
-    /// <summary>Rows with no incident links receive an empty array, not null.</summary>
-    async Task<List<NodeDetails>> MaterializeWithLinks(IAsyncEnumerable<NodeDetails> items, CancellationToken ct)
+    /// <summary>Single batched secondary query — never call per-row. Preserves the true stored
+    /// source/target orientation (unlike <see cref="FetchAdjacentIds"/>, which collapses to
+    /// symmetric neighbor ids).</summary>
+    async Task<Dictionary<long, NodeLink[]>> FetchAdjacentEdges(long[] ids, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        Dictionary<long, List<NodeLink>> adjacency = [];
+        foreach (long id in ids)
+            adjacency[id] = [];
+
+        await foreach (NodeLink link in database.Load<NodeLink>(l => l.SourceId, l => l.TargetId, l => l.LinkType, l => l.Context)
+                                                .Where(l => l.SourceId.In(ids) || l.TargetId.In(ids))
+                                                .ExecuteEntitiesAsync())
+        {
+            if (link.SourceId == link.TargetId)
+                continue;
+
+            if (adjacency.TryGetValue(link.SourceId, out List<NodeLink> srcList))
+                srcList.Add(link);
+            if (adjacency.TryGetValue(link.TargetId, out List<NodeLink> tgtList))
+                tgtList.Add(link);
+        }
+
+        Dictionary<long, NodeLink[]> result = [];
+        foreach ((long id, List<NodeLink> edges) in adjacency)
+            result[id] = [.. edges];
+        return result;
+    }
+
+    /// <summary>
+    /// materializes a page of rows and, per the requested flags, annotates each with inline
+    /// neighbor ids (<see cref="NodeDetails.Links"/>) and/or inline edges
+    /// (<see cref="NodeDetails.LinkDetails"/>). rows with no incident links/edges receive an
+    /// empty array, not null. no-op pass-through when both flags are false.
+    /// </summary>
+    async Task<List<NodeDetails>> MaterializeAdjacency(IAsyncEnumerable<NodeDetails> items, bool includeLinks, bool includeLinkDetails, CancellationToken ct)
     {
         List<NodeDetails> rows = [];
         await foreach (NodeDetails node in items)
@@ -706,9 +740,19 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         for (int i = 0; i < rows.Count; i++)
             ids[i] = rows[i].Id;
 
-        Dictionary<long, long[]> adjacency = await FetchAdjacentIds(ids, ct);
-        foreach (NodeDetails node in rows)
-            node.Links = adjacency.TryGetValue(node.Id, out long[] neighbors) ? neighbors : [];
+        if (includeLinks)
+        {
+            Dictionary<long, long[]> adjacency = await FetchAdjacentIds(ids, ct);
+            foreach (NodeDetails node in rows)
+                node.Links = adjacency.TryGetValue(node.Id, out long[] neighbors) ? neighbors : [];
+        }
+
+        if (includeLinkDetails)
+        {
+            Dictionary<long, NodeLink[]> adjacency = await FetchAdjacentEdges(ids, ct);
+            foreach (NodeDetails node in rows)
+                node.LinkDetails = adjacency.TryGetValue(node.Id, out NodeLink[] edges) ? edges : [];
+        }
 
         return rows;
     }
@@ -741,6 +785,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             throw new NotSupportedException("sort=content is not supported");
         if (string.Equals(filter.Sort, "links", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("sort=links is not supported");
+        if (string.Equals(filter.Sort, "linkDetails", StringComparison.OrdinalIgnoreCase))
+            throw new NotSupportedException("sort=linkDetails is not supported");
 
         NodeMapper mapper = new(filter);
         filter.Fields ??= isSemantic
@@ -750,10 +796,13 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (filter.Fields.Contains("content") && !filter.Fields.Contains("contentType"))
             filter.Fields = [.. filter.Fields, "contentType"];
 
-        // links is derived; not in mapper vocab.
+        // links / linkDetails are derived; not in mapper vocab.
         bool includeLinks = filter.Fields.Contains("links");
-        if (includeLinks)
-            filter.Fields = filter.Fields.Where(f => !string.Equals(f, "links", StringComparison.OrdinalIgnoreCase)).ToArray();
+        bool includeLinkDetails = filter.Fields.Contains("linkDetails");
+        if (includeLinks || includeLinkDetails)
+            filter.Fields = filter.Fields.Where(f => !string.Equals(f, "links", StringComparison.OrdinalIgnoreCase)
+                                                    && !string.Equals(f, "linkDetails", StringComparison.OrdinalIgnoreCase))
+                                          .ToArray();
 
         LoadOperation<Node> operation = mapper.CreateOperation(database, filter.Fields);
         operation.ApplyFilter(filter, mapper);
@@ -777,9 +826,9 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         WindowResult<NodeDetails, long> windowed =
             await mapper.WindowedFromOperation<long, Node>(operation, DB.CountOver(), ct, filter.Fields);
 
-        if (includeLinks)
+        if (includeLinks || includeLinkDetails)
         {
-            List<NodeDetails> rows = await MaterializeWithLinks(windowed.Items, ct);
+            List<NodeDetails> rows = await MaterializeAdjacency(windowed.Items, includeLinks, includeLinkDetails, ct);
             return new AsyncPageResponseWriter<NodeDetails>(
                 rows.ToAsyncEnumerable(),
                 () => windowed.WindowValue,
@@ -818,6 +867,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             throw new NotSupportedException("sort=content is not supported");
         if (string.Equals(filter.Sort, "links", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("sort=links is not supported");
+        if (string.Equals(filter.Sort, "linkDetails", StringComparison.OrdinalIgnoreCase))
+            throw new NotSupportedException("sort=linkDetails is not supported");
 
         NodeMapper mapper = new(filter);
         filter.Fields ??= isSemantic
@@ -827,10 +878,13 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (filter.Fields.Contains("content") && !filter.Fields.Contains("contentType"))
             filter.Fields = [.. filter.Fields, "contentType"];
 
-        // links is derived; not in mapper vocab.
+        // links / linkDetails are derived; not in mapper vocab.
         bool includeLinks = filter.Fields.Contains("links");
-        if (includeLinks)
-            filter.Fields = filter.Fields.Where(f => !string.Equals(f, "links", StringComparison.OrdinalIgnoreCase)).ToArray();
+        bool includeLinkDetails = filter.Fields.Contains("linkDetails");
+        if (includeLinks || includeLinkDetails)
+            filter.Fields = filter.Fields.Where(f => !string.Equals(f, "links", StringComparison.OrdinalIgnoreCase)
+                                                    && !string.Equals(f, "linkDetails", StringComparison.OrdinalIgnoreCase))
+                                          .ToArray();
 
         // Parse throws PathQueryParseException on syntax/constraint violations (→ HTTP 400)
         PathQuery query = PathQueryParser.Parse(filter.Path);
@@ -846,9 +900,9 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         WindowResult<NodeDetails, long> windowed =
             await mapper.WindowedFromOperation<long, Node>(composed.Terminal, DB.CountOver(), ct, filter.Fields);
 
-        if (includeLinks)
+        if (includeLinks || includeLinkDetails)
         {
-            List<NodeDetails> rows = await MaterializeWithLinks(windowed.Items, ct);
+            List<NodeDetails> rows = await MaterializeAdjacency(windowed.Items, includeLinks, includeLinkDetails, ct);
             return new AsyncPageResponseWriter<NodeDetails>(
                 rows.ToAsyncEnumerable(),
                 () => windowed.WindowValue,
