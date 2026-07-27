@@ -15,7 +15,7 @@
  */
 
 import { z } from 'zod';
-import type { NodeAccess } from '@/types/divoid';
+import type { LinkType, NodeAccess } from '@/types/divoid';
 
 // ─── Access vocabulary ────────────────────────────────────────────────────────
 
@@ -93,3 +93,11 @@ export const linkSearchSchema = z.object({
 });
 
 export type LinkSearchFormValues = z.infer<typeof linkSearchSchema>;
+
+// ─── Link-type vocabulary ─────────────────────────────────────────────────────
+
+/**
+ * The three link-direction options, in display order. Mirrors the backend
+ * LinkType enum serialized by JsonStringEnumConverter. See DiVoid #7142/#7143.
+ */
+export const LINK_TYPE_OPTIONS: LinkType[] = ['None', 'Unidirectional', 'Bidirectional'];

@@ -278,6 +278,86 @@ describe('useLinkNodes', () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect((result.current.error as DivoidApiError).status).toBe(404);
   });
+
+  // Load-bearing discipline (DiVoid #275) for DiVoid #7142's query-string plumbing:
+  //
+  // QP1 — no linkType/context ⇒ byte-identical to the pre-#7142 request:
+  //   Positive proof: the request URL carries no query string at all.
+  //   NEGATIVE PROOF: dropping the `linkType && linkType !== 'None' ? ... : undefined`
+  //   guard in useLinkNodes' mutationFn (always forwarding linkType) would append
+  //   "?linkType=None" even when the caller passed nothing — QP1 fails on the assertion.
+  //
+  // QP2 — a non-None linkType + a context string are sent as query params, body
+  //   stays the bare target id:
+  //   NEGATIVE PROOF: reverting the buildQueryString call (posting straight to
+  //   API.NODES.LINKS(sourceId) regardless of input) makes QP2's searchParams
+  //   assertions fail — the params would be entirely absent.
+  it('QP1: omits the query string entirely when linkType/context are not provided', async () => {
+    let requestUrl: URL | undefined;
+    server.use(
+      http.post(`${BASE_URL}/nodes/:id/links`, ({ request }) => {
+        requestUrl = new URL(request.url);
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+
+    const { Wrapper } = createWrapper();
+    const { useLinkNodes } = await import('./mutations');
+    const { result } = renderHook(() => useLinkNodes(), { wrapper: Wrapper });
+
+    await act(async () => {
+      result.current.mutate({ sourceId: 1, targetId: 2 });
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(requestUrl?.search).toBe('');
+  });
+
+  it('QP1b: omits the query string when linkType is explicitly "None" and context is empty', async () => {
+    let requestUrl: URL | undefined;
+    server.use(
+      http.post(`${BASE_URL}/nodes/:id/links`, ({ request }) => {
+        requestUrl = new URL(request.url);
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+
+    const { Wrapper } = createWrapper();
+    const { useLinkNodes } = await import('./mutations');
+    const { result } = renderHook(() => useLinkNodes(), { wrapper: Wrapper });
+
+    await act(async () => {
+      result.current.mutate({ sourceId: 1, targetId: 2, linkType: 'None', context: '' });
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(requestUrl?.search).toBe('');
+  });
+
+  it('QP2: sends linkType + context as query params; body stays the bare target id', async () => {
+    let requestUrl: URL | undefined;
+    let requestBody: unknown;
+    server.use(
+      http.post(`${BASE_URL}/nodes/:id/links`, async ({ request }) => {
+        requestUrl = new URL(request.url);
+        requestBody = await request.json();
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+
+    const { Wrapper } = createWrapper();
+    const { useLinkNodes } = await import('./mutations');
+    const { result } = renderHook(() => useLinkNodes(), { wrapper: Wrapper });
+
+    await act(async () => {
+      result.current.mutate({ sourceId: 1, targetId: 2, linkType: 'Bidirectional', context: 'relates to' });
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(requestUrl?.searchParams.get('linkType')).toBe('Bidirectional');
+    expect(requestUrl?.searchParams.get('context')).toBe('relates to');
+    expect(requestBody).toBe(2);
+  });
 });
 
 describe('useUnlinkNodes', () => {

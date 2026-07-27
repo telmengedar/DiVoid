@@ -123,10 +123,21 @@ export interface NodeFilter {
   bounds?: [number, number, number, number];
 }
 
+/**
+ * Direction semantics carried on a NodeLink edge. Mirrors the backend
+ * LinkType enum (Backend/Models/Nodes/LinkType.cs) serialized by the global
+ * JsonStringEnumConverter.
+ */
+export type LinkType = 'None' | 'Unidirectional' | 'Bidirectional';
+
 /** A link between two nodes, returned by GET /api/nodes/links. */
 export interface NodeLink {
   sourceId: number;
   targetId: number;
+  /** Direction semantics; "None" (undirected) for links created without a type. */
+  linkType: LinkType;
+  /** Optional free-text label carried on the edge, read source→target; null when unset. */
+  context: string | null;
 }
 
 // ─── Type catalog ─────────────────────────────────────────────────────────────

@@ -22,8 +22,9 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useApiClient } from '@/lib/useApiClient';
+import { buildQueryString } from '@/lib/api';
 import { API } from '@/lib/constants';
-import type { NodeDetails, PatchOperation } from '@/types/divoid';
+import type { LinkType, NodeDetails, PatchOperation } from '@/types/divoid';
 import { DivoidApiError } from '@/types/divoid';
 import { nodeQueryKey } from './useNode';
 import { nodeContentQueryKey } from './useNodeContent';
@@ -164,6 +165,10 @@ export function useDeleteNode(id: number) {
 export interface LinkNodesInput {
   sourceId: number;
   targetId: number;
+  /** Direction semantics for the new edge; omitted/"None" matches today's undirected default. */
+  linkType?: LinkType;
+  /** Optional free-text label carried on the edge, read source→target. */
+  context?: string;
 }
 
 /** Backend error text returned when linking an already-linked pair (bug #317). */
@@ -187,6 +192,9 @@ function invalidateLinkCaches(
 
 /**
  * Links two nodes. Body: target id as a bare long (per API reference node #8).
+ * `linkType` and `context`, when given, are sent as query params on the same
+ * POST — the body shape is unchanged. Omitting both (or passing "None" /
+ * an empty context) produces the exact same request as before DiVoid #7142.
  *
  * On success: linkedto and viewport queries are invalidated (viewport carries
  * inline links since DiVoid #310 / #1213).
@@ -201,8 +209,14 @@ export function useLinkNodes() {
   const queryClient = useQueryClient();
 
   return useMutation<void, DivoidApiError, LinkNodesInput>({
-    mutationFn: ({ sourceId, targetId }) =>
-      client.post<void>(API.NODES.LINKS(sourceId), targetId),
+    mutationFn: ({ sourceId, targetId, linkType, context }) => {
+      const qs = buildQueryString({
+        linkType: linkType && linkType !== 'None' ? linkType : undefined,
+        context: context?.trim() ? context.trim() : undefined,
+      });
+      const path = qs ? `${API.NODES.LINKS(sourceId)}?${qs}` : API.NODES.LINKS(sourceId);
+      return client.post<void>(path, targetId);
+    },
     onSuccess: (_, { sourceId, targetId }) => {
       invalidateLinkCaches(queryClient, sourceId, targetId);
     },
