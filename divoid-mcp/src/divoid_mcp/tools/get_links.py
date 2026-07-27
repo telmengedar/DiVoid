@@ -6,7 +6,15 @@ This is the efficient way to fetch all edges incident to a set of visible nodes
 in one round-trip, rather than querying linkedto= for each node individually.
 
 Response shape mirrors the API:
-  {"result": [{"source_id": int, "target_id": int}, ...], "total": int, "continue": int | null}
+  {"result": [{"source_id": int, "target_id": int, "link_type": str, "context": str | null}, ...],
+   "total": int, "continue": int | null}
+
+link_type/context (DiVoid #7147, read-side complement to the #7138 write path)
+are pure pass-through — per divoid-mcp CLAUDE.md invariant 6, this tool does not
+policy-check the backend's LinkType enum values or context text. A row from a
+backend build that predates linkType/context (pre-#163) simply omits both keys
+rather than surfacing them as null — that distinguishes "backend doesn't know
+about this field" from "backend told us the value is null/None".
 
 The graph is undirected — both source_id and target_id can be either endpoint.
 Links are returned in NodeLink storage order.
@@ -38,7 +46,11 @@ load the neighbourhood of a known node set (e.g. all edges incident to the nodes
 returned by a divoid_list call). The graph is undirected: both source_id and \
 target_id can be any endpoint. At least one id must be provided (invariant guard: \
 ids_empty). count defaults to 500 (the API max); use continue_cursor to paginate \
-if a node is heavily connected.\
+if a node is heavily connected. Each row also carries link_type (the backend's \
+LinkType enum name, e.g. "None"/"Unidirectional"/"Bidirectional") and context \
+(free-text label, or null) when the backend returns them — pass-through, not \
+policy-checked. Rows from a backend build that predates these fields simply \
+omit both keys.\
 """
 
 
@@ -112,13 +124,23 @@ async def _execute(
     # Normalise camelCase API keys to snake_case for consistency with the
     # rest of the divoid-mcp response shape.
     raw_links = data.get("result", [])
-    normalised = [
-        {
+    normalised: list[dict[str, Any]] = []
+    for link in raw_links:
+        row: dict[str, Any] = {
             "source_id": link.get("sourceId"),
             "target_id": link.get("targetId"),
         }
-        for link in raw_links
-    ]
+        # link_type/context are pass-through (invariant 6 — no vocabulary
+        # policing here). Only surface the key when the backend row actually
+        # carries it, so an older backend that predates these fields (pre-#163)
+        # produces rows with no link_type/context key at all rather than a
+        # fabricated null — that keeps "field unknown to this backend" distinct
+        # from "backend explicitly returned no context".
+        if "linkType" in link:
+            row["link_type"] = link["linkType"]
+        if "context" in link:
+            row["context"] = link["context"]
+        normalised.append(row)
 
     total = data.get("total", len(normalised))
     continue_val = data.get("continue", None)

@@ -21,7 +21,7 @@ claude mcp add --transport stdio --scope user divoid -- python -m divoid_mcp
 | `divoid_get_node` | Fetch a single node's metadata (id, type, name, status, access, ownerId, created, lastUpdate) by id |
 | `divoid_get_content` | Fetch the text body of a node — decoded as UTF-8 |
 | `divoid_list` | List nodes with filtering by type, status, linkedto, name, id, and timestamp ranges (created_from/to, updated_from/to); returns paged results |
-| `divoid_get_links` | Return all nodes linked to a given node (one-hop neighbours) |
+| `divoid_get_links` | Return link adjacency rows incident to a set of node ids, incl. `link_type` and `context` when the backend carries them |
 | `divoid_link_nodes` | Create a link between two existing nodes (undirected by default); optional `link_type` (Unidirectional/Bidirectional) and `context` (free text) |
 | `divoid_unlink_nodes` | Remove an undirected link between two existing nodes; idempotent |
 | `divoid_patch_node` | Apply JSON-Patch operations to a node's metadata fields (name, status, x, y, access, owner_id) |
