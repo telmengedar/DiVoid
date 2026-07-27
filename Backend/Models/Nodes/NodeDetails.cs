@@ -89,11 +89,13 @@ public class NodeDetails
 
     /// <summary>
     /// Opt-in inline incident edges, each carrying true source/target orientation, link type,
-    /// and context (<c>?fields=linkDetails</c>). Absent from the response when not requested;
-    /// a node with no incident edges gets an empty array, not null. Additive and independent of
-    /// <see cref="Links"/> — both may be requested together via <c>?fields=links,linkDetails</c>.
+    /// and context (<c>?fields=linkDetails</c>). Same raw <see cref="NodeLink"/> shape already
+    /// serialized by <c>GET /api/nodes/links</c> — reused here rather than a parallel DTO.
+    /// Absent from the response when not requested; a node with no incident edges gets an empty
+    /// array, not null. Additive and independent of <see cref="Links"/> — both may be requested
+    /// together via <c>?fields=links,linkDetails</c>.
     /// </summary>
-    public LinkDetail[] LinkDetails { get; set; }
+    public NodeLink[] LinkDetails { get; set; }
 
     /// <summary>
     /// DiVoid user-id of the node's creator. 0 for rows that pre-date the access layer.

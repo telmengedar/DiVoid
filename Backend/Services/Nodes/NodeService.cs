@@ -695,10 +695,10 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <summary>Single batched secondary query — never call per-row. Preserves the true stored
     /// source/target orientation (unlike <see cref="FetchAdjacentIds"/>, which collapses to
     /// symmetric neighbor ids).</summary>
-    async Task<Dictionary<long, LinkDetail[]>> FetchAdjacentEdges(long[] ids, CancellationToken ct)
+    async Task<Dictionary<long, NodeLink[]>> FetchAdjacentEdges(long[] ids, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        Dictionary<long, List<LinkDetail>> adjacency = [];
+        Dictionary<long, List<NodeLink>> adjacency = [];
         foreach (long id in ids)
             adjacency[id] = [];
 
@@ -709,22 +709,21 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             if (link.SourceId == link.TargetId)
                 continue;
 
-            LinkDetail detail = new() { SourceId = link.SourceId, TargetId = link.TargetId, LinkType = link.LinkType, Context = link.Context };
-            if (adjacency.TryGetValue(link.SourceId, out List<LinkDetail> srcList))
-                srcList.Add(detail);
-            if (adjacency.TryGetValue(link.TargetId, out List<LinkDetail> tgtList))
-                tgtList.Add(detail);
+            if (adjacency.TryGetValue(link.SourceId, out List<NodeLink> srcList))
+                srcList.Add(link);
+            if (adjacency.TryGetValue(link.TargetId, out List<NodeLink> tgtList))
+                tgtList.Add(link);
         }
 
-        Dictionary<long, LinkDetail[]> result = [];
-        foreach ((long id, List<LinkDetail> edges) in adjacency)
+        Dictionary<long, NodeLink[]> result = [];
+        foreach ((long id, List<NodeLink> edges) in adjacency)
             result[id] = [.. edges];
         return result;
     }
 
     /// <summary>
     /// materializes a page of rows and, per the requested flags, annotates each with inline
-    /// neighbor ids (<see cref="NodeDetails.Links"/>) and/or inline edge details
+    /// neighbor ids (<see cref="NodeDetails.Links"/>) and/or inline edges
     /// (<see cref="NodeDetails.LinkDetails"/>). rows with no incident links/edges receive an
     /// empty array, not null. no-op pass-through when both flags are false.
     /// </summary>
@@ -750,9 +749,9 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         if (includeLinkDetails)
         {
-            Dictionary<long, LinkDetail[]> adjacency = await FetchAdjacentEdges(ids, ct);
+            Dictionary<long, NodeLink[]> adjacency = await FetchAdjacentEdges(ids, ct);
             foreach (NodeDetails node in rows)
-                node.LinkDetails = adjacency.TryGetValue(node.Id, out LinkDetail[] edges) ? edges : [];
+                node.LinkDetails = adjacency.TryGetValue(node.Id, out NodeLink[] edges) ? edges : [];
         }
 
         return rows;

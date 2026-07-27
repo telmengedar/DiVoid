@@ -131,7 +131,7 @@ public class NodeListInlineLinkDetailsHttpTests
 
         Assert.That(sourceNode, Is.Not.Null, "source node must appear");
         Assert.That(sourceNode.LinkDetails, Is.Not.Null, "source node linkDetails must be populated");
-        LinkDetail sourceEdge = sourceNode.LinkDetails.Single(e => e.TargetId == target || e.SourceId == target);
+        NodeLink sourceEdge = sourceNode.LinkDetails.Single(e => e.TargetId == target || e.SourceId == target);
         Assert.That(sourceEdge.SourceId, Is.EqualTo(source), "orientation must be preserved: source id stays source");
         Assert.That(sourceEdge.TargetId, Is.EqualTo(target), "orientation must be preserved: target id stays target");
         Assert.That(sourceEdge.LinkType, Is.EqualTo(LinkType.Unidirectional));
@@ -139,7 +139,7 @@ public class NodeListInlineLinkDetailsHttpTests
 
         Assert.That(targetNode, Is.Not.Null, "target node must appear");
         Assert.That(targetNode.LinkDetails, Is.Not.Null, "target node linkDetails must be populated");
-        LinkDetail targetEdge = targetNode.LinkDetails.Single(e => e.SourceId == source && e.TargetId == target);
+        NodeLink targetEdge = targetNode.LinkDetails.Single(e => e.SourceId == source && e.TargetId == target);
         Assert.That(targetEdge.SourceId, Is.EqualTo(source), "target's view of the edge must still report the true source");
         Assert.That(targetEdge.TargetId, Is.EqualTo(target), "target's view of the edge must still report the true target");
         Assert.That(targetEdge.LinkType, Is.EqualTo(LinkType.Unidirectional));
@@ -176,7 +176,7 @@ public class NodeListInlineLinkDetailsHttpTests
         NodeDetails nodeA = items.FirstOrDefault(n => n.Id == a)!;
         Assert.That(nodeA.Links, Is.Not.Null.And.Contains(b), "links must still carry the flat neighbor id");
         Assert.That(nodeA.LinkDetails, Is.Not.Null, "linkDetails must also be populated in the same response");
-        LinkDetail edge = nodeA.LinkDetails.Single();
+        NodeLink edge = nodeA.LinkDetails.Single();
         Assert.That(edge.SourceId, Is.EqualTo(a));
         Assert.That(edge.TargetId, Is.EqualTo(b));
         Assert.That(edge.LinkType, Is.EqualTo(LinkType.Bidirectional));
