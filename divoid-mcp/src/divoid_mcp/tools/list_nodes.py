@@ -36,6 +36,7 @@ import mcp.server.fastmcp as fastmcp
 from .. import http_client
 from ..config import DivoidConfig
 from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
+from ._link_details import normalize_link_details
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,11 @@ FIELDS: default projection is [id, type, name, status, contentType]. Add x or y 
   graph-walking / fan-out-avoidance flows; costs bandwidth proportional to adjacency
   density; saves N follow-up divoid_get_links calls when you need the full adjacency of a
   page of nodes.
+  Set include_link_details=True to fetch enriched inline edges (source_id, target_id,
+  link_type, context) on each row as link_details — opt-in for flows that need edge
+  metadata, not just neighbor ids; composes with include_links (both flags can be set
+  together). Same pass-through convention as divoid_get_links: link_type/context are
+  surfaced only when the backend row carries them (invariant 6 — no vocabulary policing).
 
 SEVERITY FILTERS:
   - severity=[3,5]: exact match — return only nodes whose severity is 3 or 5.
@@ -198,6 +204,7 @@ async def _execute(
     fields: list[str] | None = None,
     include_content: bool = False,
     include_links: bool = False,
+    include_link_details: bool = False,
     created_from: str | None = None,
     created_to: str | None = None,
     updated_from: str | None = None,
@@ -220,12 +227,14 @@ async def _execute(
     """
     count = max(1, min(500, count))
 
-    if include_content or include_links:
+    if include_content or include_links or include_link_details:
         base_fields = list(fields) if fields is not None else list(_DEFAULT_FIELDS)
         if include_content and "content" not in base_fields:
             base_fields.append("content")
         if include_links and "links" not in base_fields:
             base_fields.append("links")
+        if include_link_details and "linkDetails" not in base_fields:
+            base_fields.append("linkDetails")
         fields = base_fields
 
     params: dict[str, Any] = {"count": count}
@@ -301,6 +310,17 @@ async def _execute(
     total = data.get("total", len(raw_results))
     continue_val = data.get("continue", None)
 
+    # linkDetails is the one field that needs per-row normalization on this
+    # otherwise pass-through endpoint: the backend returns it as an array of
+    # camelCase objects, and divoid-mcp's convention (see get_links.py) is to
+    # surface link metadata as snake_case link_details. Every other field
+    # (id, type, name, status, contentType, links, x, y, ...) already matches
+    # the backend's wire shape, so it is intentionally left untouched.
+    if include_link_details:
+        for row in raw_results:
+            if "linkDetails" in row:
+                row["link_details"] = normalize_link_details(row.pop("linkDetails"))
+
     logger.info("divoid_list ok total=%d returned=%d continue=%s", total, len(raw_results), continue_val)
 
     return {
@@ -330,6 +350,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         fields: list[str] | None = None,
         include_content: bool = False,
         include_links: bool = False,
+        include_link_details: bool = False,
         created_from: str | None = None,
         created_to: str | None = None,
         updated_from: str | None = None,
@@ -379,6 +400,15 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                            for isolated nodes). Use for graph-walking / fan-out-avoidance flows
                            that would otherwise issue N divoid_get_links calls. Opt-in; costs
                            bandwidth proportional to adjacency density.
+            include_link_details: If true, fetch enriched inline edges on each row. Appends
+                                  'linkDetails' to the fields projection. Returns
+                                  link_details: [{source_id, target_id, link_type, context}, ...]
+                                  (or [] for isolated nodes), normalized to snake_case the same
+                                  way divoid_get_links normalizes its rows; link_type/context are
+                                  pass-through, surfaced only when the backend row carries them
+                                  (invariant 6 — no vocabulary policing). Composes with
+                                  include_links (both may be set together). Opt-in; costs
+                                  bandwidth proportional to adjacency density.
             created_from: ISO 8601 datetime string. Return only nodes created at or after
                           this timestamp (inclusive). Forwarded as-is to the backend.
             created_to: ISO 8601 datetime string. Return only nodes created before this
@@ -439,6 +469,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             fields=fields,
             include_content=include_content,
             include_links=include_links,
+            include_link_details=include_link_details,
             created_from=created_from,
             created_to=created_to,
             updated_from=updated_from,

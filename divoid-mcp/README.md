@@ -17,10 +17,10 @@ claude mcp add --transport stdio --scope user divoid -- python -m divoid_mcp
 
 | Tool | What it does |
 |---|---|
-| `divoid_search` | Semantic search over the graph — returns nodes ranked by cosine similarity; supports timestamp range filters (created_from/to, updated_from/to) |
+| `divoid_search` | Semantic search over the graph — returns nodes ranked by cosine similarity; supports timestamp range filters (created_from/to, updated_from/to); optional `include_links` / `include_link_details` surface inline adjacency (ids, or enriched `source_id`/`target_id`/`link_type`/`context` rows) |
 | `divoid_get_node` | Fetch a single node's metadata (id, type, name, status, access, ownerId, created, lastUpdate) by id |
 | `divoid_get_content` | Fetch the text body of a node — decoded as UTF-8 |
-| `divoid_list` | List nodes with filtering by type, status, linkedto, name, id, and timestamp ranges (created_from/to, updated_from/to); returns paged results |
+| `divoid_list` | List nodes with filtering by type, status, linkedto, name, id, and timestamp ranges (created_from/to, updated_from/to); returns paged results; optional `include_links` / `include_link_details` surface inline adjacency (ids, or enriched `source_id`/`target_id`/`link_type`/`context` rows) |
 | `divoid_get_links` | Return link adjacency rows incident to a set of node ids, incl. `link_type` and `context` when the backend carries them |
 | `divoid_link_nodes` | Create a link between two existing nodes (undirected by default); optional `link_type` (Unidirectional/Bidirectional) and `context` (free text) |
 | `divoid_unlink_nodes` | Remove an undirected link between two existing nodes; idempotent |
