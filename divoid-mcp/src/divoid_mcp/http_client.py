@@ -98,18 +98,25 @@ async def get(path: str, params: dict[str, Any] | None = None) -> HttpResult:
     )
 
 
-async def post_json(path: str, body: Any) -> HttpResult:
-    """POST JSON body to {base_url}/{path}."""
+async def post_json(path: str, body: Any, params: dict[str, Any] | None = None) -> HttpResult:
+    """
+    POST JSON body to {base_url}/{path}, with optional query parameters.
+
+    params is omitted (None) by default, which emits no query string at all —
+    existing callers that don't pass it get byte-identical requests to before
+    this parameter existed.
+    """
     import json
     client = _assert_ready()
     url = f"{_base_url}/{path.lstrip('/')}"
     encoded = json.dumps(body).encode("utf-8")
-    logger.debug("POST %s body_len=%d", url, len(encoded))
+    logger.debug("POST %s params=%s body_len=%d", url, params, len(encoded))
     try:
         resp = await client.post(
             url,
             content=encoded,
             headers={"Content-Type": "application/json"},
+            params=params,
         )
     except httpx.ConnectTimeout as exc:
         raise DiVoidUnreachable(f"Connect timeout reaching DiVoid: {exc}") from exc
