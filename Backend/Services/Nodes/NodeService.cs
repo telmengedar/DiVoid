@@ -217,7 +217,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     }
 
     /// <inheritdoc />
-    public async Task LinkNodes(long sourceNodeId, long targetNodeId, long callerId, bool isAdmin)
+    public async Task LinkNodes(long sourceNodeId, long targetNodeId, long callerId, bool isAdmin, LinkType linkType = LinkType.None, string context = null)
     {
         if (sourceNodeId == targetNodeId)
             throw new InvalidOperationException("Unable to link node to itself");
@@ -236,8 +236,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (await database.Load<NodeLink>(DB.Count()).Where(n => n.SourceId == sourceNodeId && n.TargetId == targetNodeId || n.SourceId == targetNodeId && n.TargetId == sourceNodeId).ExecuteScalarAsync<long>(transaction) > 0)
             return;
         await database.Insert<NodeLink>()
-                      .Columns(n => n.SourceId, n => n.TargetId)
-                      .Values(sourceNodeId, targetNodeId)
+                      .Columns(n => n.SourceId, n => n.TargetId, n => n.LinkType, n => n.Context)
+                      .Values(sourceNodeId, targetNodeId, linkType, context)
                       .ExecuteAsync(transaction);
         await TryAnchorOrphanToPositioned(transaction, sourceNodeId, [targetNodeId]);
         await TryAnchorOrphanToPositioned(transaction, targetNodeId, [sourceNodeId]);
@@ -1170,7 +1170,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (filter.Count is null or > 500)
             filter.Count = 500;
 
-        LoadOperation<NodeLink> operation = database.Load<NodeLink>(l => l.SourceId, l => l.TargetId)
+        LoadOperation<NodeLink> operation = database.Load<NodeLink>(l => l.SourceId, l => l.TargetId, l => l.LinkType, l => l.Context)
                                                     .Where(l => l.SourceId.In(ids) || l.TargetId.In(ids));
         operation.ApplyFilter(filter);
 

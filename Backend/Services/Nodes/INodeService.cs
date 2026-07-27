@@ -133,13 +133,17 @@ public interface INodeService
     Task Delete(long nodeId, long callerId, bool isAdmin);
 
     /// <summary>
-    /// links nodes
+    /// links nodes. if the pair is already linked (either direction), this is an idempotent
+    /// no-op (bug #702) — <paramref name="linkType"/>/<paramref name="context"/> apply only to
+    /// newly-inserted edges and are silently dropped on an existing pair.
     /// </summary>
     /// <param name="sourceNodeId">id of first node</param>
     /// <param name="targetNodeId">id of second node</param>
     /// <param name="callerId">DiVoid user-id of the caller; write required on source node</param>
     /// <param name="isAdmin">true when the caller holds the admin permission</param>
-    Task LinkNodes(long sourceNodeId, long targetNodeId, long callerId, bool isAdmin);
+    /// <param name="linkType">direction semantics for a newly-created edge; defaults to <see cref="Models.Nodes.LinkType.None"/> (undirected)</param>
+    /// <param name="context">optional free-text label for a newly-created edge, read source→target; defaults to null</param>
+    Task LinkNodes(long sourceNodeId, long targetNodeId, long callerId, bool isAdmin, LinkType linkType = LinkType.None, string context = null);
 
     /// <summary>
     /// removes a link between nodes

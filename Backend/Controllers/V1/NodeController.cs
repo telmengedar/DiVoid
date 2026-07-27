@@ -224,13 +224,15 @@ namespace Backend.Controllers.V1
         /// </summary>
         /// <param name="sourceNodeId">id of first node</param>
         /// <param name="targetNodeId">id of second node</param>
+        /// <param name="linkType">direction semantics for a newly-created edge; defaults to <see cref="LinkType.None"/> (undirected)</param>
+        /// <param name="context">optional free-text label for a newly-created edge, read source→target</param>
         [HttpPost("{sourceNodeId:long}/links")]
         [Authorize(Policy = "write")]
-        public Task LinkNodes(long sourceNodeId, [FromBody] long targetNodeId)
+        public Task LinkNodes(long sourceNodeId, [FromBody] long targetNodeId, [FromQuery] LinkType linkType = LinkType.None, [FromQuery] string context = null)
         {
             logger.LogInformation("Linking node '{targetNodeId}' to '{sourceNodeId}'", targetNodeId, sourceNodeId);
             (long callerId, bool isAdmin) = ResolveCaller();
-            return nodeService.LinkNodes(sourceNodeId, targetNodeId, callerId, isAdmin);
+            return nodeService.LinkNodes(sourceNodeId, targetNodeId, callerId, isAdmin, linkType, context);
         }
 
         /// <summary>
