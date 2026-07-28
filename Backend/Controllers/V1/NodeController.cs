@@ -249,5 +249,22 @@ namespace Backend.Controllers.V1
             return nodeService.UnlinkNodes(sourceNodeId, targetNodeId, callerId, isAdmin);
         }
 
+        /// <summary>
+        /// patches an existing link's linkType/context, addressed the same way as <see cref="UnlinkNodes"/>
+        /// </summary>
+        /// <param name="sourceNodeId">id of first node</param>
+        /// <param name="targetNodeId">id of second node</param>
+        /// <param name="patches">patches to apply</param>
+        /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
+        /// <returns>the patched link, in its actual stored orientation</returns>
+        [HttpPatch("{sourceNodeId:long}/links/{targetNodeId}")]
+        [Authorize(Policy = "write")]
+        public Task<NodeLink> PatchLink(long sourceNodeId, long targetNodeId, [FromBody] PatchOperation[] patches, CancellationToken ct)
+        {
+            logger.LogInformation("Patching link '{targetNodeId}' <-> '{sourceNodeId}'", targetNodeId, sourceNodeId);
+            (long callerId, bool isAdmin) = ResolveCaller();
+            return nodeService.PatchLink(sourceNodeId, targetNodeId, patches, callerId, isAdmin, ct);
+        }
+
     }
 }

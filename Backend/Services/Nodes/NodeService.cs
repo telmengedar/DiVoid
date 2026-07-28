@@ -1125,6 +1125,33 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     }
 
     /// <inheritdoc />
+    public async Task<NodeLink> PatchLink(long sourceNodeId, long targetNodeId, PatchOperation[] patches, long callerId, bool isAdmin, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        PredicateExpression<Node> gate = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write: true);
+        PredicateExpression<Node> sourcePredicate = new PredicateExpression<Node>(n => n.Id == sourceNodeId);
+        if (gate != null)
+            sourcePredicate &= gate;
+
+        if (await database.Load<Node>(DB.Count()).Where(sourcePredicate.Content).ExecuteScalarAsync<long>() == 0)
+            throw new NotFoundException<Node>(sourceNodeId);
+
+        Expression<Func<NodeLink, bool>> edgePredicate =
+            l => l.SourceId == sourceNodeId && l.TargetId == targetNodeId || l.SourceId == targetNodeId && l.TargetId == sourceNodeId;
+
+        if (await database.Update<NodeLink>()
+                         .Patch(patches)
+                         .Where(edgePredicate)
+                         .ExecuteAsync() == 0)
+            throw new NotFoundException<NodeLink>($"No link between '{sourceNodeId}' and '{targetNodeId}'");
+
+        return await database.Load<NodeLink>(l => l.SourceId, l => l.TargetId, l => l.LinkType, l => l.Context)
+                             .Where(edgePredicate)
+                             .ExecuteEntityAsync();
+    }
+
+    /// <inheritdoc />
     public async Task UploadContent(long nodeId, string contentType, Stream data, long callerId, bool isAdmin, CancellationToken ct = default)
     {
         byte[] blob = await data.ToByteArray();

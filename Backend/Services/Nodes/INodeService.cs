@@ -155,6 +155,25 @@ public interface INodeService
     Task UnlinkNodes(long sourceNodeId, long targetNodeId, long callerId, bool isAdmin);
 
     /// <summary>
+    /// patches an existing link's <see cref="Models.Nodes.NodeLink.LinkType"/>/<see cref="Models.Nodes.NodeLink.Context"/>,
+    /// addressed the same way as <see cref="UnlinkNodes"/>
+    /// </summary>
+    /// <param name="sourceNodeId">id of first node</param>
+    /// <param name="targetNodeId">id of second node</param>
+    /// <param name="patches">patches to apply; only <c>LinkType</c>/<c>Context</c> are <c>[AllowPatch]</c></param>
+    /// <param name="callerId">DiVoid user-id of the caller; write required on source node</param>
+    /// <param name="isAdmin">true when the caller holds the admin permission</param>
+    /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
+    /// <returns>the patched link, in its actual stored orientation</returns>
+    /// <exception cref="Pooshit.AspNetCore.Services.Errors.Exceptions.NotFoundException{Node}">
+    /// thrown when <paramref name="sourceNodeId"/> does not exist or is not writable by the caller (→ 404).
+    /// </exception>
+    /// <exception cref="Pooshit.AspNetCore.Services.Errors.Exceptions.NotFoundException{NodeLink}">
+    /// thrown when no edge exists between the two nodes in either orientation (→ 404).
+    /// </exception>
+    Task<NodeLink> PatchLink(long sourceNodeId, long targetNodeId, PatchOperation[] patches, long callerId, bool isAdmin, CancellationToken ct);
+
+    /// <summary>
     /// resolves a node-id to the auth user-id of the user whose
     /// <see cref="Backend.Models.Users.User.HomeNodeId"/> equals <paramref name="nodeId"/>.
     ///
