@@ -1,3 +1,4 @@
+using Pooshit.AspNetCore.Services.Patches;
 using Pooshit.Ocelot.Entities.Attributes;
 
 namespace Backend.Models.Nodes;
@@ -24,7 +25,9 @@ public class NodeLink
     /// direction semantics of this edge. defaults to <see cref="Nodes.LinkType.None"/> (undirected,
     /// today's behavior) so existing rows read back unchanged after this column is added.
     /// not queried/filtered — no index (read-metadata, not a query filter).
+    /// patchable via <c>PATCH /api/nodes/{sourceNodeId}/links/{targetNodeId}</c> with <c>replace /linkType</c>.
     /// </summary>
+    [AllowPatch]
     [DefaultValue((int)LinkType.None)]
     public LinkType LinkType { get; set; }
 
@@ -32,6 +35,8 @@ public class NodeLink
     /// optional free-text label carried on the edge, interpreted in the source→target direction
     /// (e.g. "subtask" reads as source --subtask--> target). null means no context (today's behavior).
     /// not queried/filtered — no index.
+    /// patchable via <c>PATCH /api/nodes/{sourceNodeId}/links/{targetNodeId}</c> with <c>replace /context</c>.
     /// </summary>
+    [AllowPatch]
     public string Context { get; set; }
 }

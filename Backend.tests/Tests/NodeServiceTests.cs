@@ -386,6 +386,176 @@ public class NodeServiceTests
         Assert.DoesNotThrowAsync(() => svc.UnlinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true));
     }
 
+    [Test]
+    public async Task PatchLink_ReplaceLinkType_UpdatesField()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails a = await Create(svc, name: "A");
+        NodeDetails b = await Create(svc, name: "B");
+        await svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true);
+
+        NodeLink result = await svc.PatchLink(a.Id, b.Id,
+            [new PatchOperation { Op = "replace", Path = "/linkType", Value = (int) LinkType.Unidirectional }],
+            callerId: 0, isAdmin: true, CancellationToken.None);
+
+        Assert.That(result.LinkType, Is.EqualTo(LinkType.Unidirectional));
+    }
+
+    [Test]
+    public async Task PatchLink_ReplaceContext_UpdatesField()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails a = await Create(svc, name: "A");
+        NodeDetails b = await Create(svc, name: "B");
+        await svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true);
+
+        NodeLink result = await svc.PatchLink(a.Id, b.Id,
+            [new PatchOperation { Op = "replace", Path = "/context", Value = "subtask" }],
+            callerId: 0, isAdmin: true, CancellationToken.None);
+
+        Assert.That(result.Context, Is.EqualTo("subtask"));
+    }
+
+    [Test]
+    public async Task PatchLink_ReplaceLinkTypeAndContext_UpdatesBothFields()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails a = await Create(svc, name: "A");
+        NodeDetails b = await Create(svc, name: "B");
+        await svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true);
+
+        NodeLink result = await svc.PatchLink(a.Id, b.Id,
+            [
+                new PatchOperation { Op = "replace", Path = "/linkType", Value = (int) LinkType.Bidirectional },
+                new PatchOperation { Op = "replace", Path = "/context", Value = "blocks" }
+            ],
+            callerId: 0, isAdmin: true, CancellationToken.None);
+
+        Assert.Multiple(() => {
+            Assert.That(result.LinkType, Is.EqualTo(LinkType.Bidirectional));
+            Assert.That(result.Context, Is.EqualTo("blocks"));
+        });
+    }
+
+    [Test]
+    public async Task PatchLink_ReverseDirection_MatchesStoredEdgeAndReturnsStoredOrientation()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails a = await Create(svc, name: "A");
+        NodeDetails b = await Create(svc, name: "B");
+        await svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true);
+
+        NodeLink result = await svc.PatchLink(b.Id, a.Id,
+            [new PatchOperation { Op = "replace", Path = "/context", Value = "reverse-addressed" }],
+            callerId: 0, isAdmin: true, CancellationToken.None);
+
+        Assert.Multiple(() => {
+            Assert.That(result.SourceId, Is.EqualTo(a.Id), "returned link must reflect the actual stored source, not the caller's addressing order");
+            Assert.That(result.TargetId, Is.EqualTo(b.Id));
+            Assert.That(result.Context, Is.EqualTo("reverse-addressed"));
+        });
+    }
+
+    [Test]
+    public async Task PatchLink_MissingEdge_ThrowsNotFoundException()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails a = await Create(svc, name: "A");
+        NodeDetails b = await Create(svc, name: "B");
+
+        Assert.ThrowsAsync<NotFoundException<NodeLink>>(() => svc.PatchLink(a.Id, b.Id,
+            [new PatchOperation { Op = "replace", Path = "/context", Value = "no-edge" }],
+            callerId: 0, isAdmin: true, CancellationToken.None));
+    }
+
+    [Test]
+    public async Task PatchLink_MissingSourceNode_ThrowsNotFoundException()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails b = await Create(svc, name: "B");
+
+        Assert.ThrowsAsync<NotFoundException<Node>>(() => svc.PatchLink(99999, b.Id,
+            [new PatchOperation { Op = "replace", Path = "/context", Value = "no-source" }],
+            callerId: 0, isAdmin: true, CancellationToken.None));
+    }
+
+    [Test]
+    public async Task PatchLink_SourceIdNotAllowPatch_ThrowsNotSupportedException()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails a = await Create(svc, name: "A");
+        NodeDetails b = await Create(svc, name: "B");
+        await svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true);
+
+        Assert.ThrowsAsync<NotSupportedException>(() => svc.PatchLink(a.Id, b.Id,
+            [new PatchOperation { Op = "replace", Path = "/sourceId", Value = 99999L }],
+            callerId: 0, isAdmin: true, CancellationToken.None));
+    }
+
+    [Test]
+    public async Task PatchLink_IdempotentRepatch_SameValuesSucceed()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails a = await Create(svc, name: "A");
+        NodeDetails b = await Create(svc, name: "B");
+        await svc.LinkNodes(a.Id, b.Id, callerId: 0, isAdmin: true);
+
+        PatchOperation[] ops = [new PatchOperation { Op = "replace", Path = "/context", Value = "repeatable" }];
+        await svc.PatchLink(a.Id, b.Id, ops, callerId: 0, isAdmin: true, CancellationToken.None);
+        NodeLink result = await svc.PatchLink(a.Id, b.Id, ops, callerId: 0, isAdmin: true, CancellationToken.None);
+
+        Assert.That(result.Context, Is.EqualTo("repeatable"), "re-patching with identical values must succeed and remain stable");
+    }
+
+    [Test]
+    public async Task PatchLink_Stranger_PrivateSourceNode_ThrowsNotFoundException()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails a = await svc.CreateNode(new NodeDetails { Type = "task", Name = "A", Access = NodeAccess.None }, callerId: 1);
+        NodeDetails b = await Create(svc, name: "B");
+        await svc.LinkNodes(a.Id, b.Id, callerId: 1, isAdmin: true);
+
+        Assert.ThrowsAsync<NotFoundException<Node>>(() => svc.PatchLink(a.Id, b.Id,
+            [new PatchOperation { Op = "replace", Path = "/context", Value = "denied" }],
+            callerId: 2, isAdmin: false, CancellationToken.None),
+            "a stranger without write access to the private source node must be denied, mirroring UnlinkNodes' gate");
+    }
+
+    [Test]
+    public async Task PatchLink_Owner_PrivateSourceNode_Succeeds()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails a = await svc.CreateNode(new NodeDetails { Type = "task", Name = "A", Access = NodeAccess.None }, callerId: 1);
+        NodeDetails b = await Create(svc, name: "B");
+        await svc.LinkNodes(a.Id, b.Id, callerId: 1, isAdmin: true);
+
+        NodeLink result = await svc.PatchLink(a.Id, b.Id,
+            [new PatchOperation { Op = "replace", Path = "/context", Value = "owner-edit" }],
+            callerId: 1, isAdmin: false, CancellationToken.None);
+
+        Assert.That(result.Context, Is.EqualTo("owner-edit"));
+    }
+
     // -----------------------------------------------------------------------
     // ListPaged — filtering
     // -----------------------------------------------------------------------
