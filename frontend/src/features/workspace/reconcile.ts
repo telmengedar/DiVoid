@@ -11,11 +11,11 @@
  * length), return prev itself so React's setState functional-updater bails out
  * and no re-render occurs.
  *
- * DiVoid task: #1261
+ * DiVoid task: #1261 / #7142 (edge `data` — linkType/context — equality)
  */
 
-import type { Edge } from '@xyflow/react';
 import type { WorkspaceNode } from './NodeCardRenderer';
+import type { WorkspaceEdge, WorkspaceEdgeData } from './FloatingEdge';
 
 // ─── Link equality ────────────────────────────────────────────────────────────
 
@@ -121,17 +121,32 @@ export function reconcileNodes(
   return result;
 }
 
+/**
+ * Returns true when two edge `data` payloads (linkType + context) are
+ * content-equal. Missing `data` on both sides (edges without a linkDetails
+ * match) counts as equal.
+ */
+function edgeDataEqual(a: WorkspaceEdgeData | undefined, b: WorkspaceEdgeData | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.linkType === b.linkType && a.context === b.context;
+}
+
 // ─── reconcileEdges ───────────────────────────────────────────────────────────
 
 /**
  * Reference-preserving merge of incoming Edges against prev state.
  *
  * For each incoming edge, if a prev entry with the same id exists AND has
- * identical source/target/type: return the prev reference. Otherwise incoming.
+ * identical source/target/type/data (linkType + context, DiVoid #7142): return
+ * the prev reference. Otherwise incoming. A metadata-only change (e.g. context
+ * text edited, linkType flipped) MUST produce a new reference here — omitting
+ * `data` from the comparison silently drops arrow/label repaints even though
+ * source/target/type are unchanged.
  * Bail-out: if the result would be reference-equal to prev on every entry,
  * returns prev so React's setState skips the update.
  */
-export function reconcileEdges(prev: Edge[], incoming: Edge[]): Edge[] {
+export function reconcileEdges(prev: WorkspaceEdge[], incoming: WorkspaceEdge[]): WorkspaceEdge[] {
   const prevMap = new Map(prev.map((e) => [e.id, e]));
 
   let changed = incoming.length !== prev.length;
@@ -142,7 +157,8 @@ export function reconcileEdges(prev: Edge[], incoming: Edge[]): Edge[] {
       existing &&
       existing.source === incomingEdge.source &&
       existing.target === incomingEdge.target &&
-      existing.type === incomingEdge.type
+      existing.type === incomingEdge.type &&
+      edgeDataEqual(existing.data, incomingEdge.data)
     ) {
       return existing;
     }

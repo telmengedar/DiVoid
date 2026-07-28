@@ -41,6 +41,7 @@ import {
   useEdgesState,
   addEdge,
   ConnectionMode,
+  MarkerType,
   type Edge,
   type Connection,
   type Viewport,
@@ -68,7 +69,7 @@ import {
   type FilterOption,
 } from './WorkspaceFilterPopover';
 import { NodeCardRenderer, type NodeCardData, type WorkspaceNode } from './NodeCardRenderer';
-import { FloatingEdge } from './FloatingEdge';
+import { FloatingEdge, type WorkspaceEdge, type WorkspaceEdgeData } from './FloatingEdge';
 import { reconcileNodes, reconcileEdges } from './reconcile';
 import { CreateNodeDialog } from '@/features/nodes/CreateNodeDialog';
 import { useCreateNode, useLinkNodes, useUnlinkNodes } from '@/features/nodes/mutations';
@@ -79,7 +80,7 @@ import {
   DEFAULT_ZOOM,
   DEFAULT_PAN,
 } from './constants';
-import type { PositionedNodeDetails } from '@/types/divoid';
+import type { LinkType, NodeLink, PositionedNodeDetails } from '@/types/divoid';
 import { API } from '@/lib/constants';
 import { useApiClient } from '@/lib/useApiClient';
 
@@ -195,6 +196,83 @@ export function buildEdgesFromInlineLinks(
   }
 
   return edges;
+}
+
+/**
+ * Collects the true source→target orientation + linkType/context for every
+ * edge visible on the canvas, keyed by the same canonical `${lo}-${hi}` id
+ * buildEdgesFromInlineLinks uses. A link appears identically in both
+ * endpoints' `linkDetails` rows, so later entries for an already-seen key
+ * are skipped rather than overwritten.
+ *
+ * Exported for unit testing (DiVoid #7142 PR2, rule #275).
+ */
+export function collectLinkDetails(nodes: PositionedNodeDetails[]): Map<string, NodeLink> {
+  const byId = new Map<string, NodeLink>();
+
+  for (const node of nodes) {
+    if (!node.linkDetails) continue;
+    for (const link of node.linkDetails) {
+      const lo = Math.min(link.sourceId, link.targetId);
+      const hi = Math.max(link.sourceId, link.targetId);
+      const key = `${lo}-${hi}`;
+      if (byId.has(key)) continue;
+      byId.set(key, link);
+    }
+  }
+
+  return byId;
+}
+
+/**
+ * Maps a link's direction to the `markerStart`/`markerEnd` config ReactFlow
+ * resolves into SVG `<marker>` defs. 'None' renders a plain line (no keys —
+ * xyflow treats an absent marker as "no arrowhead").
+ *
+ * Exported for unit testing (DiVoid #7142 PR2, rule #275).
+ */
+export function markersForLinkType(linkType: LinkType): Pick<Edge, 'markerStart' | 'markerEnd'> {
+  if (linkType === 'Bidirectional') {
+    return {
+      markerStart: { type: MarkerType.ArrowClosed },
+      markerEnd: { type: MarkerType.ArrowClosed },
+    };
+  }
+  if (linkType === 'Unidirectional') {
+    return { markerEnd: { type: MarkerType.ArrowClosed } };
+  }
+  return {};
+}
+
+/**
+ * Normalizes each edge's source/target to the true `NodeLink` orientation and
+ * attaches `linkType`/`context` to `data` plus the corresponding markers, so
+ * FloatingEdge can place `markerEnd` at the semantic target and render the
+ * context label. `buildEdgesFromInlineLinks` assigns source/target in
+ * arbitrary iteration order — this is the step that corrects it. Edges
+ * without a `linkDetails` match (query didn't opt in) pass through unchanged
+ * as an undirected plain line.
+ *
+ * Exported for unit testing (DiVoid #7142 PR2, rule #275).
+ */
+export function joinLinkMetadata(
+  edges: Edge[],
+  linkDetailsById: Map<string, NodeLink>,
+): WorkspaceEdge[] {
+  return edges.map((edge) => {
+    const link = linkDetailsById.get(edge.id);
+    if (!link) return edge as WorkspaceEdge;
+
+    const data: WorkspaceEdgeData = { linkType: link.linkType, context: link.context };
+
+    return {
+      ...edge,
+      source: String(link.sourceId),
+      target: String(link.targetId),
+      data,
+      ...markersForLinkType(link.linkType),
+    };
+  });
 }
 
 /** Infer a DiVoid node type from a dropped file's MIME type. */
@@ -314,14 +392,16 @@ export function WorkspaceCanvas({ onPeek }: WorkspaceCanvasProps) {
 
   const xyEdges = useMemo(() => {
     const visibleIdSet = new Set(visibleDetails.map((n) => String(n.id)));
-    return buildEdgesFromInlineLinks(visibleDetails, visibleIdSet);
+    const baseEdges = buildEdgesFromInlineLinks(visibleDetails, visibleIdSet);
+    const linkDetailsById = collectLinkDetails(visibleDetails);
+    return joinLinkMetadata(baseEdges, linkDetailsById);
   }, [visibleDetails]);
 
   // ── Controlled xyflow state ───────────────────────────────────────────────
   // We use controlled state so xyflow's local drag deltas apply immediately
   // while the PATCH fires in the background.
   const [nodes, setNodes, onNodesChange] = useNodesState<WorkspaceNode>(xyNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(xyEdges);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<WorkspaceEdge>(xyEdges);
 
   // Sync server data into xyflow state whenever query results change.
   // reconcileNodes reuses prev references for unchanged nodes so xyflow's
