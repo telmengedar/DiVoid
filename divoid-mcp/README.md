@@ -13,7 +13,7 @@ pip install "git+https://github.com/telmengedar/DiVoid.git#subdirectory=divoid-m
 claude mcp add --transport stdio --scope user divoid -- python -m divoid_mcp
 ```
 
-## Tools (18)
+## Tools (19)
 
 | Tool | What it does |
 |---|---|
@@ -25,6 +25,7 @@ claude mcp add --transport stdio --scope user divoid -- python -m divoid_mcp
 | `divoid_link_nodes` | Create a link between two existing nodes (undirected by default); optional `link_type` (Unidirectional/Bidirectional) and `context` (free text) |
 | `divoid_unlink_nodes` | Remove an undirected link between two existing nodes; idempotent |
 | `divoid_patch_node` | Apply JSON-Patch operations to a node's metadata fields (name, status, x, y, access, owner_id) |
+| `divoid_patch_link` | Edit an existing link's `link_type` and/or `context` in place; missing edge is a hard 404 |
 | `divoid_set_status` | Set or clear a node's status field — enforces valid lifecycle values client-side |
 | `divoid_set_content` | Post content to a node's body — UTF-8 safe, no bash heredoc mangling |
 | `divoid_create_task` | Atomic create: makes the node, sets its content, links it to the project's Tasks group; accepts optional `access` param |
