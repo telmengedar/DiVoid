@@ -1,19 +1,6 @@
 """
-Unit tests for divoid_set_content: inline-vs-file mutual exclusion, byte-identical
-file upload, and the file-read guards (missing/unreadable/empty).
-
-These tests mock the HTTP transport layer (via respx) and use tmp_path for real
-file I/O. They assert:
-  1. The inline `content` path keeps working exactly as before (regression pin).
-  2. `path` reads a file's bytes and posts them byte-identical, including bytes
-     that broke prior real incidents: an unescaped '|' in a markdown table, a
-     CRLF line ending, a multi-byte UTF-8 character, and a lone '\\r'.
-  3. `content` and `path` are mutually exclusive: both set or neither set is an
-     InvariantViolation, before any HTTP call.
-  4. A missing file, an unreadable file, and a file that reads as zero bytes are
-     each rejected with a distinct code before any HTTP call.
-
-No network calls and no DiVoid credentials are required.
+Unit tests for divoid_set_content: inline/file mutual exclusion, byte-identical
+file upload, and the file-read guards. No network calls; respx mocks the HTTP layer.
 
 Architecture reference: DiVoid #8523 §Defect 2, #7895 Finding 1.
 """
@@ -69,18 +56,9 @@ def _error_code(result: dict[str, Any]) -> str:
     return text.split(":", 1)[0]
 
 
-# ---------------------------------------------------------------------------
-# Dual: the pre-existing inline `content` path keeps working unchanged
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_inline_content_still_posts_utf8_bytes(server: FastMCP) -> None:
-    """content='hello' -> POST body is b'hello', unchanged from the pre-`path` behaviour.
-
-    Substitution probe: route inline content through the file-read branch by
-    mistake -- open('hello', 'rb') raises FileNotFoundError and this fails.
-    """
+    """The pre-existing inline `content` path posts UTF-8 bytes unchanged."""
     captured: list[bytes] = []
 
     with respx.mock(assert_all_called=True) as mock:
@@ -99,11 +77,7 @@ async def test_inline_content_still_posts_utf8_bytes(server: FastMCP) -> None:
 
 @pytest.mark.asyncio
 async def test_inline_content_empty_rejected_before_http(server: FastMCP) -> None:
-    """content='   ' (whitespace-only) -> content_empty, no HTTP call (pre-existing guard).
-
-    Substitution probe: remove the content.strip() check -- the POST would be
-    sent with whitespace-only bytes and this test's no-HTTP assertion fails.
-    """
+    """Whitespace-only `content` is rejected as content_empty before any HTTP call."""
     http_called = False
 
     with respx.mock(assert_all_called=False) as mock:
@@ -121,24 +95,10 @@ async def test_inline_content_empty_rejected_before_http(server: FastMCP) -> Non
     assert _error_code(result) == "content_empty"
 
 
-# ---------------------------------------------------------------------------
-# The test that matters most: file bytes upload byte-identical, including the
-# exact characters that broke the reported incidents.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_path_uploads_trap_bytes_byte_identical(server: FastMCP, tmp_path: Any) -> None:
     """A file with an unescaped '|', CRLF, a multi-byte char, and a lone CR
-    uploads byte-for-byte identical -- no decode/re-encode step touches it.
-
-    Substitution probe: decode the file as UTF-8 and re-encode before posting --
-    the lone trailing '\\r' with no following byte still round-trips under a
-    naive decode/encode, so the CRLF-normalizing failure mode this guards
-    against is a decode step that maps '\\r\\n' -> '\\n' (universal-newlines
-    text mode); reading via `open(path, 'r')` instead of `'rb'` would trigger
-    exactly that and this assertion would fail.
-    """
+    uploads byte-for-byte identical."""
     target = tmp_path / "trap.md"
     target.write_bytes(_TRAP_BYTES)
 
@@ -164,20 +124,17 @@ async def test_path_uploads_trap_bytes_byte_identical(server: FastMCP, tmp_path:
 
 @pytest.mark.asyncio
 async def test_path_binary_bytes_byte_identical(server: FastMCP, tmp_path: Any) -> None:
-    """A non-UTF-8 binary file (PNG magic + invalid UTF-8 byte) uploads byte-identical.
-
-    Substitution probe: encode/decode as UTF-8 anywhere in the path -- 0xFF is
-    not valid UTF-8 and would raise UnicodeDecodeError or get replaced/dropped.
-    """
+    """A non-UTF-8 binary file uploads byte-identical, and an explicit
+    content_type override reaches the wire unchanged."""
     payload = b"\x89PNG\r\n\x1a\n\xff\xd8\xff\xe0\x00\x10"
     target = tmp_path / "image.bin"
     target.write_bytes(payload)
 
-    captured: list[bytes] = []
+    captured: list[httpx.Request] = []
 
     with respx.mock(assert_all_called=True) as mock:
         def capture(req: httpx.Request) -> httpx.Response:
-            captured.append(req.content)
+            captured.append(req)
             return httpx.Response(200, json={"id": _NODE_ID})
 
         mock.post(_CONTENT_URL).mock(side_effect=capture)
@@ -188,43 +145,45 @@ async def test_path_binary_bytes_byte_identical(server: FastMCP, tmp_path: Any) 
         )
 
     assert result.get("isError") is not True, f"Expected success, got: {result}"
-    assert captured[0] == payload, f"Expected byte-identical binary upload, got: {captured[0]!r}"
+    assert captured[0].content == payload, (
+        f"Expected byte-identical binary upload, got: {captured[0].content!r}"
+    )
+    assert captured[0].headers["content-type"] == "application/octet-stream", (
+        f"Expected the override to reach the wire, got: {captured[0].headers['content-type']!r}"
+    )
 
 
 @pytest.mark.asyncio
 async def test_path_uses_default_content_type_when_not_overridden(
     server: FastMCP, tmp_path: Any
 ) -> None:
-    """path with no content_type override -> the same default as the inline path.
-
-    Substitution probe: infer content_type from the file extension instead of
-    using the default -- a '.md' file would still match here, so also assert
-    the returned content_type field equals the explicit default constant.
-    """
+    """`path` with no content_type override sends the same default
+    Content-Type as the inline path, verified on the wire."""
     target = tmp_path / "doc.md"
     target.write_bytes(b"# heading\n")
 
+    captured: list[httpx.Request] = []
+
     with respx.mock(assert_all_called=True) as mock:
-        mock.post(_CONTENT_URL).mock(return_value=httpx.Response(200, json={"id": _NODE_ID}))
+        def capture(req: httpx.Request) -> httpx.Response:
+            captured.append(req)
+            return httpx.Response(200, json={"id": _NODE_ID})
+
+        mock.post(_CONTENT_URL).mock(side_effect=capture)
 
         result = await _call(server, {"id": _NODE_ID, "path": str(target)})
 
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert captured[0].headers["content-type"] == "text/markdown; charset=utf-8", (
+        f"Expected the default Content-Type on the wire, "
+        f"got: {captured[0].headers['content-type']!r}"
+    )
     assert result.get("content_type") == "text/markdown; charset=utf-8"
-
-
-# ---------------------------------------------------------------------------
-# Mutual exclusion: exactly one of content / path
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_both_content_and_path_rejected_before_http(server: FastMCP, tmp_path: Any) -> None:
-    """content AND path both given -> content_path_conflict, no HTTP call.
-
-    Substitution probe: remove the `content is not None and path is not None`
-    check -- one of the two sources would silently win and the HTTP mock
-    would be called; the no-HTTP assertion fails.
-    """
+    """content AND path both given is rejected as content_path_conflict before any HTTP call."""
     target = tmp_path / "both.md"
     target.write_bytes(b"file body")
     http_called = False
@@ -246,12 +205,7 @@ async def test_both_content_and_path_rejected_before_http(server: FastMCP, tmp_p
 
 @pytest.mark.asyncio
 async def test_neither_content_nor_path_rejected_before_http(server: FastMCP) -> None:
-    """Neither content nor path given -> content_path_required, no HTTP call.
-
-    Substitution probe: remove the `content is None and path is None` check --
-    _execute would run with content=None and crash on content.encode(), or
-    silently post no body; either way this test's isError assertion catches it.
-    """
+    """Neither content nor path given is rejected as content_path_required before any HTTP call."""
     http_called = False
 
     with respx.mock(assert_all_called=False) as mock:
@@ -271,12 +225,7 @@ async def test_neither_content_nor_path_rejected_before_http(server: FastMCP) ->
 
 @pytest.mark.asyncio
 async def test_empty_path_rejected_before_http(server: FastMCP) -> None:
-    """path='' -> path_empty, no HTTP call.
-
-    Substitution probe: remove the path.strip() check -- open('', 'rb') raises
-    FileNotFoundError, which the file-read branch maps to 'file_not_found'
-    instead of 'path_empty'; the error-code assertion distinguishes the two.
-    """
+    """An empty `path` string is rejected as path_empty before any HTTP call."""
     http_called = False
 
     with respx.mock(assert_all_called=False) as mock:
@@ -294,19 +243,9 @@ async def test_empty_path_rejected_before_http(server: FastMCP) -> None:
     assert _error_code(result) == "path_empty"
 
 
-# ---------------------------------------------------------------------------
-# File-read guards: missing / unreadable / empty, each before any HTTP call
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_missing_file_rejected_before_http(server: FastMCP, tmp_path: Any) -> None:
-    """path points at a file that does not exist -> file_not_found, no HTTP call.
-
-    Substitution probe: catch OSError broadly before FileNotFoundError-specific
-    handling and return 'file_read_failed' instead -- the code assertion here
-    distinguishes the two branches.
-    """
+    """A path to a nonexistent file is rejected as file_not_found before any HTTP call."""
     target = tmp_path / "does_not_exist.md"
     http_called = False
 
@@ -327,16 +266,7 @@ async def test_missing_file_rejected_before_http(server: FastMCP, tmp_path: Any)
 
 @pytest.mark.asyncio
 async def test_unreadable_file_rejected_before_http(server: FastMCP, tmp_path: Any) -> None:
-    """path points at a directory (unreadable as a file) -> file_read_failed, no HTTP call.
-
-    A directory is used as the unreadable-file case because it is reproducible
-    without depending on platform-specific permission semantics (chmod is
-    unreliable for denying the owner read access on Windows).
-
-    Substitution probe: catch only FileNotFoundError and let IsADirectoryError
-    propagate uncaught -- the tool would raise instead of returning isError,
-    and this test would fail with an exception instead of the expected dict.
-    """
+    """A path pointing at a directory is rejected as file_read_failed before any HTTP call."""
     target = tmp_path / "a_directory"
     target.mkdir()
     http_called = False
@@ -358,15 +288,7 @@ async def test_unreadable_file_rejected_before_http(server: FastMCP, tmp_path: A
 
 @pytest.mark.asyncio
 async def test_empty_file_rejected_before_http(server: FastMCP, tmp_path: Any) -> None:
-    """path points at a zero-byte file -> file_empty, no HTTP call.
-
-    This is the #7878/#7872 regression guard: a zero-byte upload wiped a real
-    node's content in production. A file that reads as empty must never reach
-    http_client.post_bytes.
-
-    Substitution probe: remove the `len(content_bytes) == 0` check -- the POST
-    would be sent with an empty body and the no-HTTP assertion fails.
-    """
+    """A zero-byte file is rejected as file_empty before any HTTP call (#7872 regression guard)."""
     target = tmp_path / "empty.md"
     target.write_bytes(b"")
     http_called = False

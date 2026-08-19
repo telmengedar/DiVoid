@@ -49,11 +49,13 @@ uploaded verbatim). Use `path` for large bodies instead of inlining them via \
 `content` — it avoids re-emitting the body through the model's output channel \
 and the transcription drift that causes. Both paths avoid the bash-heredoc \
 UTF-8 mangling bug (DiVoid #187). Use this to set or update the body of any node \
-that accepts content (task, documentation, session-log, etc.). Neither `content` \
-nor a file read via `path` may be empty. The default content_type is \
-'text/markdown; charset=utf-8'; override if your content is plain text, binary, \
-or another format — it is not inferred from a file extension. Returns success \
-confirmation on 2xx.\
+that accepts content (task, documentation, session-log, etc.). `content` is \
+rejected if empty or whitespace-only; a `path` file is rejected only if it reads \
+as zero bytes (whitespace-only file contents are uploaded as-is, since `path` \
+may point at a binary file for which stripping would be wrong). The default \
+content_type is 'text/markdown; charset=utf-8'; override if your content is \
+plain text, binary, or another format — it is not inferred from a file \
+extension. Returns success confirmation on 2xx.\
 """
 
 
@@ -198,7 +200,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             path: Local file path to read the content from. Mutually exclusive with
                   `content`. The file's bytes are read and posted verbatim — no
                   decode/re-encode step, so binary or non-UTF-8 files round-trip
-                  byte-identical. Use this instead of `content` for large bodies.
+                  byte-identical. Rejected if the file reads as zero bytes;
+                  whitespace-only file contents are otherwise uploaded as-is
+                  (unlike `content`, which also rejects whitespace-only strings).
+                  Use this instead of `content` for large bodies.
             content_type: MIME type for the content. Default is
                           'text/markdown; charset=utf-8'. Override only if your
                           content is not markdown (e.g. 'text/plain; charset=utf-8').
