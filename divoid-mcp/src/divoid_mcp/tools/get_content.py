@@ -3,6 +3,8 @@ divoid_get_content — fetch the text body of a node, decoded as UTF-8.
 
 Wraps GET /api/nodes/{id}/content. Returns the body verbatim as a string.
 Non-text content types produce a structured error rather than binary noise.
+with_line_numbers=True returns a 1-based numbered rendering instead, split on
+'\\n' only to match Backend/Models/Nodes/ContentEditor.cs's line model.
 
 Architecture reference: §8.3
 """
@@ -26,7 +28,12 @@ documentation, task, bug, session-log, and chat nodes after you've identified \
 them via search or divoid_get_node. Returns the body verbatim (no further \
 processing). If the node has no content the result has content="" and \
 content_type=null — that is itself a signal: per DiVoid structural conventions \
-(#493 §4), content-required types should never be empty.\
+(#493 §4), content-required types should never be empty. Set with_line_numbers=True \
+to get a 1-based numbered rendering instead ("N\\tline text" per row) so \
+divoid_edit_content's line ops (replace_lines, delete_lines, insert_before_line) can \
+be addressed against ground truth instead of a hand-derived line count; the response \
+then also carries line_count. No effect when the node has no content or non-text \
+content.\
 """
 
 # Content-type prefixes considered text (safe to decode as UTF-8).
@@ -39,16 +46,29 @@ _TEXT_PREFIXES = (
 )
 
 
+def _number_lines(text: str) -> tuple[str, int]:
+    """1-based numbered rendering of text ("N\\tline" per row), split on '\\n' only —
+    matching Backend/Models/Nodes/ContentEditor.cs's BuildLineOffsets. Returns
+    (numbered_text, line_count)."""
+    lines = text.split("\n")
+    numbered = "\n".join(f"{i}\t{line}" for i, line in enumerate(lines, start=1))
+    return numbered, len(lines)
+
+
 def register(mcp_server: fastmcp.FastMCP) -> None:
     config: DivoidConfig = mcp_server.config  # type: ignore[attr-defined]
 
     @mcp_server.tool(description=_TOOL_DESCRIPTION)
-    async def divoid_get_content(id: int) -> dict[str, Any]:
+    async def divoid_get_content(id: int, with_line_numbers: bool = False) -> dict[str, Any]:
         """
         Fetch the content body of a node, decoded as a UTF-8 string.
 
         Args:
             id: The node id whose content body to fetch. Must be a positive integer.
+            with_line_numbers: When True, return a 1-based numbered rendering
+                ("N\\tline text" per row) instead of the raw body, plus a
+                line_count field. No effect when the node has no content or
+                non-text content.
         """
         if id < 1:
             return {
@@ -56,7 +76,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                 "content": make_error_content("divoid_bad_request", "id must be a positive integer."),
             }
 
-        logger.info("divoid_get_content id=%d", id)
+        logger.info("divoid_get_content id=%d with_line_numbers=%s", id, with_line_numbers)
 
         try:
             result = await http_client.get(f"nodes/{id}/content")
@@ -147,6 +167,17 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             "divoid_get_content id=%d ok content_type=%r byte_length=%d",
             id, content_type, byte_length,
         )
+
+        if with_line_numbers:
+            numbered, line_count = _number_lines(decoded)
+            return {
+                "id": id,
+                "content": numbered,
+                "content_type": content_type or None,
+                "byte_length": byte_length,
+                "line_count": line_count,
+            }
+
         return {
             "id": id,
             "content": decoded,
