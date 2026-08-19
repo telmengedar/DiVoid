@@ -47,7 +47,8 @@ Apply one or more partial edits to a DiVoid node's text content in a single atom
 request. Edits use 1-based inclusive line/char ranges (human-readable), translated \
 to the backend's 0-based half-open format internally. All edits are addressed against \
 the content as it was at call time and applied atomically — if any edit fails, none \
-are applied.
+are applied. Each edit dict accepts only the keys listed for its op below; unknown \
+keys raise an error.
 
 Supported verbs (each edit dict must have an "op" key):
 
@@ -76,14 +77,25 @@ no content set.\
 # All verbs accepted by _check_invariants and _execute.
 _KNOWN_OPS = frozenset(["replace_lines", "replace_chars", "insert_before_line", "delete_lines", "append"])
 
+_VALUE_REQUIRED_OPS = frozenset(["replace_lines", "replace_chars", "insert_before_line", "append"])
+
+_ALLOWED_KEYS: dict[str, frozenset[str]] = {
+    "replace_lines": frozenset(["op", "start_line", "end_line", "value"]),
+    "replace_chars": frozenset(["op", "start", "end", "value"]),
+    "insert_before_line": frozenset(["op", "line", "value"]),
+    "delete_lines": frozenset(["op", "start_line", "end_line"]),
+    "append": frozenset(["op", "value"]),
+}
+
 
 def _check_invariants(edits: list[dict[str, Any]]) -> None:
     """
     Guard structural invariants before any HTTP call.
 
     Raises InvariantViolation with a stable code on the first violation found.
-    Only structural constraints are checked here (positivity, ordering, known op).
-    Content values are never inspected — the backend is the authority on those.
+    Only structural constraints are checked here (positivity, ordering, known op,
+    known keys, presence/type of the constructive "value" field). Content values
+    themselves are never inspected — the backend is the authority on those.
     """
     if not edits:
         raise InvariantViolation(
@@ -98,6 +110,15 @@ def _check_invariants(edits: list[dict[str, Any]]) -> None:
                 "unknown_op",
                 f"edits[{i}].op={op!r} is not a recognized verb. "
                 f"Valid ops: {', '.join(sorted(_KNOWN_OPS))}.",
+            )
+
+        allowed = _ALLOWED_KEYS[op]
+        unknown = set(edit.keys()) - allowed
+        if unknown:
+            raise InvariantViolation(
+                "unknown_field",
+                f"edits[{i}] ({op}) has unrecognized key(s): {', '.join(sorted(unknown))}. "
+                f"Accepted keys for {op}: {', '.join(sorted(allowed))}.",
             )
 
         if op == "replace_lines":
@@ -173,7 +194,17 @@ def _check_invariants(edits: list[dict[str, Any]]) -> None:
                     f"edits[{i}] (delete_lines): end_line={el} must be >= start_line={sl}.",
                 )
 
-        # "append" has no positional fields — no structural constraint beyond known op.
+        if op in _VALUE_REQUIRED_OPS:
+            if "value" not in edit:
+                raise InvariantViolation(
+                    "missing_field",
+                    f"edits[{i}] ({op}) requires value.",
+                )
+            if not isinstance(edit["value"], str):
+                raise InvariantViolation(
+                    "invalid_field_type",
+                    f"edits[{i}] ({op}): value must be a string, got {type(edit['value']).__name__}.",
+                )
 
 
 async def _execute(
@@ -227,7 +258,7 @@ async def _execute(
                 "unit": "line",
                 "start": sl - 1,
                 "length": el - sl + 1,
-                "value": edit.get("value", ""),
+                "value": edit["value"],
             })
 
         elif op == "replace_chars":
@@ -236,7 +267,7 @@ async def _execute(
                 "unit": "char",
                 "start": s - 1,
                 "length": e - s + 1,
-                "value": edit.get("value", ""),
+                "value": edit["value"],
             })
 
         elif op == "insert_before_line":
@@ -245,7 +276,7 @@ async def _execute(
                 "unit": "line",
                 "start": line - 1,
                 "length": 0,
-                "value": edit.get("value", ""),
+                "value": edit["value"],
             })
 
         elif op == "delete_lines":
@@ -263,7 +294,7 @@ async def _execute(
                 "unit": "char",
                 "start": char_count,
                 "length": 0,
-                "value": edit.get("value", ""),
+                "value": edit["value"],
             })
 
     logger.info("divoid_edit_content id=%d sending %d backend edit(s)", id, len(backend_edits))
@@ -344,8 +375,11 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                    Structural invariants checked before any HTTP call:
                    - edits must be non-empty
                    - op must be one of the five verbs above
+                   - each edit dict may only contain the keys listed for its op
                    - line/char positions must be >= 1
                    - end must be >= start for range verbs
+                   - value (str) is required for replace_lines, replace_chars,
+                     insert_before_line, append (not delete_lines)
         """
         try:
             _check_invariants(edits)
