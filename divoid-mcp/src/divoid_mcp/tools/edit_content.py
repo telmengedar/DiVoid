@@ -74,11 +74,6 @@ Returns the updated NodeDetails on success. 400 from the server means bad addres
 no content set.\
 """
 
-# All verbs accepted by _check_invariants and _execute.
-_KNOWN_OPS = frozenset(["replace_lines", "replace_chars", "insert_before_line", "delete_lines", "append"])
-
-_VALUE_REQUIRED_OPS = frozenset(["replace_lines", "replace_chars", "insert_before_line", "append"])
-
 _ALLOWED_KEYS: dict[str, frozenset[str]] = {
     "replace_lines": frozenset(["op", "start_line", "end_line", "value"]),
     "replace_chars": frozenset(["op", "start", "end", "value"]),
@@ -86,6 +81,11 @@ _ALLOWED_KEYS: dict[str, frozenset[str]] = {
     "delete_lines": frozenset(["op", "start_line", "end_line"]),
     "append": frozenset(["op", "value"]),
 }
+
+# All verbs accepted by _check_invariants and _execute.
+_KNOWN_OPS = frozenset(_ALLOWED_KEYS)
+
+_VALUE_REQUIRED_OPS = frozenset(["replace_lines", "replace_chars", "insert_before_line", "append"])
 
 
 def _check_invariants(edits: list[dict[str, Any]]) -> None:

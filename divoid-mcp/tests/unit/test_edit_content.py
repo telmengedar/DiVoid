@@ -671,7 +671,6 @@ async def test_end_before_start_replace_chars_rejected(server: FastMCP) -> None:
     assert "end_before_start" in text, f"Expected 'end_before_start' code, got: {text!r}"
 
 
-
 @pytest.mark.asyncio
 async def test_replace_lines_missing_value_rejected_before_http(server: FastMCP) -> None:
     """replace_lines without value → isError 'missing_field', no HTTP call."""
@@ -771,11 +770,7 @@ async def test_append_missing_value_rejected_before_http(server: FastMCP) -> Non
 
 @pytest.mark.asyncio
 async def test_delete_lines_without_value_remains_legal(server: FastMCP) -> None:
-    """Dual case: delete_lines has no constructive half, so value must NOT be required.
-
-    Substitution probe: add delete_lines to _VALUE_REQUIRED_OPS — this call would
-    then be rejected with 'missing_field' and the isError assertion below fails.
-    """
+    """Dual case: delete_lines has no constructive half, so value must NOT be required."""
     captured: list[Any] = []
 
     with respx.mock(assert_all_called=False) as mock:
@@ -796,11 +791,7 @@ async def test_delete_lines_without_value_remains_legal(server: FastMCP) -> None
 
 @pytest.mark.asyncio
 async def test_replace_lines_empty_string_value_is_legal(server: FastMCP) -> None:
-    """Dual case: an explicit empty-string value is a legitimate deletion, not a missing field.
-
-    Substitution probe: change `"value" not in edit` to a falsy check (`not edit.get("value")`)
-    in _check_invariants — an explicit "" would then be wrongly rejected as missing_field.
-    """
+    """Dual case: an explicit empty-string value is a legitimate deletion, not a missing field."""
     captured: list[Any] = []
 
     with respx.mock(assert_all_called=False) as mock:
@@ -817,7 +808,6 @@ async def test_replace_lines_empty_string_value_is_legal(server: FastMCP) -> Non
 
     assert result.get("isError") is not True, f"Expected success for explicit empty value, got: {result}"
     assert captured[0][0]["value"] == "", f"Expected empty-string value to reach the wire, got: {captured[0][0]!r}"
-
 
 
 @pytest.mark.asyncio
@@ -867,7 +857,6 @@ async def test_append_non_string_value_rejected_before_pre_read(server: FastMCP)
     assert not http_called, "HTTP must NOT be called (including pre-read GET) when value has the wrong type"
     text = result["content"][0]["text"]
     assert "invalid_field_type" in text, f"Expected 'invalid_field_type' code, got: {text!r}"
-
 
 
 @pytest.mark.asyncio
@@ -948,13 +937,7 @@ async def test_insert_before_line_unknown_key_rejected_before_http(server: FastM
 
 @pytest.mark.asyncio
 async def test_delete_lines_unknown_key_rejected_before_http(server: FastMCP) -> None:
-    """delete_lines with a 'value' key → isError 'unknown_field'.
-
-    delete_lines has no constructive half, so 'value' is not in its accepted key
-    set even though it is a valid key for other ops — supplying it is ambiguous
-    (did the caller mean replace_lines?) and must error rather than being
-    silently ignored (delete_lines always deletes, regardless of a stray value).
-    """
+    """delete_lines with a 'value' key → isError 'unknown_field'."""
     http_called = False
 
     with respx.mock(assert_all_called=False) as mock:
@@ -1004,12 +987,7 @@ async def test_append_unknown_key_rejected_before_http(server: FastMCP) -> None:
 
 @pytest.mark.asyncio
 async def test_reported_incident_shape_replace_lines_with_text_key_rejected(server: FastMCP) -> None:
-    """The regression test: the exact shape reported in DiVoid #8288 must now raise, not delete.
-
-    {"op": "replace_lines", "start_line": 14, "end_line": 14, "text": "..."} previously
-    returned 200 and silently deleted line 14 (the "text" key was dropped, "value"
-    defaulted to ""). It must now be rejected before any HTTP call.
-    """
+    """The regression test: the exact shape reported in DiVoid #8288 must now raise, not delete."""
     http_called = False
 
     with respx.mock(assert_all_called=False) as mock:
