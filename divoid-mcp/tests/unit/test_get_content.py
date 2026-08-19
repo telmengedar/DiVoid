@@ -1,25 +1,5 @@
-"""
-Unit tests for divoid_get_content's with_line_numbers mode.
-
-These tests mock the HTTP transport layer (via respx) and assert that:
-  1. The default (with_line_numbers omitted/False) path is byte-identical to the
-     pre-feature response shape — no line_count key, content unchanged.
-  2. Numbering is 1-based and matches Backend/Models/Nodes/ContentEditor.cs's line
-     model exactly: no '\\n' at all is one line; a trailing '\\n' yields a final
-     empty line; splitting happens on '\\n' only (a CRLF pair is not its own boundary
-     and the '\\r' stays attached to the preceding line).
-  3. The DiVoid #6341 incident shape (an H1 followed by a blank line) numbers the
-     blank line at 2 and the following prose at 3 — the assertion the feature exists
-     for.
-  4. with_line_numbers is a no-op when the node has no content or non-text content.
-  5. A line number taken from the numbered output addresses the exact same text
-     divoid_edit_content's real 1-based-inclusive -> 0-based-half-open translation
-     would target, for a body combining a trailing newline, a blank line after an H1,
-     a CRLF pair, and a multi-byte character.
-
-No network calls and no DiVoid credentials are required; these are not integration
-tests. DiVoid refs: #6341, #6948, #8523 §"Defect 3", design #6284.
-"""
+"""Unit tests for divoid_get_content's with_line_numbers mode. Mocks the HTTP
+transport layer via respx; no network calls or DiVoid credentials required."""
 
 from __future__ import annotations
 
@@ -98,11 +78,7 @@ def _parse_numbered(numbered: str) -> dict[int, str]:
 
 @pytest.mark.asyncio
 async def test_default_path_byte_identical_without_flag(server: FastMCP) -> None:
-    """with_line_numbers omitted -> content is the raw decoded body, no line_count key.
-
-    Substitution probe: number unconditionally regardless of the flag — the exact-string
-    assertion on the raw body fails, and/or 'line_count' appears where it must not.
-    """
+    """Pins that with_line_numbers omitted returns the raw decoded body with no line_count key."""
     body = "line one\nline two\nline three"
 
     with respx.mock(assert_all_called=True) as mock:
@@ -117,11 +93,7 @@ async def test_default_path_byte_identical_without_flag(server: FastMCP) -> None
 
 @pytest.mark.asyncio
 async def test_with_line_numbers_basic_numbering_and_line_count(server: FastMCP) -> None:
-    """Plain 3-line, no-trailing-newline body -> "1\\tfirst" etc, line_count=3.
-
-    Substitution probe: enumerate(lines, start=0) instead of start=1 — first row reads
-    "0\\tfirst" instead of "1\\tfirst"; the exact-string assertion fails.
-    """
+    """Pins 1-based numbering and line_count on a plain no-trailing-newline body."""
     body = "first\nsecond\nthird"
 
     with respx.mock(assert_all_called=True) as mock:
@@ -134,12 +106,7 @@ async def test_with_line_numbers_basic_numbering_and_line_count(server: FastMCP)
 
 @pytest.mark.asyncio
 async def test_6341_regression_blank_line_after_h1(server: FastMCP) -> None:
-    """The exact shape from DiVoid #6341: '# title\\n\\n**What it is:**...' — blank line
-    lands at 2, '**What it is:**' at 3. This is the assertion the feature exists for.
-
-    Substitution probe: enumerate(lines, start=0) — blank line would read as line 1 and
-    '**What it is:**' as line 2; both assertions fail.
-    """
+    """Pins the DiVoid #6341 incident shape: blank line after an H1 numbers at 2, not 1."""
     body = "# title\n\n**What it is:** a repo-map node."
 
     with respx.mock(assert_all_called=True) as mock:
@@ -156,11 +123,7 @@ async def test_6341_regression_blank_line_after_h1(server: FastMCP) -> None:
 
 @pytest.mark.asyncio
 async def test_no_trailing_newline_is_single_line(server: FastMCP) -> None:
-    """Content with no '\\n' at all -> exactly one line, per design #6284.
-
-    Substitution probe: unconditionally append a synthetic extra line — line_count
-    would read 2 instead of 1.
-    """
+    """Pins that content with no '\\n' at all is exactly one line."""
     body = "onlyline"
 
     with respx.mock(assert_all_called=True) as mock:
@@ -173,11 +136,7 @@ async def test_no_trailing_newline_is_single_line(server: FastMCP) -> None:
 
 @pytest.mark.asyncio
 async def test_trailing_newline_yields_final_empty_line(server: FastMCP) -> None:
-    """Content ending in '\\n' -> a final empty line, per design #6284.
-
-    Substitution probe: strip a trailing '\\n' before splitting — the final empty line
-    disappears and line_count drops from 2 to 1.
-    """
+    """Pins that a trailing '\\n' produces a final empty line."""
     body = "abc\n"
 
     with respx.mock(assert_all_called=True) as mock:
@@ -190,13 +149,7 @@ async def test_trailing_newline_yields_final_empty_line(server: FastMCP) -> None
 
 @pytest.mark.asyncio
 async def test_crlf_preserved_not_treated_as_own_line_boundary(server: FastMCP) -> None:
-    """'abc\\r\\ndef' splits only on '\\n' (matching ContentEditor) -> 2 lines, '\\r' stays
-    attached to line 1's content.
-
-    Substitution probe: use text.splitlines() instead of text.split('\\n') — splitlines
-    treats '\\r\\n' as one boundary AND drops it from the line, so line 1 would read 'abc'
-    (no '\\r') instead of 'abc\\r'; the assertion fails.
-    """
+    """Pins that a CRLF pair is not its own boundary — '\\r' stays attached to the preceding line."""
     body = "abc\r\ndef"
 
     with respx.mock(assert_all_called=True) as mock:
@@ -211,13 +164,7 @@ async def test_crlf_preserved_not_treated_as_own_line_boundary(server: FastMCP) 
 
 @pytest.mark.asyncio
 async def test_with_line_numbers_noop_when_node_has_no_content(server: FastMCP) -> None:
-    """Node exists but has no content (404 'has no content') -> unchanged empty-content
-    shape, even when with_line_numbers=True. There is no line model for content that
-    does not exist (divoid_edit_content itself 404s on this node state).
-
-    Substitution probe: number this branch too (e.g. set line_count=1 unconditionally) —
-    the exact-dict-equality assertion fails on the extra key.
-    """
+    """Pins that with_line_numbers is a no-op when the node has no content at all."""
     not_found_body = b'{"code":"data_entitynotfound","text":"has no content"}'
 
     with respx.mock(assert_all_called=True) as mock:
@@ -231,12 +178,7 @@ async def test_with_line_numbers_noop_when_node_has_no_content(server: FastMCP) 
 
 @pytest.mark.asyncio
 async def test_with_line_numbers_noop_on_non_text_content(server: FastMCP) -> None:
-    """Non-text content-type -> isError, unaffected by with_line_numbers (no numbering
-    attempted on binary content).
-
-    Substitution probe: attempt to decode+number before the is_text check — this changes
-    the error code or crashes instead of returning content_not_text.
-    """
+    """Pins that with_line_numbers is a no-op on non-text content (still isError, unaffected)."""
     with respx.mock(assert_all_called=True) as mock:
         mock.get(_CONTENT_URL).mock(
             return_value=httpx.Response(200, content=b"\x89PNG\r\n", headers={"content-type": "image/png"})
@@ -250,21 +192,9 @@ async def test_with_line_numbers_noop_on_non_text_content(server: FastMCP) -> No
 
 @pytest.mark.asyncio
 async def test_round_trip_against_edit_content_translation(server: FastMCP) -> None:
-    """A body combining a trailing newline, a blank line after an H1 (CRLF-terminated),
-    a CRLF pair, and a multi-byte character: hand-verified numbered rows, cross-checked
-    against divoid_edit_content's real 1-based-inclusive -> 0-based-half-open wire
-    translation for two of those lines.
-
-    body = "# title\\r\\n" + "\\r\\n" + "**Ünïcødé** 🎉 body text\\n"
-    Hand split on '\\n' only: ["# title\\r", "\\r", "**Ünïcødé** 🎉 body text", ""]
-    -> 4 lines; row 2 is the CRLF blank line (content '\\r'); row 4 is the trailing-
-    newline's final empty line.
-
-    Substitution probe: any numbering bug (wrong origin, wrong trailing-newline handling,
-    CRLF collapsed via splitlines()) shifts which text a line number addresses — the
-    backend slice computed from the real edit_content wire body would then disagree with
-    get_content's displayed row for that line.
-    """
+    """Pins that a line number from the numbered output addresses the same text under
+    divoid_edit_content's real wire translation, for a body with a trailing newline, a
+    CRLF-terminated blank line after an H1, and a multi-byte character."""
     body = "# title\r\n\r\n**Ünïcødé** 🎉 body text\n"
 
     with respx.mock(assert_all_called=True) as mock:
