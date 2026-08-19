@@ -669,3 +669,341 @@ async def test_end_before_start_replace_chars_rejected(server: FastMCP) -> None:
     assert not http_called, "HTTP must NOT be called when end < start"
     text = result["content"][0]["text"]
     assert "end_before_start" in text, f"Expected 'end_before_start' code, got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_replace_lines_missing_value_rejected_before_http(server: FastMCP) -> None:
+    """replace_lines without value → isError 'missing_field', no HTTP call."""
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, json=_OK_NODE)
+
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=detect)
+
+        result = await _call(server, {
+            "id": _NODE_ID,
+            "edits": [{"op": "replace_lines", "start_line": 14, "end_line": 14}],
+        })
+
+    assert result.get("isError") is True, f"Expected isError=True for missing value, got: {result}"
+    assert not http_called, "HTTP must NOT be called when value is missing"
+    text = result["content"][0]["text"]
+    assert "missing_field" in text, f"Expected 'missing_field' code, got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_replace_chars_missing_value_rejected_before_http(server: FastMCP) -> None:
+    """replace_chars without value → isError 'missing_field', no HTTP call."""
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, json=_OK_NODE)
+
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=detect)
+
+        result = await _call(server, {
+            "id": _NODE_ID,
+            "edits": [{"op": "replace_chars", "start": 5, "end": 10}],
+        })
+
+    assert result.get("isError") is True, f"Expected isError=True for missing value, got: {result}"
+    assert not http_called, "HTTP must NOT be called when value is missing"
+    text = result["content"][0]["text"]
+    assert "missing_field" in text, f"Expected 'missing_field' code, got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_insert_before_line_missing_value_rejected_before_http(server: FastMCP) -> None:
+    """insert_before_line without value → isError 'missing_field', no HTTP call.
+
+    This is the exact shape reported in DiVoid #8014: {"op": "insert_before_line", "line": 4}.
+    """
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, json=_OK_NODE)
+
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=detect)
+
+        result = await _call(server, {
+            "id": _NODE_ID,
+            "edits": [{"op": "insert_before_line", "line": 4}],
+        })
+
+    assert result.get("isError") is True, f"Expected isError=True for missing value, got: {result}"
+    assert not http_called, "HTTP must NOT be called when value is missing"
+    text = result["content"][0]["text"]
+    assert "missing_field" in text, f"Expected 'missing_field' code, got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_append_missing_value_rejected_before_http(server: FastMCP) -> None:
+    """append without value → isError 'missing_field', no HTTP call (not even the pre-read GET)."""
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, content=b"irrelevant")
+
+        mock.get(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=detect)
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=detect)
+
+        result = await _call(server, {"id": _NODE_ID, "edits": [{"op": "append"}]})
+
+    assert result.get("isError") is True, f"Expected isError=True for missing value, got: {result}"
+    assert not http_called, "HTTP must NOT be called (including pre-read GET) when value is missing"
+    text = result["content"][0]["text"]
+    assert "missing_field" in text, f"Expected 'missing_field' code, got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_delete_lines_without_value_remains_legal(server: FastMCP) -> None:
+    """Dual case: delete_lines has no constructive half, so value must NOT be required."""
+    captured: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(req: httpx.Request) -> httpx.Response:
+            captured.append(json.loads(req.content))
+            return httpx.Response(200, json=_OK_NODE)
+
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=capture)
+
+        result = await _call(server, {
+            "id": _NODE_ID,
+            "edits": [{"op": "delete_lines", "start_line": 2, "end_line": 4}],
+        })
+
+    assert result.get("isError") is not True, f"Expected success for delete_lines without value, got: {result}"
+    assert len(captured) == 1, "Expected the PATCH to be sent"
+
+
+@pytest.mark.asyncio
+async def test_replace_lines_empty_string_value_is_legal(server: FastMCP) -> None:
+    """Dual case: an explicit empty-string value is a legitimate deletion, not a missing field."""
+    captured: list[Any] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        def capture(req: httpx.Request) -> httpx.Response:
+            captured.append(json.loads(req.content))
+            return httpx.Response(200, json=_OK_NODE)
+
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=capture)
+
+        result = await _call(server, {
+            "id": _NODE_ID,
+            "edits": [{"op": "replace_lines", "start_line": 3, "end_line": 3, "value": ""}],
+        })
+
+    assert result.get("isError") is not True, f"Expected success for explicit empty value, got: {result}"
+    assert captured[0][0]["value"] == "", f"Expected empty-string value to reach the wire, got: {captured[0][0]!r}"
+
+
+@pytest.mark.asyncio
+async def test_replace_lines_non_string_value_rejected_before_http(server: FastMCP) -> None:
+    """replace_lines with value=123 (not a string) → isError 'invalid_field_type', no HTTP call."""
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, json=_OK_NODE)
+
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=detect)
+
+        result = await _call(server, {
+            "id": _NODE_ID,
+            "edits": [{"op": "replace_lines", "start_line": 1, "end_line": 1, "value": 123}],
+        })
+
+    assert result.get("isError") is True, f"Expected isError=True for non-string value, got: {result}"
+    assert not http_called, "HTTP must NOT be called when value has the wrong type"
+    text = result["content"][0]["text"]
+    assert "invalid_field_type" in text, f"Expected 'invalid_field_type' code, got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_append_non_string_value_rejected_before_pre_read(server: FastMCP) -> None:
+    """append with value=None (not a string) → isError 'invalid_field_type', no pre-read GET."""
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, content=b"irrelevant")
+
+        mock.get(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=detect)
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=detect)
+
+        result = await _call(server, {
+            "id": _NODE_ID,
+            "edits": [{"op": "append", "value": None}],
+        })
+
+    assert result.get("isError") is True, f"Expected isError=True for non-string value, got: {result}"
+    assert not http_called, "HTTP must NOT be called (including pre-read GET) when value has the wrong type"
+    text = result["content"][0]["text"]
+    assert "invalid_field_type" in text, f"Expected 'invalid_field_type' code, got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_replace_lines_unknown_key_rejected_before_http(server: FastMCP) -> None:
+    """replace_lines with an extra 'text' key alongside a valid 'value' → isError 'unknown_field'."""
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, json=_OK_NODE)
+
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=detect)
+
+        result = await _call(server, {
+            "id": _NODE_ID,
+            "edits": [{"op": "replace_lines", "start_line": 1, "end_line": 1,
+                       "value": "ok", "text": "extra"}],
+        })
+
+    assert result.get("isError") is True, f"Expected isError=True for unknown key, got: {result}"
+    assert not http_called, "HTTP must NOT be called when an edit has an unrecognized key"
+    text = result["content"][0]["text"]
+    assert "unknown_field" in text, f"Expected 'unknown_field' code, got: {text!r}"
+    assert "text" in text, f"Expected the offending key name 'text' in the error, got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_replace_chars_unknown_key_rejected_before_http(server: FastMCP) -> None:
+    """replace_chars with an extra 'content' key → isError 'unknown_field'."""
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, json=_OK_NODE)
+
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=detect)
+
+        result = await _call(server, {
+            "id": _NODE_ID,
+            "edits": [{"op": "replace_chars", "start": 1, "end": 2,
+                       "value": "ok", "content": "extra"}],
+        })
+
+    assert result.get("isError") is True, f"Expected isError=True for unknown key, got: {result}"
+    assert not http_called, "HTTP must NOT be called when an edit has an unrecognized key"
+    text = result["content"][0]["text"]
+    assert "unknown_field" in text, f"Expected 'unknown_field' code, got: {text!r}"
+    assert "content" in text, f"Expected the offending key name 'content' in the error, got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_insert_before_line_unknown_key_rejected_before_http(server: FastMCP) -> None:
+    """insert_before_line with an extra 'text' key → isError 'unknown_field'."""
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, json=_OK_NODE)
+
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=detect)
+
+        result = await _call(server, {
+            "id": _NODE_ID,
+            "edits": [{"op": "insert_before_line", "line": 3, "value": "ok", "text": "extra"}],
+        })
+
+    assert result.get("isError") is True, f"Expected isError=True for unknown key, got: {result}"
+    assert not http_called, "HTTP must NOT be called when an edit has an unrecognized key"
+    text = result["content"][0]["text"]
+    assert "unknown_field" in text, f"Expected 'unknown_field' code, got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_delete_lines_unknown_key_rejected_before_http(server: FastMCP) -> None:
+    """delete_lines with a 'value' key → isError 'unknown_field'."""
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, json=_OK_NODE)
+
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=detect)
+
+        result = await _call(server, {
+            "id": _NODE_ID,
+            "edits": [{"op": "delete_lines", "start_line": 1, "end_line": 2, "value": "oops"}],
+        })
+
+    assert result.get("isError") is True, f"Expected isError=True for unknown key, got: {result}"
+    assert not http_called, "HTTP must NOT be called when an edit has an unrecognized key"
+    text = result["content"][0]["text"]
+    assert "unknown_field" in text, f"Expected 'unknown_field' code, got: {text!r}"
+    assert "value" in text, f"Expected the offending key name 'value' in the error, got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_append_unknown_key_rejected_before_http(server: FastMCP) -> None:
+    """append with an extra 'content' key → isError 'unknown_field', no pre-read GET."""
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, content=b"irrelevant")
+
+        mock.get(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=detect)
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=detect)
+
+        result = await _call(server, {
+            "id": _NODE_ID,
+            "edits": [{"op": "append", "value": "ok", "content": "extra"}],
+        })
+
+    assert result.get("isError") is True, f"Expected isError=True for unknown key, got: {result}"
+    assert not http_called, "HTTP must NOT be called (including pre-read GET) when an edit has an unrecognized key"
+    text = result["content"][0]["text"]
+    assert "unknown_field" in text, f"Expected 'unknown_field' code, got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_reported_incident_shape_replace_lines_with_text_key_rejected(server: FastMCP) -> None:
+    """The regression test: the exact shape reported in DiVoid #8288 must now raise, not delete."""
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, json=_OK_NODE)
+
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=detect)
+
+        result = await _call(server, {
+            "id": _NODE_ID,
+            "edits": [{"op": "replace_lines", "start_line": 14, "end_line": 14, "text": "new content"}],
+        })
+
+    assert result.get("isError") is True, f"Expected isError=True for the reported incident shape, got: {result}"
+    assert not http_called, "HTTP must NOT be called — this is exactly the silent-deletion shape from DiVoid #8288"
+    text = result["content"][0]["text"]
+    assert "unknown_field" in text, f"Expected 'unknown_field' code, got: {text!r}"
