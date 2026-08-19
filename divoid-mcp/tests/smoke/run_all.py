@@ -2554,7 +2554,7 @@ async def smoke_set_content_invariant_empty(config: Any) -> None:
     raised = False
     violation_code = None
     try:
-        _check_set_content_invariants("   ")
+        _check_set_content_invariants("   ", None)
     except InvariantViolation as exc:
         raised = True
         violation_code = exc.code
@@ -2569,7 +2569,7 @@ async def smoke_set_content_invariant_empty(config: Any) -> None:
     # Also test empty string.
     raised2 = False
     try:
-        _check_set_content_invariants("")
+        _check_set_content_invariants("", None)
     except InvariantViolation:
         raised2 = True
     _assert("empty string raises InvariantViolation", raised2)
