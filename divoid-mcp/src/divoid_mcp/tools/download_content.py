@@ -8,6 +8,9 @@ text all round-trip byte-identical.
 Parent directories are created automatically (os.makedirs exist_ok=True) so
 callers can specify a target path without pre-creating the directory tree.
 
+`path` is validated against the frozen filesystem roots (paths.py) before
+any HTTP call or disk touch.
+
 Architecture reference: DiVoid task #6597.
 """
 
@@ -19,17 +22,24 @@ from typing import Any
 
 import mcp.server.fastmcp as fastmcp
 
-from .. import http_client
+from .. import http_client, paths
 from ..config import DivoidConfig
-from ..errors import make_error_content, map_http_error, map_unreachable
+from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
 
 logger = logging.getLogger(__name__)
 
 _TOOL_DESCRIPTION = """\
 GET a node's content and write the raw bytes to a local file at `path`. \
 Mimetype-agnostic: images, PDFs, and binary blobs round-trip byte-identical. \
-Parent directories are created automatically. Returns \
+Parent directories are created automatically. `path` must resolve inside the \
+server's configured workspace root(s); a path outside every root is rejected \
+with path_outside_root before any network or disk activity -- this is an \
+intentional containment boundary, not a tool fault, so do not retry or fall \
+back to raw REST on that error. Returns \
 {success, path, bytes_written, content_type}; does NOT return the content itself. \
+The returned `path` is the resolved absolute path the bytes were written to, \
+which may differ from the path you supplied (e.g. a relative path is resolved \
+against the server's working directory). \
 Use divoid_get_content for text nodes where you want the body inline.\
 """
 
@@ -55,6 +65,14 @@ async def _execute(node_id: int, path: str, config: DivoidConfig) -> dict[str, A
         }
 
     logger.info("divoid_download_content node_id=%d path=%r", node_id, path)
+
+    try:
+        resolved_path = paths.gate(path)
+    except InvariantViolation as exc:
+        logger.info(
+            "divoid_download_content node_id=%d path=%r -> %s", node_id, path, exc.code
+        )
+        return {"isError": True, "content": make_error_content(exc.code, exc.message)}
 
     try:
         result = await http_client.get(f"nodes/{node_id}/content")
@@ -109,11 +127,11 @@ async def _execute(node_id: int, path: str, config: DivoidConfig) -> dict[str, A
     raw_bytes = result.body
     content_type = result.headers.get("content-type", None)
 
-    parent = os.path.dirname(os.path.abspath(path))
+    parent = os.path.dirname(resolved_path)
     os.makedirs(parent, exist_ok=True)
 
     try:
-        with open(path, "wb") as fh:
+        with open(resolved_path, "wb") as fh:
             fh.write(raw_bytes)
     except OSError as exc:
         logger.warning("divoid_download_content node_id=%d write failed: %s", node_id, exc)
@@ -121,18 +139,18 @@ async def _execute(node_id: int, path: str, config: DivoidConfig) -> dict[str, A
             "isError": True,
             "content": make_error_content(
                 "write_failed",
-                f"Could not write to {path!r}: {exc}",
+                f"Could not write to {resolved_path!r}: {exc}",
             ),
         }
 
     bytes_written = len(raw_bytes)
     logger.info(
         "divoid_download_content node_id=%d ok bytes_written=%d path=%r content_type=%r",
-        node_id, bytes_written, path, content_type,
+        node_id, bytes_written, resolved_path, content_type,
     )
     return {
         "success": True,
-        "path": path,
+        "path": resolved_path,
         "bytes_written": bytes_written,
         "content_type": content_type,
     }
@@ -150,6 +168,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             node_id: The node whose content to download. Must be a positive integer.
             path:    Absolute or relative path to write the file to. Parent directories
                      are created automatically. The file is written in binary mode;
-                     no encoding or decoding is applied.
+                     no encoding or decoding is applied. Must resolve inside the
+                     server's configured workspace root(s) -- a path outside every
+                     root is rejected with path_outside_root before any I/O.
         """
         return await _execute(node_id=node_id, path=path, config=config)

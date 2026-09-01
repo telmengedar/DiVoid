@@ -14,8 +14,9 @@ import pytest
 import respx
 from mcp.server.fastmcp import FastMCP
 
-from divoid_mcp import http_client
+from divoid_mcp import http_client, paths
 from divoid_mcp.config import DivoidConfig
+from divoid_mcp.tools.set_content import _execute as _execute_set_content
 from divoid_mcp.tools.set_content import register as register_set_content
 
 _DUMMY_BASE = "http://divoid.test"
@@ -43,6 +44,12 @@ def server() -> FastMCP:
     register_set_content(mcp_server)
 
     return mcp_server
+
+
+@pytest.fixture(autouse=True)
+def _configure_root(tmp_path: Any) -> None:
+    """Configures tmp_path as the sole filesystem root for each test."""
+    paths.init(env={"DIVOID_MCP_FILE_ROOT": str(tmp_path)})
 
 
 async def _call(server: FastMCP, args: dict[str, Any]) -> dict[str, Any]:
@@ -306,3 +313,134 @@ async def test_empty_file_rejected_before_http(server: FastMCP, tmp_path: Any) -
     assert result.get("isError") is True
     assert not http_called, "HTTP must NOT be called when the file reads as zero bytes."
     assert _error_code(result) == "file_empty"
+
+
+@pytest.mark.asyncio
+async def test_out_of_root_path_rejected_before_http_or_open(
+    server: FastMCP, tmp_path: Any
+) -> None:
+    root_dir = tmp_path / "workspace"
+    evil_dir = tmp_path / "workspace-evil"
+    root_dir.mkdir()
+    evil_dir.mkdir()
+    paths.init(env={"DIVOID_MCP_FILE_ROOT": str(root_dir)})
+
+    secret = evil_dir / "secret.txt"
+    secret.write_bytes(b"should never leave this directory")
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, json={"id": _NODE_ID})
+
+        mock.post(_CONTENT_URL).mock(side_effect=detect)
+
+        result = await _call(server, {"id": _NODE_ID, "path": str(secret)})
+
+    assert result.get("isError") is True, f"Expected isError=True, got: {result}"
+    assert not http_called, (
+        "HTTP must NOT be called when the path gate rejects -- the file's bytes "
+        "must never even be read into the process, let alone posted."
+    )
+    assert _error_code(result) == "path_outside_root"
+
+
+@pytest.mark.asyncio
+async def test_execute_called_directly_with_out_of_root_path_is_still_rejected(
+    tmp_path: Any,
+) -> None:
+    """Calls _execute() directly, bypassing register()'s wrapper and _check_invariants."""
+    root_dir = tmp_path / "workspace"
+    evil_dir = tmp_path / "workspace-evil"
+    root_dir.mkdir()
+    evil_dir.mkdir()
+    paths.init(env={"DIVOID_MCP_FILE_ROOT": str(root_dir)})
+
+    secret = evil_dir / "secret.txt"
+    secret.write_bytes(b"should never leave this directory")
+
+    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)
+
+    with respx.mock(assert_all_called=False) as mock:
+        http_called = False
+
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, json={"id": _NODE_ID})
+
+        mock.post(_CONTENT_URL).mock(side_effect=detect)
+
+        result = await _execute_set_content(id=_NODE_ID, config=config, path=str(secret))
+
+    assert result.get("isError") is True, (
+        f"Expected isError=True from a direct _execute() call with an out-of-root "
+        f"path, got: {result}"
+    )
+    assert not http_called
+    assert _error_code(result) == "path_outside_root"
+
+
+@pytest.mark.asyncio
+async def test_execute_opens_the_resolved_path_not_the_raw_caller_string(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """Spies on the builtin open() to capture the exact argument _execute calls it with."""
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    paths.init(env={"DIVOID_MCP_FILE_ROOT": str(root_dir)})
+
+    target = root_dir / "doc.md"
+    target.write_bytes(b"# hi\n")
+
+    monkeypatch.chdir(root_dir)
+    raw_relative = "doc.md"
+    expected_resolved = paths.gate(raw_relative)
+
+    captured_files: list[Any] = []
+    real_open = open
+
+    def spy_open(file, *args, **kwargs):
+        captured_files.append(file)
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", spy_open)
+
+    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)
+    with respx.mock(assert_all_called=True) as mock:
+        mock.post(_CONTENT_URL).mock(return_value=httpx.Response(200, json={"id": _NODE_ID}))
+        result = await _execute_set_content(id=_NODE_ID, config=config, path=raw_relative)
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert expected_resolved in captured_files, (
+        f"Expected open() to be called with the resolved path {expected_resolved!r}, "
+        f"but it was called with: {captured_files!r}"
+    )
+    assert raw_relative not in captured_files, (
+        f"open() must not be called with the raw caller string {raw_relative!r} "
+        f"directly -- got: {captured_files!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_usable_root_returns_file_root_unusable(server: FastMCP, tmp_path: Any) -> None:
+    paths._roots = ()
+    target = tmp_path / "would_be_fine.md"
+    target.write_bytes(b"content")
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, json={"id": _NODE_ID})
+
+        mock.post(_CONTENT_URL).mock(side_effect=detect)
+
+        result = await _call(server, {"id": _NODE_ID, "path": str(target)})
+
+    assert result.get("isError") is True
+    assert not http_called
+    assert _error_code(result) == "file_root_unusable"
