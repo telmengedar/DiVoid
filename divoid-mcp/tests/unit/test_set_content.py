@@ -425,6 +425,81 @@ async def test_execute_opens_the_resolved_path_not_the_raw_caller_string(
 
 
 @pytest.mark.asyncio
+async def test_sensitive_in_root_path_rejected_before_http_or_open(
+    server: FastMCP, tmp_path: Any
+) -> None:
+    """An in-root .git/config is rejected with path_denied_sensitive before any HTTP call."""
+    root_dir = tmp_path / "workspace"
+    git_dir = root_dir / ".git"
+    git_dir.mkdir(parents=True)
+    target = git_dir / "config"
+    target.write_bytes(b"[remote]token=shhh")
+    paths.init(env={"DIVOID_MCP_FILE_ROOT": str(root_dir)})
+
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, json={"id": _NODE_ID})
+
+        mock.post(_CONTENT_URL).mock(side_effect=detect)
+
+        result = await _call(server, {"id": _NODE_ID, "path": str(target)})
+
+    assert result.get("isError") is True, f"Expected isError=True, got: {result}"
+    assert not http_called, (
+        "HTTP must NOT be called when the path gate refuses a sensitive file -- "
+        "the file's bytes must never even be read into the process."
+    )
+    assert _error_code(result) == "path_denied_sensitive"
+
+
+@pytest.mark.asyncio
+async def test_execute_called_directly_with_sensitive_path_never_opens_the_file(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """Calls _execute() directly and spies on open() to prove the file is never touched."""
+    root_dir = tmp_path / "workspace"
+    git_dir = root_dir / ".git"
+    git_dir.mkdir(parents=True)
+    target = git_dir / "config"
+    target.write_bytes(b"[remote]token=shhh")
+    paths.init(env={"DIVOID_MCP_FILE_ROOT": str(root_dir)})
+
+    open_called = False
+    real_open = open
+
+    def spy_open(file, *args, **kwargs):
+        nonlocal open_called
+        if str(file) == str(target):
+            open_called = True
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", spy_open)
+
+    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)
+
+    with respx.mock(assert_all_called=False) as mock:
+        http_called = False
+
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, json={"id": _NODE_ID})
+
+        mock.post(_CONTENT_URL).mock(side_effect=detect)
+
+        result = await _execute_set_content(id=_NODE_ID, config=config, path=str(target))
+
+    assert result.get("isError") is True
+    assert _error_code(result) == "path_denied_sensitive"
+    assert not http_called
+    assert not open_called, "The sensitive file must never be opened, even in read mode."
+
+
+@pytest.mark.asyncio
 async def test_no_usable_root_returns_file_root_unusable(server: FastMCP, tmp_path: Any) -> None:
     paths._roots = ()
     target = tmp_path / "would_be_fine.md"

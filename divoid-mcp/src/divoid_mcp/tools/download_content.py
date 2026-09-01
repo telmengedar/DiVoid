@@ -35,7 +35,12 @@ Parent directories are created automatically. `path` must resolve inside the \
 server's configured workspace root(s); a path outside every root is rejected \
 with path_outside_root before any network or disk activity -- this is an \
 intentional containment boundary, not a tool fault, so do not retry or fall \
-back to raw REST on that error. Returns \
+back to raw REST on that error. A path that IS inside a root but names a \
+credential-bearing or host-config file (e.g. .git/**, .mcp.json, \
+settings.json, settings.local.json) is separately rejected with \
+path_denied_sensitive -- this is deliberate and has no remedy within this \
+tool: do not retry, re-spell the path, fall back to raw REST, or copy the \
+file to another name and write to the copy. Returns \
 {success, path, bytes_written, content_type}; does NOT return the content itself. \
 The returned `path` is the resolved absolute path the bytes were written to, \
 which may differ from the path you supplied (e.g. a relative path is resolved \
