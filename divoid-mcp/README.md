@@ -13,7 +13,7 @@ pip install "git+https://github.com/telmengedar/DiVoid.git#subdirectory=divoid-m
 claude mcp add --transport stdio --scope user divoid -- python -m divoid_mcp
 ```
 
-## Tools (19)
+## Tools (22)
 
 | Tool | What it does |
 |---|---|
@@ -22,12 +22,15 @@ claude mcp add --transport stdio --scope user divoid -- python -m divoid_mcp
 | `divoid_get_content` | Fetch the text body of a node — decoded as UTF-8 |
 | `divoid_list` | List nodes with filtering by type, status, linkedto, name, id, and timestamp ranges (created_from/to, updated_from/to); returns paged results; optional `include_links` / `include_link_details` surface inline adjacency (ids, or enriched `source_id`/`target_id`/`link_type`/`context` rows) |
 | `divoid_get_links` | Return link adjacency rows incident to a set of node ids, incl. `link_type` and `context` when the backend carries them |
+| `divoid_download_content` | Fetch a node's content and write the raw bytes to a local file; path must resolve inside the server's configured workspace root(s) |
 | `divoid_link_nodes` | Create a link between two existing nodes (undirected by default); optional `link_type` (Unidirectional/Bidirectional) and `context` (free text) |
 | `divoid_unlink_nodes` | Remove an undirected link between two existing nodes; idempotent |
 | `divoid_patch_node` | Apply JSON-Patch operations to a node's metadata fields (name, status, x, y, access, owner_id) |
 | `divoid_patch_link` | Edit an existing link's `link_type` and/or `context` in place; missing edge is a hard 404 |
 | `divoid_set_status` | Set or clear a node's status field — enforces valid lifecycle values client-side |
-| `divoid_set_content` | Post content to a node's body — UTF-8 safe, no bash heredoc mangling |
+| `divoid_set_content` | Post content to a node's body — UTF-8 safe, no bash heredoc mangling; `path` must resolve inside the server's configured workspace root(s) |
+| `divoid_edit_content` | Apply one or more partial edits to a node's text content in a single atomic request, addressed by 1-based line/char ranges |
+| `divoid_delete_node` | Permanently delete a node by id; destructive and irreversible |
 | `divoid_create_task` | Atomic create: makes the node, sets its content, links it to the project's Tasks group; accepts optional `access` param |
 | `divoid_create_documentation` | Atomic create: makes the node, sets its content, links it to the project's Docs group; accepts optional `access` param |
 | `divoid_create_session_log` | Atomic create: makes the node, sets its content, links it to the project's Docs group + any extra links; accepts optional `access` param |
@@ -56,6 +59,10 @@ ApiKey=<your-key>
 The API key **never** appears in tool parameters, error messages, or logs. The file path may appear in error messages.
 
 **Log level** is controlled via `DIVOID_MCP_LOG_LEVEL` (default `INFO`). Valid values: `DEBUG`, `INFO`, `WARNING`, `ERROR`. All logs go to **stderr** (stdout carries the JSON-RPC stream).
+
+**Filesystem path containment** (`divoid_download_content` and `divoid_set_content(path=...)`) is controlled via `DIVOID_MCP_FILE_ROOT`, an `os.pathsep`-separated list of directories (`;` on Windows, `:` on POSIX). If unset, the default root is the server process's working directory. A caller-supplied `path` that does not resolve inside one of these roots is rejected with `path_outside_root` before any disk or network I/O; if no configured root is usable, both tools return `file_root_unusable` for every call. See DiVoid **#10473** / **#10472** and `docs/architecture/mcp-path-containment.md` (DiVoid **#10479**).
+
+**Never set `DIVOID_MCP_FILE_ROOT` to `~`, `~/.claude`, or a drive root (`C:\`, `/`).** Each of those defeats the containment this variable exists to provide — a home-directory root puts `~/.claude/secrets/.divoid-online` (the exact exfiltration target the finding named) back inside the fence, and a drive root makes "contained" mean "the whole volume." If a legitimate path is rejected, add its specific directory to the list — do not widen to one of these.
 
 ## Smoke tests
 

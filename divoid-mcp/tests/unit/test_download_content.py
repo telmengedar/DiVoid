@@ -24,7 +24,7 @@ import pytest
 import respx
 from mcp.server.fastmcp import FastMCP
 
-from divoid_mcp import http_client
+from divoid_mcp import http_client, paths
 from divoid_mcp.config import DivoidConfig
 from divoid_mcp.tools.download_content import register as register_download_content
 
@@ -65,6 +65,12 @@ def server() -> FastMCP:
     register_download_content(mcp_server)
 
     return mcp_server
+
+
+@pytest.fixture(autouse=True)
+def _configure_root(tmp_path: Any) -> None:
+    """Configures tmp_path as the sole filesystem root for each test."""
+    paths.init(env={"DIVOID_MCP_FILE_ROOT": str(tmp_path)})
 
 
 async def _call(server: FastMCP, args: dict[str, Any]) -> dict[str, Any]:
@@ -137,9 +143,9 @@ async def test_return_dict_shape(server: FastMCP, tmp_path: Any) -> None:
         result = await _call(server, {"node_id": _NODE_ID, "path": str(target)})
 
     assert result.get("success") is True
-    assert result.get("path") == str(target), (
-        f"Expected path={str(target)!r}, got {result.get('path')!r}. "
-        "Substitution probe: path must be echoed verbatim from the tool argument."
+    assert os.path.samefile(result.get("path", ""), target), (
+        f"Expected result['path']={result.get('path')!r} to identify the same file as "
+        f"{str(target)!r}."
     )
     assert result.get("bytes_written") == len(_BINARY_PAYLOAD), (
         f"Expected bytes_written={len(_BINARY_PAYLOAD)}, got {result.get('bytes_written')!r}. "
@@ -271,3 +277,117 @@ async def test_empty_path_rejected_before_http(server: FastMCP) -> None:
     assert not http_called, "HTTP must NOT be called when the empty-path guard fires."
     text = result.get("content", [{}])[0].get("text", "")
     assert "divoid_bad_request" in text, f"Expected 'divoid_bad_request', got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_out_of_root_path_rejected_before_http_and_disk(
+    server: FastMCP, tmp_path: Any
+) -> None:
+    root_dir = tmp_path / "workspace"
+    evil_dir = tmp_path / "workspace-evil"
+    root_dir.mkdir()
+    evil_dir.mkdir()
+    paths.init(env={"DIVOID_MCP_FILE_ROOT": str(root_dir)})
+
+    target = evil_dir / "exfiltrated.bin"
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, content=b"irrelevant")
+
+        mock.get(_CONTENT_URL).mock(side_effect=detect)
+
+        result = await _call(server, {"node_id": _NODE_ID, "path": str(target)})
+
+    assert result.get("isError") is True, f"Expected isError=True, got: {result}"
+    assert not http_called, (
+        "HTTP must NOT be called when the path gate rejects -- containment runs "
+        "before the network call, not just before the disk write."
+    )
+    assert not target.exists(), "Target file must NOT be created when the path gate rejects."
+    text = result.get("content", [{}])[0].get("text", "")
+    assert "path_outside_root" in text, f"Expected 'path_outside_root', got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_result_path_is_resolved_absolute_not_raw_caller_string(
+    server: FastMCP, tmp_path: Any, monkeypatch: Any
+) -> None:
+    """Uses a relative caller input so a raw-path result (non-absolute) is distinguishable from a resolved one."""
+    monkeypatch.chdir(tmp_path)
+
+    with respx.mock(assert_all_called=True) as mock:
+        mock.get(_CONTENT_URL).mock(
+            return_value=httpx.Response(
+                200, content=b"data", headers={"content-type": "text/plain"}
+            )
+        )
+        result = await _call(server, {"node_id": _NODE_ID, "path": "relative_output.bin"})
+
+    assert result.get("success") is True, f"Expected success, got: {result}"
+    assert os.path.isabs(result.get("path", "")), (
+        f"Expected an absolute resolved path, got: {result.get('path')!r}."
+    )
+    assert os.path.samefile(result["path"], tmp_path / "relative_output.bin")
+
+
+@pytest.mark.asyncio
+async def test_execute_writes_to_the_resolved_path_not_the_raw_caller_string(
+    server: FastMCP, tmp_path: Any, monkeypatch: Any
+) -> None:
+    """Spies on the builtin open() to capture the exact write target _execute uses."""
+    monkeypatch.chdir(tmp_path)
+    raw_relative = "relative_write_target.bin"
+    expected_resolved = paths.gate(raw_relative)
+
+    captured_files: list[Any] = []
+    real_open = open
+
+    def spy_open(file, *args, **kwargs):
+        captured_files.append(file)
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", spy_open)
+
+    with respx.mock(assert_all_called=True) as mock:
+        mock.get(_CONTENT_URL).mock(
+            return_value=httpx.Response(
+                200, content=b"data", headers={"content-type": "text/plain"}
+            )
+        )
+        result = await _call(server, {"node_id": _NODE_ID, "path": raw_relative})
+
+    assert result.get("success") is True, f"Expected success, got: {result}"
+    assert expected_resolved in captured_files, (
+        f"Expected open() to be called with the resolved path {expected_resolved!r}, "
+        f"but it was called with: {captured_files!r}"
+    )
+    assert raw_relative not in captured_files, (
+        f"open() must not be called with the raw caller string {raw_relative!r} directly -- "
+        f"got: {captured_files!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_usable_root_returns_file_root_unusable(server: FastMCP, tmp_path: Any) -> None:
+    paths._roots = ()
+    target = tmp_path / "would_be_fine.bin"
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, content=b"irrelevant")
+
+        mock.get(_CONTENT_URL).mock(side_effect=detect)
+
+        result = await _call(server, {"node_id": _NODE_ID, "path": str(target)})
+
+    assert result.get("isError") is True
+    assert not http_called
+    text = result.get("content", [{}])[0].get("text", "")
+    assert "file_root_unusable" in text, f"Expected 'file_root_unusable', got: {text!r}"

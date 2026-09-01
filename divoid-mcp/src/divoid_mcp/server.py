@@ -5,6 +5,7 @@ Startup sequence (see architecture §14 / §6.1):
 1. Configure logging to stderr at the level from DIVOID_MCP_LOG_LEVEL.
 2. Load the DiVoid secret (fail-closed on missing/malformed).
 3. Initialise the shared HTTP client with auth header pre-set.
+3b. Initialise the filesystem path containment roots (paths.py).
 4. Run the drift canary (warn on mismatch, never block startup).
 5. Create the MCP server, register tools and resources.
 6. Enter the stdio event loop (blocks until the host closes the stream).
@@ -21,7 +22,7 @@ import logging
 import os
 import sys
 
-from . import http_client
+from . import http_client, paths
 from .config import load_secret
 from .drift import run_canary
 from .resources import register_resources
@@ -51,6 +52,8 @@ def main() -> None:
 
     # Step 3: initialise shared HTTP client
     http_client.init(config.base_url, config.api_key)
+
+    paths.init()
 
     # Run the async startup and serve
     asyncio.run(_async_main(config))

@@ -16,6 +16,7 @@ Invariant guards (before any HTTP call):
   - exactly one of content / path must be given -> content_path_conflict / content_path_required
   - inline content must be non-empty (no whitespace-only posts) -> content_empty
   - path must be a non-empty string -> path_empty
+  - path must resolve inside a configured filesystem root -> path_outside_root / file_root_unusable
 
 File-read outcomes (resolved after the guard, still before the HTTP call):
   - missing file -> file_not_found
@@ -34,7 +35,7 @@ from typing import Any
 
 import mcp.server.fastmcp as fastmcp
 
-from .. import http_client
+from .. import http_client, paths
 from ..config import DivoidConfig
 from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
 
@@ -52,10 +53,14 @@ UTF-8 mangling bug (DiVoid #187). Use this to set or update the body of any node
 that accepts content (task, documentation, session-log, etc.). `content` is \
 rejected if empty or whitespace-only; a `path` file is rejected only if it reads \
 as zero bytes (whitespace-only file contents are uploaded as-is, since `path` \
-may point at a binary file for which stripping would be wrong). The default \
-content_type is 'text/markdown; charset=utf-8'; override if your content is \
-plain text, binary, or another format — it is not inferred from a file \
-extension. Returns success confirmation on 2xx.\
+may point at a binary file for which stripping would be wrong). `path` must \
+resolve inside the server's configured workspace root(s); a path outside \
+every root is rejected with path_outside_root before the file is opened or \
+any network call is made -- this is an intentional containment boundary, not \
+a tool fault, so do not retry or fall back to raw REST on that error. The \
+default content_type is 'text/markdown; charset=utf-8'; override if your \
+content is plain text, binary, or another format — it is not inferred from a \
+file extension. Returns success confirmation on 2xx.\
 """
 
 
@@ -113,7 +118,13 @@ async def _execute(
     """
     if path is not None:
         try:
-            with open(path, "rb") as fh:
+            resolved_path = paths.gate(path)
+        except InvariantViolation as exc:
+            logger.info("divoid_set_content id=%d path=%r -> %s", id, path, exc.code)
+            return {"isError": True, "content": make_error_content(exc.code, exc.message)}
+
+        try:
+            with open(resolved_path, "rb") as fh:
                 content_bytes = fh.read()
         except FileNotFoundError:
             logger.info("divoid_set_content id=%d path=%r -> file_not_found", id, path)
@@ -203,7 +214,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                   byte-identical. Rejected if the file reads as zero bytes;
                   whitespace-only file contents are otherwise uploaded as-is
                   (unlike `content`, which also rejects whitespace-only strings).
-                  Use this instead of `content` for large bodies.
+                  Must resolve inside the server's configured workspace root(s) --
+                  a path outside every root is rejected with path_outside_root
+                  before the file is opened. Use this instead of `content` for
+                  large bodies.
             content_type: MIME type for the content. Default is
                           'text/markdown; charset=utf-8'. Override only if your
                           content is not markdown (e.g. 'text/plain; charset=utf-8').

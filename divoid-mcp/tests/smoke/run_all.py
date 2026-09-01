@@ -3641,7 +3641,7 @@ async def smoke_download_content_binary_round_trip(config: Any) -> None:
             return
 
         # Step 3: Download via _execute to a temp file.
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as tf:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".bin", dir=os.getcwd()) as tf:
             tmp_file_path = tf.name
 
         download_result = await _execute_download_content(
