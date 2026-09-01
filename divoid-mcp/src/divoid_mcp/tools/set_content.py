@@ -57,7 +57,12 @@ may point at a binary file for which stripping would be wrong). `path` must \
 resolve inside the server's configured workspace root(s); a path outside \
 every root is rejected with path_outside_root before the file is opened or \
 any network call is made -- this is an intentional containment boundary, not \
-a tool fault, so do not retry or fall back to raw REST on that error. The \
+a tool fault, so do not retry or fall back to raw REST on that error. A \
+path that IS inside a root but names a credential-bearing or host-config file \
+(e.g. .git/**, .env*, .npmrc, *.pem, id_rsa, .mcp.json, settings.json) is \
+separately rejected with path_denied_sensitive -- this is deliberate and has \
+no remedy within this tool: do not retry, re-spell the path, fall back to raw \
+REST, or copy the file to another name and upload the copy. The \
 default content_type is 'text/markdown; charset=utf-8'; override if your \
 content is plain text, binary, or another format — it is not inferred from a \
 file extension. Returns success confirmation on 2xx.\

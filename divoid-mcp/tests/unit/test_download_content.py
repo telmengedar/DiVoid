@@ -26,6 +26,7 @@ from mcp.server.fastmcp import FastMCP
 
 from divoid_mcp import http_client, paths
 from divoid_mcp.config import DivoidConfig
+from divoid_mcp.tools.download_content import _execute as _execute_download_content
 from divoid_mcp.tools.download_content import register as register_download_content
 
 # ---------------------------------------------------------------------------
@@ -310,6 +311,71 @@ async def test_out_of_root_path_rejected_before_http_and_disk(
     assert not target.exists(), "Target file must NOT be created when the path gate rejects."
     text = result.get("content", [{}])[0].get("text", "")
     assert "path_outside_root" in text, f"Expected 'path_outside_root', got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_sensitive_in_root_path_rejected_before_http_and_disk(
+    server: FastMCP, tmp_path: Any
+) -> None:
+    """Writing over an in-root .git/hooks file is rejected with path_denied_sensitive
+    before any HTTP call or disk write."""
+    root_dir = tmp_path / "workspace"
+    git_dir = root_dir / ".git"
+    git_dir.mkdir(parents=True)
+    target = git_dir / "config"
+    http_called = False
+
+    with respx.mock(assert_all_called=False) as mock:
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, content=b"attacker bytes")
+
+        mock.get(_CONTENT_URL).mock(side_effect=detect)
+
+        paths.init(env={"DIVOID_MCP_FILE_ROOT": str(root_dir)})
+        result = await _call(server, {"node_id": _NODE_ID, "path": str(target)})
+
+    assert result.get("isError") is True, f"Expected isError=True, got: {result}"
+    assert not http_called, (
+        "HTTP must NOT be called when the path gate refuses a sensitive write target -- "
+        "containment-plus-sensitivity runs before the network call."
+    )
+    assert not target.exists(), "Target file must NOT be created when the path gate refuses."
+    text = result.get("content", [{}])[0].get("text", "")
+    assert "path_denied_sensitive" in text, f"Expected 'path_denied_sensitive', got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_execute_called_directly_with_sensitive_path_never_writes_the_file(
+    tmp_path: Any,
+) -> None:
+    """Calls _execute() directly with an in-root settings.local.json write target."""
+    root_dir = tmp_path / "workspace"
+    claude_dir = root_dir / ".claude"
+    claude_dir.mkdir(parents=True)
+    target = claude_dir / "settings.local.json"
+    paths.init(env={"DIVOID_MCP_FILE_ROOT": str(root_dir)})
+
+    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)
+
+    with respx.mock(assert_all_called=False) as mock:
+        http_called = False
+
+        def detect(req: httpx.Request) -> httpx.Response:
+            nonlocal http_called
+            http_called = True
+            return httpx.Response(200, content=b"attacker bytes")
+
+        mock.get(_CONTENT_URL).mock(side_effect=detect)
+
+        result = await _execute_download_content(node_id=_NODE_ID, path=str(target), config=config)
+
+    assert result.get("isError") is True
+    text = result.get("content", [{}])[0].get("text", "")
+    assert "path_denied_sensitive" in text
+    assert not http_called
+    assert not target.exists()
 
 
 @pytest.mark.asyncio

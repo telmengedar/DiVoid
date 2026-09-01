@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import logging
 import os
 from typing import Final
@@ -13,6 +14,27 @@ logger = logging.getLogger(__name__)
 ENV_VAR: Final[str] = "DIVOID_MCP_FILE_ROOT"
 
 _REJECTED_PREFIXES: Final[tuple[str, ...]] = ("\\\\?\\", "\\\\.\\", "//?/", "//./")
+
+_SENSITIVE_NAME_PATTERNS: Final[tuple[str, ...]] = (
+    ".git",
+    ".env*",
+    ".npmrc",
+    ".pypirc",
+    ".netrc",
+    "pip.conf",
+    "pip.ini",
+    "*.pem",
+    "*.key",
+    "*.pfx",
+    "*.p12",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    ".mcp.json",
+    "settings.json",
+    "settings.local.json",
+)
 
 _roots: tuple[str, ...] = ()
 
@@ -134,6 +156,7 @@ def gate(path: str) -> str:
         except ValueError:
             continue
         if common == root_folded:
+            _reject_if_sensitive(real, root)
             return real
 
     raise InvariantViolation(
@@ -143,3 +166,22 @@ def gate(path: str) -> str:
         "tool defect -- do not retry, re-encode the path, or fall back to raw REST. "
         "Choose a path inside one of the active roots instead.",
     )
+
+
+def _reject_if_sensitive(real: str, root: str) -> None:
+    """Raises path_denied_sensitive if a component of `real`, relative to `root`, names a listed file."""
+    relative = os.path.relpath(real, root)
+    for component in relative.split(os.sep):
+        candidate = os.path.normcase(component.rstrip(". "))
+        for pattern in _SENSITIVE_NAME_PATTERNS:
+            if fnmatch.fnmatchcase(candidate, os.path.normcase(pattern)):
+                raise InvariantViolation(
+                    "path_denied_sensitive",
+                    f"Path {real!r} contains the component {component!r}, which matches "
+                    f"the sensitive-file pattern {pattern!r}. This is a deliberate "
+                    "refusal, not a tool defect -- there is no in-root path, argument, "
+                    "or retry that changes this outcome, and a raw REST fallback does "
+                    "not bypass it either. Do not copy this file to another name and "
+                    "upload the copy -- that is the exact evasion this refusal exists "
+                    "to name.",
+                )

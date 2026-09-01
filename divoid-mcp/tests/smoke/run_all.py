@@ -40,7 +40,7 @@ import traceback
 from typing import Any
 
 from divoid_mcp.config import load_secret
-from divoid_mcp import http_client
+from divoid_mcp import http_client, paths
 from divoid_mcp.tools.create_task import _check_invariants as _check_task_invariants
 from divoid_mcp.tools.create_documentation import _check_invariants as _check_doc_invariants
 from divoid_mcp.tools.create_session_log import _check_invariants as _check_session_log_invariants
@@ -75,6 +75,7 @@ _DIVOID_DOCS_GROUP_ID = 7
 def _setup() -> Any:
     config = load_secret()
     http_client.init(config.base_url, config.api_key)
+    paths.init()
     return config
 
 
@@ -3698,6 +3699,144 @@ async def smoke_download_content_binary_round_trip(config: Any) -> None:
         )
 
 
+async def smoke_path_gate_refuses_sensitive_read(config: Any) -> None:
+    """
+    divoid_set_content(path=...): reading an in-root .git/config is refused with
+    path_denied_sensitive before any HTTP call (DiVoid #10481 / #10543).
+    """
+    import os
+    import shutil
+    import tempfile
+
+    print("\n--- path gate (sensitive read refused: .git/config) ---")
+
+    scratch_root = tempfile.mkdtemp(prefix="divoid_mcp_smoke_sensitive_")
+    try:
+        git_dir = os.path.join(scratch_root, ".git")
+        os.makedirs(git_dir)
+        target = os.path.join(git_dir, "config")
+        with open(target, "wb") as fh:
+            fh.write(b"[remote]token=shhh")
+
+        previous_roots = paths.roots()
+        paths.init(env={"DIVOID_MCP_FILE_ROOT": scratch_root})
+        try:
+            result = await _execute_set_content(id=999999999, config=config, path=target)
+        finally:
+            paths._roots = previous_roots
+
+        _assert(
+            "set_content(path=.git/config) returns isError",
+            result.get("isError") is True,
+            str(result),
+        )
+        text = result.get("content", [{}])[0].get("text", "") if result.get("isError") else ""
+        _assert(
+            "error code is path_denied_sensitive",
+            "path_denied_sensitive" in text,
+            f"text={text!r}",
+        )
+    finally:
+        shutil.rmtree(scratch_root, ignore_errors=True)
+
+
+async def smoke_path_gate_refuses_sensitive_write(config: Any) -> None:
+    """
+    divoid_download_content: writing over an in-root settings.local.json is refused
+    with path_denied_sensitive before any HTTP call or disk write (DiVoid #10481 / #10543).
+    """
+    import os
+    import shutil
+    import tempfile
+
+    print("\n--- path gate (sensitive write refused: .claude/settings.local.json) ---")
+
+    scratch_root = tempfile.mkdtemp(prefix="divoid_mcp_smoke_sensitive_")
+    try:
+        claude_dir = os.path.join(scratch_root, ".claude")
+        os.makedirs(claude_dir)
+        target = os.path.join(claude_dir, "settings.local.json")
+
+        previous_roots = paths.roots()
+        paths.init(env={"DIVOID_MCP_FILE_ROOT": scratch_root})
+        try:
+            result = await _execute_download_content(
+                node_id=999999999, path=target, config=config
+            )
+        finally:
+            paths._roots = previous_roots
+
+        _assert(
+            "download_content(path=.claude/settings.local.json) returns isError",
+            result.get("isError") is True,
+            str(result),
+        )
+        text = result.get("content", [{}])[0].get("text", "") if result.get("isError") else ""
+        _assert(
+            "error code is path_denied_sensitive",
+            "path_denied_sensitive" in text,
+            f"text={text!r}",
+        )
+        _assert(
+            "target file was NOT created",
+            not os.path.exists(target),
+            f"target={target!r}",
+        )
+    finally:
+        shutil.rmtree(scratch_root, ignore_errors=True)
+
+
+async def smoke_path_gate_accepts_ordinary_in_root_round_trip(config: Any) -> None:
+    """
+    divoid_set_content(path=...): an ordinary in-root file with no sensitive name is
+    unaffected by the sensitive-path denial -- the legitimate upload path is not taxed.
+    """
+    import os
+    import shutil
+    import tempfile
+
+    print("\n--- path gate (ordinary in-root path still round-trips) ---")
+
+    scratch_root = tempfile.mkdtemp(prefix="divoid_mcp_smoke_sensitive_")
+    try:
+        target = os.path.join(scratch_root, "notes.md")
+        with open(target, "wb") as fh:
+            fh.write(b"# smoke test -- ordinary file, not sensitive\n")
+
+        create_result = await http_client.post_json(
+            "nodes", {"name": "[smoke] path gate ordinary round-trip -- delete me", "type": "documentation"}
+        )
+        _assert(
+            "POST /nodes (doc) returns 2xx", create_result.ok, f"status={create_result.status}"
+        )
+        if not create_result.ok:
+            return
+        node_id = create_result.json()["id"]
+
+        try:
+            previous_roots = paths.roots()
+            paths.init(env={"DIVOID_MCP_FILE_ROOT": scratch_root})
+            try:
+                result = await _execute_set_content(id=node_id, config=config, path=target)
+            finally:
+                paths._roots = previous_roots
+
+            _assert(
+                "set_content(path=notes.md) returns no isError",
+                not result.get("isError", False),
+                str(result),
+            )
+        finally:
+            del_result = await http_client.delete(f"nodes/{node_id}")
+            _assert(
+                f"DELETE /nodes/{node_id} returns 2xx (cleanup)",
+                del_result.ok,
+                f"status={del_result.status}",
+            )
+    finally:
+        shutil.rmtree(scratch_root, ignore_errors=True)
+
+
 ### -----------------------------------------------------------------------
 
 async def _run_all(config: Any) -> None:
@@ -3779,6 +3918,9 @@ async def _run_all(config: Any) -> None:
         smoke_delete_node_lifecycle,
         # divoid_download_content (DiVoid #6597)
         smoke_download_content_binary_round_trip,
+        smoke_path_gate_refuses_sensitive_read,
+        smoke_path_gate_refuses_sensitive_write,
+        smoke_path_gate_accepts_ordinary_in_root_round_trip,
         # Bootstrap: subprocess spawn verifies FastMCP API compat at startup
         smoke_server_bootstrap,
     ]
