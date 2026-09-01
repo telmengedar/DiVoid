@@ -6,6 +6,10 @@
 **Target branch:** `fix/mcp-path-containment`
 **Standards applied:** Design Contracts **#1136** (load-bearing) · Code Contracts **#114 §0** (load-bearing) · `divoid-mcp/CLAUDE.md` invariants 1–6 · Tool anatomy **#6104** · Inbound-proposal ruling **#435** · Falsifiability addendum **#1220 §5**
 
+> **Post-merge correction, 2026-09-01.** The repo-map reconcile read this document against the shipped code at `e17a358` and found four disagreements. All four shared one root cause: **the document described the single-root default and silently generalised it to the multi-root case that `DIVOID_MCP_FILE_ROOT` exists to enable.** Corrected here in §5, §8.1, §9.1, §9.2, §11, §12.1, §12.3, §14 C-1/C-2 and §18, and a required multi-root test case added to §18 Milestone 5. The design's decisions are unchanged; what changed is that claims true for one root are no longer stated as if true for N. Where a claim is a property of the **default** rather than of the design, it now says so.
+>
+> The document also carried a hand-maintained tool count, which had gone stale. Counts have been replaced with the rule that produces them (#1176).
+
 ---
 
 ## TL;DR
@@ -78,7 +82,7 @@ Every re-derived item below is argued from this repo's own constraints, and thre
 - **A byte/size cap on either tool.** Deliberately excluded — see §12.4. This is a divergence from #10473's stated acceptance criteria; see §16.
 - **Any other MCP server on the machine.** This fixes `divoid-mcp` only. The general "MCP is a side door around the boundary guard" problem is closed by the harness layer, not by this change.
 - **DiVoid backend changes.** `divoid-mcp` is a pure client wrapper (`divoid-mcp/CLAUDE.md`); nothing here touches the API, schema, or backend.
-- **The other 20 registered tools.** Verified: `download_content` and `set_content` are the only two caller-influenced filesystem touchpoints in the package.
+- **Every other registered tool.** Verified against the registry in `tools/__init__.py`: `download_content` and `set_content` are the only caller-influenced filesystem touchpoints in the package. (Stated as a property of the registry rather than as a count — counts in documents go stale, and this arc has already produced three that did.)
 
 ---
 
@@ -135,17 +139,27 @@ The brief asks this directly, because removing a primitive is strictly stronger 
                           ├──►  paths.init()  ──►  ROOTS: frozen tuple of
    os.getcwd() (default) ──┘        │                     resolved, normalised
                                     │                     absolute directories
-                            root sanity gate
-                            (has a parent? not $HOME?)
+                       root sanity gate, PER CANDIDATE
+                       (has a parent? not $HOME?)
                                     │
                      ┌──────────────┴───────────────┐
-                  usable                        unusable
+              candidate usable              candidate unusable
                      │                              │
                      ▼                              ▼
-              ROOTS = (…)                     ROOTS = ()   + WARNING to stderr
-                                                    │      (server still starts;
-                                                    │       19 non-path tools
-                                                    │       keep working)
+              appended to ROOTS               discarded + WARNING naming it
+                     │                              │
+                     └──────────────┬───────────────┘
+                                    ▼
+                    ROOTS = (surviving candidates…)
+                                    │
+                     ┌──────────────┴───────────────┐
+              at least one                    NONE survived
+                     │                              │
+                     ▼                              ▼
+              gate adjudicates               ROOTS = ()  + WARNING to stderr
+                                                    │     (server still starts;
+                                                    │      every tool that takes
+                                                    │      no path keeps working)
                                                     │
    ───────────────────────────────────────────────────────────────────────────
                           per call (tools/*.py `_execute`)
@@ -156,8 +170,9 @@ The brief asks this directly, because removing a primitive is strictly stronger 
                     │ 2. \\?\ \\.\ //?/ //./    → path_outside_root         │
                     │ 3. embedded NUL byte      → path_outside_root         │
                     │ 4. realpath()  (any raise → path_outside_root)        │
-                    │ 5. normcase + commonpath vs each root                 │
-                    │    (ValueError → path_outside_root)                   │
+                    │ 5. normcase + commonpath vs each root in turn;        │
+                    │    ValueError → that root abstains, try the next;     │
+                    │    no root matched → path_outside_root                │
                     └──────────────────┬───────────────────┬────────────────┘
                                        │ pass              │ fail
                                        ▼                   ▼
@@ -239,7 +254,7 @@ This is a deliberate, stated departure from the letter of the #6104 idiom (guard
 
 | Operation | Input | Output | Failure |
 |---|---|---|---|
-| **Initialise roots** | the `DIVOID_MCP_FILE_ROOT` environment value (may be absent); the process working directory | none — establishes the frozen root tuple for the process lifetime | never raises; on an unusable root it establishes an **empty** tuple and logs one WARNING line to stderr naming the rejected root and the env var |
+| **Initialise roots** | the `DIVOID_MCP_FILE_ROOT` environment value (may be absent); the process working directory | none — establishes the frozen root tuple for the process lifetime | never raises. Candidates are adjudicated **individually**: an unusable or unresolvable candidate is discarded with its own WARNING to stderr naming it, and the surviving candidates still form the root tuple. The tuple is **empty only when every candidate was discarded**, and that case logs a further WARNING naming the env var |
 | **Read roots** | none | the frozen tuple of resolved absolute directories (possibly empty) | never raises |
 | **Gate a path** | one caller-supplied path string | the **resolved absolute path**, guaranteed to lie at or beneath one root | raises `InvariantViolation` with code `file_root_unusable` (roots empty) or `path_outside_root` (every other rejection) |
 
@@ -294,9 +309,13 @@ This is a security boundary, so per **#1220 §5 addendum** every claim below is 
 
 ### 9.1 The predicate
 
-> A caller-supplied path is acceptable iff, after (i) rejecting the extended-length and device namespaces **and any embedded NUL byte** syntactically and (ii) resolving through `os.path.realpath`, the result is **equal to, or a descendant of, one of the frozen roots**, where descent is decided by **path components after `os.path.normcase`** — never by string prefix. Every exception raised during resolution or comparison is a rejection.
+> A caller-supplied path is acceptable iff, after (i) rejecting the extended-length and device namespaces **and any embedded NUL byte** syntactically and (ii) resolving through `os.path.realpath`, the result is **equal to, or a descendant of, one of the frozen roots**, where descent is decided by **path components after `os.path.normcase`** — never by string prefix.
 
-Measurement environment: Python 3.14.2, Windows 11, process cwd `C:\dev\claude\divoid`, candidate root `C:\dev\claude\divoid`.
+**The two exception classes are handled differently, and conflating them breaks multi-root configurations.** An exception raised during **resolution** is terminal: the path is rejected immediately, because there is no resolved form to compare. An exception raised during **comparison against one root** is *not* terminal: that root simply cannot adjudicate this path, so it abstains and the next root is tried. Rejection follows only when **no** root has matched after every one has been tried. For the single-root default the two rules produce the same outcome, which is why the distinction is easy to miss — an implementation that raises on the first `ValueError` is correct for the default and refuses every path in a multi-root configuration whose *first* root happens to sit on another drive.
+
+Net effect, which is what the boundary claim rests on: **no exception anywhere on this path can produce an "allow".**
+
+Measurement environment: Python 3.14.2, Windows 11, process cwd `C:\dev\claude\divoid`, candidate root `C:\dev\claude\divoid`. **The table is measured against a single root**, so its "component compare" column is the verdict of *that one* root. With several roots configured, a `ValueError` in that column means the root abstains and the next is tried; only the exhaustion of all roots is a rejection (§9.1).
 
 > **Methodology, and a correction (2026-09-01).** The first version of this table reported that `os.path.realpath` *mangles* `\\?\` paths into a drive-relative form (`C:Windows\Temp\x.txt`), and inferred from that a risk that a second resolution pass could land such a path inside the root. **That measurement was an artefact and the inference was wrong.** The probe script had been written through a shell heredoc that collapsed `\\` to `\`, so the interpreter actually received the single-backslash form `\?\C:\…`. Only inputs containing a **doubled** backslash were affected — every single-backslash row was unharmed, which is why the corruption was not obvious. Caught by John during implementation and re-measured by the coordinator.
 >
@@ -336,7 +355,7 @@ Four of these rows are the ones a reviewer would use to break a careless impleme
 - **The `\\?\` and `\\.\` families are the falsifier for "just realpath it" — but not for the reason the first draft claimed.** Resolution handles them *correctly* and **inconsistently with each other**: `\\?\` paths keep their prefix and resolve accurately (`\\?\C:\dev\claude\divoid\..\..\Windows\x` → `\\?\C:\dev\Windows\x`, genuinely outside), while `\\.\` paths have the prefix **stripped** and normalise into ordinary paths — so `\\.\C:\dev\claude\divoid\a.txt` becomes `C:\dev\claude\DiVoid\a.txt` and lands **inside** the root. And `\\.\GLOBALROOT\Device\…` makes `realpath` raise `OSError` outright.
 
   The justification for rejecting these prefixes syntactically is therefore **not** any specific mangling. It is that **resolution behaviour for them is form- and version-dependent, and the boundary must not depend on it.** Three distinct behaviours across two adjacent prefixes on one interpreter is the evidence; a different Python or a different Windows build may produce a fourth. On top of that, `commonpath` **raises `ValueError` for every `\\?\` form — including a genuinely in-root one** — so containment cannot return a verdict for this family even when the path is legitimate. A prefilter that runs *before* resolution makes the gate's behaviour for these inputs a property of our own code rather than of the platform's normalisation rules. That argument is both true and stronger than the mangling story it replaces.
-- **`D:\`, UNC, and the `\\?\` cases are the falsifier for unguarded comparison.** `os.path.commonpath` raises `ValueError` across drives, and `os.path.realpath` raises `OSError` on `\\.\GLOBALROOT\Device\…`. An implementation that lets either propagate crashes the tool; one that catches it and *continues* would be worse. Every exception path is a rejection. **The re-measurement sharpened this**: a UNC path is *not* rejected by the comparison returning "outside" — the comparison **raises**, so for UNC the exception handler is the only thing standing between an SMB destination and the filesystem. The catch-all is load-bearing, not belt-and-braces.
+- **`D:\`, UNC, and the `\\?\` cases are the falsifier for unguarded comparison.** `os.path.commonpath` raises `ValueError` across drives, and `os.path.realpath` raises `OSError` on `\\.\GLOBALROOT\Device\…`. An implementation that lets either propagate crashes the tool; one that catches it and then *proceeds to the I/O* would be worse. Catching a comparison `ValueError` and continuing **to the next root** is correct and is what ships (§9.1) — the two "continues" are opposite decisions and must not be confused. No exception path can produce an allow. **The re-measurement sharpened this**: a UNC path is *not* rejected by the comparison returning "outside" — the comparison **raises**, so for UNC the exception handler is the only thing standing between an SMB destination and the filesystem. The catch-all is load-bearing, not belt-and-braces.
 - **`DIVOID~1` resolving to `divoid-frontend` is the falsifier for "the root is obvious".** There is a *second checkout* adjacent to this one, and an 8.3 short name reaches it. It resolves outside the root, so it is rejected — but the same measurement is the strongest argument against the finding's proposed default of `C:\dev\claude`, which would have put that sibling **inside** the fence.
 
 ### 9.3 Reasoned, not measured
@@ -407,11 +426,15 @@ Every other MCP server on the machine with a path-bearing tool remains unguarded
 
 ## 11. Cross-Cutting Concerns
 
-**Security.** Fail-closed at every branch: no roots → reject; resolution raises → reject; comparison raises → reject; unknown path syntax → reject. There is no code path where an unhandled condition yields "allow".
+**Security.** Fail-closed at every branch: no roots → reject; resolution raises → reject; comparison against a root raises → that root abstains, and if none matches → reject; unknown path syntax → reject. There is no code path where an unhandled condition yields "allow".
 
 **Secrets (C2).** The gate handles paths and roots only, never the API key. But `path_outside_root` messages **echo a caller-supplied string**, and a caller could pass a path whose *name* contains a secret. Existing practice already covers this shape: `set_content`'s `file_not_found` echoes `path!r` today. The design does not change it, and the messages must continue to route through `make_error_content` rather than being hand-formatted (#6104 §5).
 
-**Observability (C3).** Both tools already log the path at INFO. Add one WARNING at startup if the root is unusable, and log rejections at INFO with the code and the resolved path. Everything to stderr. Rejections must be greppable: after rollout, `path_outside_root` in the MCP stderr log is the signal for a legitimate location that the default root does not cover (§13.1).
+**Observability (C3).** Both tools already log the path at INFO. Add a WARNING at startup for each discarded root candidate, and a further one if none survives (§8.1). Log rejections at INFO with the code and the **caller-supplied** path. Everything to stderr. Rejections must be greppable: after rollout, `path_outside_root` in the MCP stderr log is the signal for a legitimate location that the configured roots do not cover (§13.1).
+
+**Known weakness in that procedure, stated rather than glossed.** The log line carries the path *as supplied*. For the rejections that reached resolution, the **resolved** path exists and appears in the returned error message — which is not captured in the stderr log. For the ordinary in-workspace rejection the two forms are close enough that the grep procedure works. For the inputs where they differ most — a drive-relative `C:foo\bar.txt`, a path traversing a junction, an 8.3 short name — the log alone does not say where the path actually pointed, which is exactly the information an operator needs to decide whether the rejected location was legitimate.
+
+**Logging both values would be better, and it is not free.** By the time the tool catches the violation the resolved path exists only inside the exception's message text, so making it loggable means either logging that message verbatim or giving `InvariantViolation` somewhere to carry the resolved path — a small but real decision, not a format-string edit. Recorded here as a gap rather than written into the spec as if it shipped.
 
 **Error handling.** No new envelope. `InvariantViolation` → `make_error_content(code, message)` → `{"isError": True, "content": …}`, exactly as every other tool.
 
@@ -431,7 +454,7 @@ Every other MCP server on the machine with a path-bearing tool remains unguarded
 | **`DIVOID_MCP_FILE_ROOT` required, no default** | **Rejected.** Fails safe but fails *dead*: every existing caller breaks until a human edits host config, on a fix that is meant to ship without an outage. |
 | **Derived from `$HOME`** | **Rejected.** Would place `~/.ssh` and `~/.claude/secrets/.divoid-online` — the file #10472 names as the target — inside the fence. Strictly worse than the status quo's optics. |
 | **Derived from the git repository root** | **Rejected.** Adds a discovery dependency and can walk *upward*, making the root broader than cwd for a session started in a subdirectory. cwd is simpler and tighter. |
-| **Derived from the process working directory, overridable** | **Chosen.** Measured (A1) to be the session's checkout. Zero configuration. Scopes *per session*, so it is strictly tighter than any machine-wide root and a sibling checkout is out of reach. Matches the universal CLI convention. The override exists for hosts where cwd is not meaningful — a named environment difference, which is §3's own carve-out. |
+| **Derived from the process working directory, overridable** | **Chosen.** Measured (A1) to be the session's checkout. Zero configuration. Scopes *per session*, so **the default is** strictly tighter than any machine-wide root and a sibling checkout is out of reach — a property of the default only; a configured list is exactly as tight as the operator makes it (§14 C-2). Matches the universal CLI convention. The override exists for hosts where cwd is not meaningful — a named environment difference, which is §3's own carve-out. |
 
 **Named downside of the chosen option, per §4's trade-off procedure:** the root becomes narrower than the harness allowlist, so `C:\dev\claude\_scratch\…` and the harness scratchpad fall **outside** it. Probability of encountering this: moderate — those are documented agent scratch locations. Cost when it happens: one `path_outside_root` error and one env-var edit by the operator. Cost of the alternative (widening the default to `C:\dev\claude`): permanent cross-session reach for every session on the machine, forever. The narrow default wins clearly. Recommended rollout step in §15.
 
@@ -441,9 +464,11 @@ I considered requiring drive-qualified absolute paths, on the argument that it w
 
 One implementation note this decision makes load-bearing: **the absoluteness test must not be `os.path.isabs`.** On Python 3.11/3.12 `ntpath.isabs("\Windows\Temp\x")` returns **True**; on 3.13+ it returns **False** (measured on 3.14.2). Any logic branching on `isabs` would behave differently across supported interpreters. Nothing in this design branches on it, and nothing added later should.
 
-### 12.3 Unusable root — **disable the two tools**, do not exit
+### 12.3 No usable root — **disable the two path tools**, do not exit
 
-`config.py` sets the precedent of `sys.exit(1)` on bad configuration, so exiting is the consistent-looking choice. Rejected: a filesystem-root problem would take down all 22 tools, including the 20 that never touch a path, and DiVoid access is the server's core value while path I/O is peripheral. The server starts, logs one WARNING, and the two path tools return `file_root_unusable`. Accepted downside: an operator may not notice — mitigated by the startup WARNING and by the error message naming the env var.
+`config.py` sets the precedent of `sys.exit(1)` on bad configuration, so exiting is the consistent-looking choice. Rejected: it would take down every registered tool over a problem that affects only the two taking a `path`, and DiVoid access is the server's core value while path I/O is peripheral. The server starts, logs the WARNINGs from §8.1, and the two path tools return `file_root_unusable`. Accepted downside: an operator may not notice — mitigated by the startup WARNINGs and by the error message naming the env var.
+
+Note the trigger is **no usable root at all**, not "a root candidate was bad": one discarded entry in a multi-entry list leaves the surviving entries in force and the tools working (§8.1).
 
 ### 12.4 Byte cap — **excluded**, and this is deliberate
 
@@ -472,11 +497,11 @@ If the resource concern is real, it should be a DiVoid **backend** task bounding
 
 | # | Risk | Likelihood | Mitigation |
 |---|---|---|---|
-| 13.1 | A legitimate existing workflow uses an out-of-root path (`_scratch`, the harness scratchpad) and breaks on upgrade | Moderate | Rejections log at INFO with the resolved path; grep `path_outside_root` after rollout. Remedy is an env-var edit, **never** widening the default |
+| 13.1 | A legitimate existing workflow uses an out-of-root path (`_scratch`, the harness scratchpad) and breaks on upgrade | Moderate | Rejections log at INFO with the caller-supplied path; grep `path_outside_root` after rollout, and read the returned message for the resolved form (§11 records why logging both would be better). Remedy is an env-var edit, **never** widening the default |
 | 13.2 | Implementer uses `startswith` instead of component comparison | **High — this is the most likely way the fix ships broken** | §9.2 contains the exact falsifying input (`C:\dev\claude\divoid-evil\x.txt`). It must appear as a **required smoke assertion**, not a note |
 | 13.3 | Implementer validates `path` but opens the raw string | Moderate | §5 commitment 2 and §7 steps make the resolved path the only thing passed to `makedirs`/`open`. A smoke case with a drive-relative input (`C:foo\bar.txt`) catches divergence |
 | 13.4 | The check is placed in `set_content._check_invariants` | Moderate — it is the idiomatic-looking spot | §7.5 states the rule and its reason. Smoke tests call `_execute` directly, so a check in the shim will **fail** the required negative test |
-| 13.5 | `commonpath`'s `ValueError`, or `realpath`'s `OSError`, propagates as an unhandled exception | Moderate | Measured in §9.2: `ValueError` on `D:\`, on all three `\\?\` forms, and on **UNC**; `OSError` on `\\.\GLOBALROOT\Device\…`. Every exception during resolution or comparison is a rejection — and for UNC it is the *only* thing producing one |
+| 13.5 | `commonpath`'s `ValueError`, or `realpath`'s `OSError`, propagates as an unhandled exception | Moderate | Measured in §9.2: `ValueError` on `D:\`, on all three `\\?\` forms, and on **UNC**; `OSError` on `\\.\GLOBALROOT\Device\…`. No exception can produce an allow: resolution failures reject outright, comparison failures make that root abstain and reject once none has matched (§9.1) — and for UNC the caught `ValueError` is the *only* thing producing a rejection |
 | 13.6 | Operator "fixes" a rejection by adding `~/.claude` to the root list, restoring the exfil target | Low but severe | The `path_outside_root` message must **not** suggest widening the root to the agent, and the doc/README note for the env var must carry an explicit warning against `~`, `~/.claude`, and drive roots |
 | 13.7 | Fix is merged but the operational MCP is not reinstalled, so nothing changes in practice | Moderate | C8: the operational server is a pinned git install. Rollout requires version bump → merge → `pip install --force-reinstall` → **full host restart**. State this in the PR body |
 | 13.8 | An agent reads `path_outside_root` as a tool defect and routes around it via `curl`/shell | Moderate | §8.2 point 3 — the message states it is an intentional boundary and that retrying or falling back is the wrong response |
@@ -487,9 +512,9 @@ If the resource concern is real, it should be a DiVoid **backend** task bounding
 
 The orchestrator owns the `PreToolUse` matcher and `workspace-boundary-guard.py`. This section states only the **contract** both layers must satisfy, not the hook's implementation.
 
-**C-1 — Same question, same semantics.** Both layers answer *"does this path, after OS resolution, lie inside a directory the caller may touch?"* using the same resolution semantics: resolve symlinks/junctions, compare **path components** after case folding, treat any resolution or comparison exception as a rejection. A lexical or `startswith` check in the hook would disagree with the server on `C:\dev\claude\divoid-evil\…` — measured (§9.2) — producing the worst outcome available: two layers that each believe they are enforcing the same rule while enforcing different ones.
+**C-1 — Same question, same semantics.** Both layers answer *"does this path, after OS resolution, lie inside a directory the caller may touch?"* using the same resolution semantics: resolve symlinks/junctions, compare **path components** after case folding, and let no exception produce an allow — a resolution failure rejects outright, a comparison failure against one permitted directory means that directory abstains and the next is tried, with rejection only when none has matched (§9.1). A lexical or `startswith` check in the hook would disagree with the server on `C:\dev\claude\divoid-evil\…` — measured (§9.2) — producing the worst outcome available: two layers that each believe they are enforcing the same rule while enforcing different ones.
 
-**C-2 — Different roots are expected; only one direction of divergence is permitted.** The harness enforces a machine-wide boundary (`C:\dev\claude`, `~/.claude`, `/tmp`); the server enforces a session-scoped one (its cwd). The server is therefore the strictly tighter gate. **Permitted:** the harness allows a path the server rejects. **Forbidden:** the harness allows a path that resolves outside its own declared allowlist. Neither layer may treat the other's verdict as authority — each enforces independently, which is what makes this defence in depth rather than a single fence with two names.
+**C-2 — Different roots are expected; only one direction of divergence is permitted.** The harness enforces a machine-wide boundary (`C:\dev\claude`, `~/.claude`, `/tmp`); the server enforces whatever its frozen root list says — which **under the default** is the session's cwd, and is therefore the strictly tighter gate. **That relation is a property of the default, not of the design.** `DIVOID_MCP_FILE_ROOT` replaces the default entirely, so an operator can configure a root the harness allowlist does not contain, and in that region the server is the *looser* gate. Whoever sets that variable owns the check that every entry lies inside the harness allowlist; nothing in the server enforces it, and this document should not be read as promising that it does. **Permitted:** the harness allows a path the server rejects. **Forbidden:** the harness allows a path that resolves outside its own declared allowlist. Neither layer may treat the other's verdict as authority — each enforces independently, which is what makes this defence in depth rather than a single fence with two names.
 
 **C-3 — Argument extraction.** For `mcp__divoid__divoid_download_content` and `mcp__divoid__divoid_set_content`, the adjudicated value is `tool_input["path"]`. For `set_content` the parameter is **optional** — absent when `content` is used inline. An absent `path` is not a violation and must not be treated as one; only a present `path` is adjudicated.
 
@@ -538,7 +563,7 @@ I also correct one detail of the proposed mechanism that would have shipped a de
 
 **Q4 — Should the harness scratchpad be a root?** Recommendation: **no** by default (§12.1 downside). Toni's call.
 
-**Q5 — Documentation drift, unrelated but adjacent.** `divoid-mcp/CLAUDE.md` says "18 tools" and its list omits `download_content`, `patch_link`, `edit_content`, and `delete_node`; the registry actually wires **22**. Worth one line in the same PR since the implementer is in that file's neighbourhood, or a separate trivial task.
+**Q5 — Documentation drift, unrelated but adjacent.** `divoid-mcp/CLAUDE.md` states a tool count and lists the tools, and both had drifted from the registry in `tools/__init__.py` — the list omitted `download_content`, `patch_link`, `edit_content`, and `delete_node`. **The durable fix is to stop stating a count at all** (#1176): a document should name the registry as the source rather than mirror a number out of it. Worth one line in the same PR since the implementer is in that file's neighbourhood, or a separate trivial task.
 
 ---
 
@@ -546,7 +571,7 @@ I also correct one detail of the proposed mechanism that would have shipped a de
 
 Ordered. No code appears below by design — each item is an architectural unit.
 
-**Milestone 1 — `paths.py`.** Create the module with three responsibilities from §8.1: initialise-roots (env or cwd, resolved with the same routine used for candidates, subjected to the two-rule sanity gate, frozen), read-roots, and gate-a-path. The gate implements §9.1 in order: empty-roots check → syntactic pre-filter for `\\?\` `\\.\` `//?/` `//./` → **embedded-NUL check (§9.4)** → resolution wrapped so **any** exception is a rejection → `normcase` + component comparison against each root, with `ValueError` treated as a rejection. Return the resolved path on success; raise `InvariantViolation` with `path_outside_root` or `file_root_unusable` otherwise. Do not use `startswith`. Do not branch on `os.path.isabs`.
+**Milestone 1 — `paths.py`.** Create the module with three responsibilities from §8.1: initialise-roots (env or cwd, each candidate resolved with the same routine used for candidate paths, each subjected **individually** to the two-rule sanity gate, survivors frozen), read-roots, and gate-a-path. The gate implements §9.1 in order: empty-roots check → syntactic pre-filter for `\\?\` `\\.\` `//?/` `//./` → **embedded-NUL check (§9.4)** → resolution wrapped so **any** exception is a rejection → `normcase` + component comparison against **each root in turn**, where a `ValueError` from the comparison means *that root abstains and the loop continues*, and rejection follows only when no root has matched. Return the resolved path on success; raise `InvariantViolation` with `path_outside_root` or `file_root_unusable` otherwise. Do not use `startswith`. Do not branch on `os.path.isabs`.
 
 **Milestone 2 — bootstrap.** One call in `server.py`'s startup, in the same phase as `http_client.init(...)`. On an unusable root, log one WARNING to stderr naming the rejected root and `DIVOID_MCP_FILE_ROOT`; **do not exit** (§12.3).
 
@@ -565,6 +590,7 @@ Ordered. No code appears below by design — each item is an architectural unit.
 | `\\?\C:\Windows\Temp\x.txt`, `//?/C:/Windows/Temp/x.txt`, `\\.\C:\…`, and a **genuinely in-root** `\\?\C:\dev\claude\divoid\a.txt` | all rejected, no exception escapes. Best asserted by **spying on `os.path.realpath` and requiring it is never called** for these inputs — that is platform-independent and pins the prefilter's *placement*, not merely its verdict | risk 13.5; §9.2 |
 | A path on another drive | rejected via caught `ValueError` | risk 13.5 |
 | A UNC path `\\server\share\x.txt` | rejected — **via the caught `ValueError`, not via an "outside" verdict** (§9.2). Without the catch-all this is an SMB exfil destination | risk 13.5 |
+| **Two roots, the first on another drive**, and an in-root path under the **second** | **accepted.** This is the only case that distinguishes "a comparison `ValueError` abstains" from "a comparison `ValueError` rejects"; under the single-root default both readings pass, so without this row the multi-root semantics are untested | §9.1 |
 | A path containing an embedded NUL byte | rejected in the prefilter, **before** `realpath` | §9.4. Asserting the *code* (`path_outside_root`) is not enough — the check must be shown to run before resolution, since resolution accepts this input |
 | The reserved device **name** `<root>\NUL` | **accepted** — deliberately, per §10.5 | guards against a later "fix" conflating it with §9.4's NUL byte and silently narrowing the tool |
 | Mixed-case in-root path | accepted | case folding |
