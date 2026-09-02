@@ -12,7 +12,25 @@
  *  - onToggle:  callback when a checkbox is toggled
  *  - active:    when true, shows a selected-count badge on the trigger
  *
- * Task: DiVoid node #318
+ * ## Last-selected prevention (DiVoid #1981) — the affordance, not the invariant
+ *
+ * This component can refuse a *transition* (unchecking the last selected
+ * option); it cannot repair a *state* it did not create (e.g. a value
+ * hydrated from stale storage that is already empty). So this guard only
+ * fires when exactly one option is currently selected and the user tries to
+ * uncheck it — at that point the checkbox is marked `aria-disabled` (it
+ * stays focusable) and the toggle is swallowed instead of forwarded, and an
+ * inline hint explains why. At zero selected, nothing here claims a
+ * constraint the component isn't enforcing: no checkbox is marked
+ * `aria-disabled` (none of them are checked, so none are "the last one")
+ * and the hint does not render. The actual floor for the zero-selected case
+ * is enforced one layer down, in `useNodesInViewport`'s `enabled` gate —
+ * see that file for DiVoid #1981 CF-1.
+ *
+ * Applies uniformly to both the type and status popovers since they share
+ * this component.
+ *
+ * Task: DiVoid node #318 / #1981
  */
 
 import * as Popover from '@radix-ui/react-popover';
@@ -49,6 +67,7 @@ export function WorkspaceFilterPopover({
   active,
 }: WorkspaceFilterPopoverProps) {
   const selectedCount = selected.size;
+  const atFloor = selectedCount === 1;
 
   return (
     <Popover.Root>
@@ -96,27 +115,39 @@ export function WorkspaceFilterPopover({
           <ul role="list" className="space-y-0.5">
             {options.map((opt) => {
               const checked = selected.has(opt.value);
+              const isLastSelected = checked && atFloor;
               return (
                 <li key={opt.value}>
                   <label
                     className={cn(
-                      'flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-sm',
-                      'hover:bg-muted transition-colors',
+                      'flex items-center gap-2 rounded px-1 py-1 text-sm transition-colors',
+                      isLastSelected
+                        ? 'cursor-not-allowed opacity-60'
+                        : 'cursor-pointer hover:bg-muted',
                     )}
                     htmlFor={`filter-opt-${opt.value}`}
                   >
                     <Checkbox.Root
                       id={`filter-opt-${opt.value}`}
                       checked={checked}
-                      onCheckedChange={() => onToggle(opt.value)}
+                      aria-disabled={isLastSelected}
+                      onCheckedChange={() => {
+                        if (isLastSelected) return;
+                        onToggle(opt.value);
+                      }}
                       className={cn(
                         'flex h-4 w-4 shrink-0 items-center justify-center rounded border border-input',
                         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                         checked
                           ? 'bg-primary border-primary text-primary-foreground'
                           : 'bg-background',
+                        isLastSelected && 'cursor-not-allowed',
                       )}
-                      aria-label={opt.label}
+                      aria-label={
+                        isLastSelected
+                          ? `${opt.label} — at least one ${label.toLowerCase()} option must remain selected`
+                          : opt.label
+                      }
                     >
                       <Checkbox.Indicator className="flex items-center justify-center">
                         <Check size={10} strokeWidth={3} aria-hidden="true" />
@@ -128,6 +159,15 @@ export function WorkspaceFilterPopover({
               );
             })}
           </ul>
+          {atFloor && (
+            <p
+              role="status"
+              aria-live="polite"
+              className="mt-1.5 px-1 text-[11px] text-muted-foreground"
+            >
+              At least one {label.toLowerCase()} option must stay selected.
+            </p>
+          )}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

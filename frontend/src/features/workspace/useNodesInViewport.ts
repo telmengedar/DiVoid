@@ -18,13 +18,22 @@
  * in a single response. The two-query client-side merge from #318 option (b) is
  * replaced by this single server-side filter.
  *
- * The query runs whenever bounds are non-null. A "deselect everything including
- * untyped" case yields zero rows from the backend — this is correct.
- *
  * ## Status-null handling
  *
  * When NO_STATUS_VALUE is in selectedStatuses, we pass &nostatus=true to include
  * null-status nodes alongside the named statuses.
+ *
+ * ## Empty-dimension floor (DiVoid #1981 CF-1)
+ *
+ * `WorkspaceFilterPopover` refuses the UI transition into an empty dimension,
+ * but it cannot repair a dimension that arrives already empty (stale
+ * sessionStorage predating that guard, or any future caller of
+ * `useWorkspaceFilters`/this hook). If either dimension resolves to nothing
+ * selected, `enabled` below skips the query entirely for that render rather
+ * than sending a request with that dimension's param omitted — an omitted
+ * param and an empty dimension are not the same thing to this hook, so they
+ * are not treated the same way. This is evaluated per dimension, not only
+ * when both are empty at once.
  *
  * The bounds-padding is applied by the caller (WorkspaceCanvas) before passing to
  * this hook. The hook stores the raw padded bounds + filter params as the TanStack
@@ -101,6 +110,9 @@ export function useNodesInViewport(
   const nostatusParam = params?.nostatus ?? false;
   const notypeParam   = params?.notype   ?? false;
 
+  const typeDimensionEmpty   = params !== null && params.types.length === 0 && !params.notype;
+  const statusDimensionEmpty = params !== null && params.statuses.length === 0 && !params.nostatus;
+
   return useQuery<Page<PositionedNodeDetails>>({
     queryKey: nodesInViewportQueryKey(bounds, filters),
     queryFn: ({ signal }) =>
@@ -117,7 +129,7 @@ export function useNodesInViewport(
         },
         signal,
       ),
-    enabled: bounds !== null,
+    enabled: bounds !== null && !typeDimensionEmpty && !statusDimensionEmpty,
     staleTime: 1_000,
   });
 }
