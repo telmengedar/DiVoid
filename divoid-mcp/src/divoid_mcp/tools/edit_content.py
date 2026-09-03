@@ -12,11 +12,19 @@ The backend is 0-based and half-open [start, start+length). Each edit here trans
 from human-readable 1-based inclusive ranges to that wire shape internally.
 
 Supported ergonomic verbs:
-  replace_lines       -- replace a range of lines (1-based inclusive)
+  replace_lines       -- replace a range of lines (1-based inclusive) with whole lines
   replace_chars       -- replace a range of Unicode code points (1-based inclusive)
-  insert_before_line  -- insert text immediately before a line (1-based)
+  insert_before_line  -- insert one or more whole lines immediately before a line (1-based)
   delete_lines        -- delete a range of lines (1-based inclusive)
   append              -- append text after the last character (triggers one GET pre-read)
+
+replace_lines and insert_before_line are line-oriented: a non-empty value is terminated
+with its own newline when it does not already end in one, so it never merges with the
+line that follows. An empty value is left empty (replace_lines with an empty value
+deletes the addressed lines instead of blanking them). The added terminator is \\r\\n
+when value's own internal lines are all CRLF, otherwise \\n; a single-line value on a
+CRLF document therefore still ends up with mixed line endings, the same class of
+trade-off as replacing the terminal line of a document with no trailing newline.
 
 The "append" verb requires knowing the current length of the content in code points.
 If any append op is present, the tool fetches the node content once before the PATCH
@@ -53,14 +61,18 @@ keys raise an error.
 Supported verbs (each edit dict must have an "op" key):
 
   replace_lines     Replace lines start_line through end_line (1-based inclusive) with \
-value. Example: {"op": "replace_lines", "start_line": 3, "end_line": 5, "value": "new\\n"}
+value, treated as whole lines: a non-empty value is terminated with \\n if it lacks one, \
+or \\r\\n if value's own line breaks are all \\r\\n (supply \\r\\n inside value to keep a \
+CRLF document consistent). Example: {"op": "replace_lines", "start_line": 3, "end_line": 5, \
+"value": "new"}
 
   replace_chars     Replace Unicode code points start through end (1-based inclusive) \
 with value. Example: {"op": "replace_chars", "start": 10, "end": 20, "value": "new text"}
 
-  insert_before_line  Insert value immediately before line N (1-based). value should \
-end with \\n to remain a complete line. \
-Example: {"op": "insert_before_line", "line": 3, "value": "inserted line\\n"}
+  insert_before_line  Insert value immediately before line N (1-based), treated as a \
+whole line: a non-empty value is terminated with \\n if it lacks one, or \\r\\n if value's \
+own line breaks are all \\r\\n (supply \\r\\n inside value to keep a CRLF document \
+consistent). Example: {"op": "insert_before_line", "line": 3, "value": "inserted line"}
 
   delete_lines      Delete lines start_line through end_line (1-based inclusive). \
 Example: {"op": "delete_lines", "start_line": 3, "end_line": 5}
@@ -207,6 +219,16 @@ def _check_invariants(edits: list[dict[str, Any]]) -> None:
                 )
 
 
+def _terminate_line_value(value: str) -> str:
+    """Line-oriented wire value: non-empty and not already newline-terminated gets one \\n,
+    or \\r\\n when value's own internal line endings are all \\r\\n."""
+    if not value or value.endswith("\n"):
+        return value
+    if "\r\n" in value and "\n" not in value.replace("\r\n", ""):
+        return value + "\r\n"
+    return value + "\n"
+
+
 async def _execute(
     id: int,
     edits: list[dict[str, Any]],
@@ -258,7 +280,7 @@ async def _execute(
                 "unit": "line",
                 "start": sl - 1,
                 "length": el - sl + 1,
-                "value": edit["value"],
+                "value": _terminate_line_value(edit["value"]),
             })
 
         elif op == "replace_chars":
@@ -276,7 +298,7 @@ async def _execute(
                 "unit": "line",
                 "start": line - 1,
                 "length": 0,
-                "value": edit["value"],
+                "value": _terminate_line_value(edit["value"]),
             })
 
         elif op == "delete_lines":
@@ -346,21 +368,28 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                    selecting the verb, plus verb-specific fields. All line numbers
                    and character positions are 1-based and inclusive.
 
-                   replace_lines: replace a line range with new text.
+                   replace_lines: replace a line range with whole lines of new text.
                      Required fields: start_line (int >= 1), end_line (int >= start_line),
                                       value (str, the replacement text).
+                     A non-empty value is terminated with \\n if it lacks one, or \\r\\n
+                     if value's own line breaks are all \\r\\n (supply \\r\\n inside value
+                     to keep a CRLF document consistent); an empty value deletes the range
+                     instead of blanking it.
                      Example: {"op": "replace_lines", "start_line": 3, "end_line": 5,
-                               "value": "replacement\\n"}
+                               "value": "replacement"}
 
                    replace_chars: replace a Unicode code-point range with new text.
                      Required fields: start (int >= 1), end (int >= start), value (str).
                      Example: {"op": "replace_chars", "start": 10, "end": 20,
                                "value": "new text"}
 
-                   insert_before_line: insert text before a given line (no deletion).
+                   insert_before_line: insert a whole line before a given line (no deletion).
                      Required fields: line (int >= 1), value (str).
+                     A non-empty value is terminated with \\n if it lacks one, or \\r\\n
+                     if value's own line breaks are all \\r\\n (supply \\r\\n inside value
+                     to keep a CRLF document consistent).
                      Example: {"op": "insert_before_line", "line": 3,
-                               "value": "inserted line\\n"}
+                               "value": "inserted line"}
 
                    delete_lines: delete a range of lines entirely.
                      Required fields: start_line (int >= 1), end_line (int >= start_line).

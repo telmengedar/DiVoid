@@ -33,9 +33,9 @@ to get a 1-based numbered rendering instead ("N\\tline text" per row) so \
 divoid_edit_content's line ops (replace_lines, delete_lines, insert_before_line) can \
 be addressed against ground truth instead of a hand-derived line count; the response \
 then also carries line_count. Each displayed row has its own trailing newline \
-stripped, so a replace_lines/insert_before_line value must still supply its own \
-trailing "\\n" to remain a complete line. No effect when the node has no content or \
-non-text content.\
+stripped; divoid_edit_content terminates a non-empty replace_lines/insert_before_line \
+value automatically, so it need not carry its own trailing "\\n". No effect when the \
+node has no content or non-text content.\
 """
 
 # Content-type prefixes considered text (safe to decode as UTF-8).
@@ -69,8 +69,9 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             id: The node id whose content body to fetch. Must be a positive integer.
             with_line_numbers: When True, return a 1-based numbered rendering
                 ("N\\tline text" per row) instead of the raw body, plus a
-                line_count field. Each row's own trailing newline is stripped,
-                so a replace_lines/insert_before_line value must still supply
+                line_count field. Each row's own trailing newline is stripped;
+                divoid_edit_content terminates a non-empty replace_lines/
+                insert_before_line value automatically, so it need not carry
                 its own trailing "\\n". No effect when the node has no content
                 or non-text content.
         """
