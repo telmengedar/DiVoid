@@ -52,7 +52,11 @@ be provided and non-empty. Use "new" only for one-line jot-down captures that yo
 intend to enrich later. The Tasks group is resolved from project_id by walking the \
 graph; if your project does not have a Tasks group yet, this tool returns an error \
 and you will need to create the group first. Alternatively, supply tasks_group_id \
-directly if you already know it (e.g. DiVoid Tasks = 314).\
+directly if you already know it (e.g. DiVoid Tasks = 314). When project_id is given \
+and root_node_id is omitted, root_node_id defaults to project_id (DiVoid #6857 v1.2 — \
+the task's structural home, not the group link) so the task is not left null-rooted; \
+pass root_node_id explicitly to override. The response reports the resulting \
+rootNodeId so a caller can confirm it landed.\
 """
 
 
@@ -140,7 +144,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             project_id: The id of the project node whose Tasks group this task
                         belongs to. The tool resolves the Tasks group by walking
                         [id:<project_id>]/[name:Tasks]. Mutually exclusive with
-                        tasks_group_id.
+                        tasks_group_id. Also supplies the default for root_node_id
+                        (see below) when root_node_id is omitted — this is what
+                        keeps a task from landing null-rooted just because only
+                        project_id was passed.
             tasks_group_id: Direct id of the Tasks group node, bypassing the
                             project-to-group lookup. Use when you already know the
                             group id (e.g. DiVoid Tasks = 314). Mutually exclusive
@@ -161,10 +168,19 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             severity: Optional integer severity for this task. Application scope
                       fills in meaning (e.g. priority). When absent the server
                       defaults to NULL (no severity set).
-            root_node_id: Optional group pointer. When set, the task is filed under
-                          the specified root node (soft pointer — no existence validation).
-                          Use to group related tasks under a shared root for scoped search.
-                          Null (default) = ungrouped. Forwarded as rootNodeId in the POST body.
+            root_node_id: The task's structural home (DiVoid #6857 v1.2) — the scalar
+                          that answers "list(type=task, root_node_id=P)" queries, distinct
+                          from the Tasks-group LINK above (both are set; they are not the
+                          same thing). Soft pointer — no existence validation. Defaults to
+                          project_id when project_id is given and this is omitted; pass it
+                          explicitly to home the task somewhere other than the project whose
+                          Tasks group it is filed under. Passing tasks_group_id instead of
+                          project_id does NOT trigger this default (the group's own project
+                          is not resolved) — pass root_node_id explicitly in that case if you
+                          want the task rooted. Omitting both project_id and root_node_id
+                          leaves the task ungrouped (rootNodeId=null), which is a
+                          first-class-correct answer for a genuinely cross-project or
+                          homeless task (#6857 v1.6.2), not an error state.
         """
         if extra_links is None:
             extra_links = []
@@ -190,11 +206,13 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         else:
             resolved_group_id = tasks_group_id  # type: ignore[assignment]
 
+        resolved_root_node_id: int | None = root_node_id if root_node_id is not None else project_id
+
         node_body: dict[str, Any] = {"name": name, "type": "task", "status": status}
         if severity is not None:
             node_body["severity"] = severity
-        if root_node_id is not None:
-            node_body["rootNodeId"] = root_node_id
+        if resolved_root_node_id is not None:
+            node_body["rootNodeId"] = resolved_root_node_id
         if access is not None:
             try:
                 node_body["access"] = _canonicalize_access(access)
@@ -333,6 +351,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             "name": name,
             "status": status,
             "tasks_group_id": resolved_group_id,
+            "rootNodeId": node_data.get("rootNodeId", resolved_root_node_id),
             "extra_links_attached": [lid for lid in links_created if lid != resolved_group_id],
             "content_length": content_length,
         }

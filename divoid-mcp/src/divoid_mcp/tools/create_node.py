@@ -51,7 +51,8 @@ No content-required check, no group auto-resolution, no lifecycle status validat
 those invariants belong to the type-specific tools. The only hard requirement is a \
 non-empty name. On partial failure (node created but content or link step fails) the \
 tool returns isError with code=partial_state naming the surviving node id so the \
-caller can repair manually.\
+caller can repair manually. The response reports the resulting rootNodeId so a \
+caller can confirm it landed.\
 """
 
 
@@ -112,10 +113,17 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             extra_links: Optional list of node ids to link the new node to atomically.
                          Each id receives one POST /nodes/{id}/links call. No dedup is
                          applied — the server treats duplicate links as idempotent.
-            root_node_id: Optional group pointer. When set, the node is filed under the
-                          specified root node (soft pointer — no existence validation). Use
-                          to group related nodes under a shared root for scoped search.
-                          Null (default) = ungrouped. Forwarded as rootNodeId in the POST body.
+            root_node_id: The node's structural home (DiVoid #6857 v1.2) — the scalar
+                          that answers scoped "list(root_node_id=P)" / search queries,
+                          not a group-membership link. Soft pointer — no existence
+                          validation. This generic tool has no project_id concept, so
+                          unlike divoid_create_task/_documentation/_session_log there is
+                          no default to fall back on — pass root_node_id explicitly if
+                          you want this node rooted. Omitting it leaves the node
+                          ungrouped (rootNodeId=null), which is a first-class-correct
+                          answer for cross-cutting or genuinely homeless nodes (identity/
+                          vocabulary types always stay null per #6857 v1.4/v1.5), not an
+                          error state.
         """
         if extra_links is None:
             extra_links = []
@@ -271,7 +279,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             "type": type,
             "name": name,
             "status": status,
-            "rootNodeId": root_node_id,
+            "rootNodeId": node_data.get("rootNodeId", root_node_id),
             "extra_links_attached": links_created,
             "content_length": content_length,
         }
