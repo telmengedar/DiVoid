@@ -2,18 +2,19 @@
 divoid_create_session_log -- composite tool: create node + post content + link to Docs group.
 
 From the caller's perspective this is a single atomic operation. Under the hood it
-makes 3-4 HTTP calls:
+makes 3-5 HTTP calls:
   1. GET /nodes?path=[id:<project_id>]/[name:Docs]  (only if project_id is given)
   2. POST /nodes                                      -- create the session-log node
   3. POST /nodes/{id}/content                         -- set the content body
   4. POST /nodes/{id}/links                           -- link to Docs group
      (plus extra_links, one call each)
+  5. PATCH /nodes/{id}                                -- set substance (if provided)
 
 Content is always required for session-logs (no 'new' escape, per DiVoid #493 §4).
 Session-logs have no status lifecycle (per #493 §5) — the status field is never set.
 
-Partial failure semantics (per architecture §6.3): if step 2 succeeds but step 3 or 4
-fails, the server does NOT roll back. It returns an MCP error naming the surviving
+Partial failure semantics (per architecture §6.3): if step 2 succeeds but step 3, 4
+or 5 fails, the server does NOT roll back. It returns an MCP error naming the surviving
 node id and the missing step so the caller can repair manually.
 
 Per DiVoid #493 §3, session-logs live under the Docs group of their project.
@@ -34,13 +35,15 @@ from .. import http_client
 from ..config import DivoidConfig
 from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
 from ._groups import resolve_group
+from ._substance import write_substance
 from .patch_node import _canonicalize_access
 
 logger = logging.getLogger(__name__)
 
 _TOOL_DESCRIPTION = """\
-Create a session-log node atomically: creates the node, sets its content, and links \
-it to the project's Docs group — all in one call. Use this to record the narrative of \
+Create a session-log node atomically: creates the node, sets its content, links it to \
+the project's Docs group, and sets substance when given — all in one call. Use this to \
+record the narrative of \
 a work arc: what was investigated, what was tried, what worked, what failed, and what \
 the next agent should know. Session-logs are the memory of the hivemind (DiVoid #190 \
 Rule 3) — file them at the end of any non-trivial arc, not just when things go wrong. \
@@ -54,7 +57,8 @@ alternatively supply docs_group_id directly if you already know it (e.g. DiVoid 
 When project_id is given and root_node_id is omitted, root_node_id defaults to project_id \
 (DiVoid #6857 v1.2 — the node's structural home, not the group link) so the session-log \
 is not left null-rooted; pass root_node_id explicitly to override. The response reports \
-the resulting rootNodeId so a caller can confirm it landed.\
+the resulting rootNodeId so a caller can confirm it landed. substance is an \
+optional client-written condensed form of the content, stored verbatim.\
 """
 
 
@@ -108,6 +112,7 @@ async def _execute(
     access: int | str | None = None,
     severity: int | None = None,
     root_node_id: int | None = None,
+    substance: str | None = None,
 ) -> dict[str, Any]:
     """
     Core implementation of divoid_create_session_log.
@@ -275,6 +280,10 @@ async def _execute(
         links_created.append(link_target)
         logger.info("divoid_create_session_log node_id=%d linked to %d", node_id, link_target)
 
+    substance_error = await write_substance(node_id, substance, config)
+    if substance_error is not None:
+        return substance_error
+
     logger.info(
         "divoid_create_session_log node_id=%d ok links=%s content_length=%d",
         node_id, links_created, content_length,
@@ -304,6 +313,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         access: int | str | None = None,
         severity: int | None = None,
         root_node_id: int | None = None,
+        substance: str | None = None,
     ) -> dict[str, Any]:
         """
         Create a session-log node in DiVoid atomically.
@@ -354,6 +364,11 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                           which is a first-class-correct answer for a genuinely
                           cross-project or homeless log (#6857 v1.6.2), not an error
                           state.
+            substance: Optional client-written condensed form of the content —
+                       the facts an agent needs without the prose the content
+                       carries for human readers. Stored verbatim: no length check,
+                       no shape check and no normalisation. When absent the server
+                       defaults to NULL.
         """
         try:
             _check_invariants(name, content, project_id, docs_group_id)
@@ -378,4 +393,5 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             access=access,
             severity=severity,
             root_node_id=root_node_id,
+            substance=substance,
         )

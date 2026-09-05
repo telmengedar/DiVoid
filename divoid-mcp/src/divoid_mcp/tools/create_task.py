@@ -2,15 +2,16 @@
 divoid_create_task -- composite tool: create node + post content + link to Tasks group.
 
 From the caller's perspective this is a single atomic operation. Under the hood it
-makes 3-4 HTTP calls:
+makes 3-5 HTTP calls:
   1. GET /nodes?path=[id:<project_id>]/[name:Tasks]  (only if project_id is given)
   2. POST /nodes                                       -- create the task node
   3. POST /nodes/{id}/content                          -- set the content body
   4. POST /nodes/{id}/links                            -- link to Tasks group
      (plus extra_links, one call each)
+  5. PATCH /nodes/{id}                                 -- set substance (if provided)
 
-Partial failure semantics (per architecture §6.3): if step 2 succeeds but step 3 or 4
-fails, the server does NOT roll back. It returns an MCP error that names the surviving
+Partial failure semantics (per architecture §6.3): if step 2 succeeds but step 3, 4
+or 5 fails, the server does NOT roll back. It returns an MCP error that names the surviving
 node id and the missing step so the caller can repair manually.
 
 Invariant guards (before any HTTP call):
@@ -37,6 +38,7 @@ from .. import http_client
 from ..config import DivoidConfig
 from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
 from ._groups import resolve_group
+from ._substance import write_substance
 from .patch_node import _canonicalize_access
 
 logger = logging.getLogger(__name__)
@@ -44,8 +46,9 @@ logger = logging.getLogger(__name__)
 _ALLOWED_STATUSES = {"new", "open", "in-progress", "closed"}
 
 _TOOL_DESCRIPTION = """\
-Create a task node atomically: creates the node, sets its content, and links it to \
-the project's Tasks group — all in one call. Use this for any new work item. \
+Create a task node atomically: creates the node, sets its content, links it to the \
+project's Tasks group, and sets substance when given — all in one call. Use this for \
+any new work item. \
 Content is required unless status="new" (the "quick capture" lifecycle stage per \
 DiVoid structural conventions #493 §4); for any other status the content body must \
 be provided and non-empty. Use "new" only for one-line jot-down captures that you \
@@ -56,7 +59,8 @@ directly if you already know it (e.g. DiVoid Tasks = 314). When project_id is gi
 and root_node_id is omitted, root_node_id defaults to project_id (DiVoid #6857 v1.2 — \
 the task's structural home, not the group link) so the task is not left null-rooted; \
 pass root_node_id explicitly to override. The response reports the resulting \
-rootNodeId so a caller can confirm it landed.\
+rootNodeId so a caller can confirm it landed. substance is an \
+optional client-written condensed form of the content, stored verbatim.\
 """
 
 
@@ -134,6 +138,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         access: int | str | None = None,
         severity: int | None = None,
         root_node_id: int | None = None,
+        substance: str | None = None,
     ) -> dict[str, Any]:
         """
         Create a task node in DiVoid atomically.
@@ -181,6 +186,11 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                           leaves the task ungrouped (rootNodeId=null), which is a
                           first-class-correct answer for a genuinely cross-project or
                           homeless task (#6857 v1.6.2), not an error state.
+            substance: Optional client-written condensed form of the content —
+                       the facts an agent needs without the prose the content
+                       carries for human readers. Stored verbatim: no length check,
+                       no shape check and no normalisation. When absent the server
+                       defaults to NULL.
         """
         if extra_links is None:
             extra_links = []
@@ -339,6 +349,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
 
             links_created.append(link_target)
             logger.info("divoid_create_task node_id=%d linked to %d", node_id, link_target)
+
+        substance_error = await write_substance(node_id, substance, config)
+        if substance_error is not None:
+            return substance_error
 
         logger.info(
             "divoid_create_task node_id=%d ok links=%s content_length=%d",

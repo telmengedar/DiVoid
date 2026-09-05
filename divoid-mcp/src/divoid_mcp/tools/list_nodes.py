@@ -84,7 +84,8 @@ PAGINATION: supply the `continue` value from a previous response to fetch the ne
   20 and is capped at 500.
 
 FIELDS: default projection is [id, type, name, status, contentType]. Add x or y to
-  get canvas positions. Omit fields to reduce token footprint on large result sets.
+  get canvas positions, or substance for the client-written condensed form of each
+  node's content. Omit fields to reduce token footprint on large result sets.
   Set include_content=True to fetch the body inline on each row — opt-in for research /
   lookup flows; costs bandwidth proportional to the total body size of the page; for many
   small documentation nodes this saves N follow-up divoid_get_content calls.
@@ -389,7 +390,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             sort: Sort field: 'id', 'type', 'name', 'status', or 'severity'. Validated by invariant guard.
             descending: If true, sort descending. Default false (ascending).
             fields: Fields to include in each result node. Default: id, type, name, status,
-                    contentType. Also available: x, y.
+                    contentType. Also available: x, y, substance.
             include_content: If true, fetch the body inline on each row. Appends 'content' to
                              the fields projection (and uses the full default projection if
                              fields was not specified). Text content arrives as a UTF-8 string;

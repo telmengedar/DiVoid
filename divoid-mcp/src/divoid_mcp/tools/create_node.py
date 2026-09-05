@@ -8,13 +8,14 @@ the low-level escape hatch for everything they do not cover: meeting, plan,
 project, group/untyped nodes (type=None), event, chat, and any future types.
 
 From the caller's perspective this is a single atomic operation. Under the hood
-it makes up to N+2 HTTP calls:
+it makes up to N+3 HTTP calls:
   1. POST /nodes                          -- create the node
   2. POST /nodes/{id}/content             -- set the content body (if provided)
   3. POST /nodes/{id}/links  ×N           -- link to each id in extra_links
+  4. PATCH /nodes/{id}                    -- set substance (if provided)
 
-Partial failure semantics (per architecture §6.3): if step 1 succeeds but step 2
-or 3 fails, the server does NOT roll back. The tool returns an MCP error naming
+Partial failure semantics (per architecture §6.3): if step 1 succeeds but step 2,
+3 or 4 fails, the server does NOT roll back. The tool returns an MCP error naming
 the surviving node id and the missing step so the caller can repair manually.
 
 Invariant guard (before any HTTP call):
@@ -37,6 +38,7 @@ import mcp.server.fastmcp as fastmcp
 from .. import http_client
 from ..config import DivoidConfig
 from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
+from ._substance import write_substance
 from .patch_node import _canonicalize_access
 
 logger = logging.getLogger(__name__)
@@ -46,13 +48,16 @@ Generic atomic create for any DiVoid node type. Use this when the type-specific 
 creators (divoid_create_task, divoid_create_documentation, divoid_create_session_log) \
 don't cover the type you need — meeting, plan, project, group (type=None/omitted), \
 event, chat, or any custom type. Creates the node, optionally sets its content \
-(UTF-8 safe), and optionally links it to one or more existing nodes — all in one call. \
+(UTF-8 safe), optionally links it to one or more existing nodes, and optionally sets \
+substance — all in one call. \
 No content-required check, no group auto-resolution, no lifecycle status validation; \
 those invariants belong to the type-specific tools. The only hard requirement is a \
-non-empty name. On partial failure (node created but content or link step fails) the \
+non-empty name. On partial failure (node created but content, link or substance step \
+fails) the \
 tool returns isError with code=partial_state naming the surviving node id so the \
 caller can repair manually. The response reports the resulting rootNodeId so a \
-caller can confirm it landed.\
+caller can confirm it landed. substance is an \
+optional client-written condensed form of the content, stored verbatim.\
 """
 
 
@@ -87,6 +92,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         access: int | str | None = None,
         extra_links: list[int] | None = None,
         root_node_id: int | None = None,
+        substance: str | None = None,
     ) -> dict[str, Any]:
         """
         Create a DiVoid node of any type atomically.
@@ -124,6 +130,11 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                           answer for cross-cutting or genuinely homeless nodes (identity/
                           vocabulary types always stay null per #6857 v1.4/v1.5), not an
                           error state.
+            substance: Optional client-written condensed form of the content —
+                       the facts an agent needs without the prose the content
+                       carries for human readers. Stored verbatim: no length check,
+                       no shape check and no normalisation. When absent the server
+                       defaults to NULL.
         """
         if extra_links is None:
             extra_links = []
@@ -268,6 +279,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
 
             links_created.append(link_target)
             logger.info("divoid_create_node node_id=%d linked to %d", node_id, link_target)
+
+        substance_error = await write_substance(node_id, substance, config)
+        if substance_error is not None:
+            return substance_error
 
         logger.info(
             "divoid_create_node node_id=%d ok type=%s links=%s content_length=%d",

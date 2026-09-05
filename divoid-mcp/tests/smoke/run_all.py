@@ -64,6 +64,12 @@ from divoid_mcp.tools.edit_content import _check_invariants as _check_edit_conte
 from divoid_mcp.tools.edit_content import _execute as _execute_edit_content
 from divoid_mcp.tools.delete_node import _execute as _execute_delete_node
 from divoid_mcp.tools.download_content import _execute as _execute_download_content
+import mcp.server.fastmcp as fastmcp
+
+from divoid_mcp.tools import create_documentation as _create_documentation_module
+from divoid_mcp.tools import create_node as _create_node_module
+from divoid_mcp.tools import create_task as _create_task_module
+from divoid_mcp.tools import get_node as _get_node_module
 from divoid_mcp.errors import InvariantViolation
 
 # Pinned group ids for the smoke-test target project (DiVoid project #3).
@@ -98,6 +104,54 @@ def _record(name: str, passed: bool, detail: str = "") -> None:
 
 def _assert(name: str, condition: bool, detail: str = "") -> None:
     _record(name, condition, detail)
+
+
+def _registered_tool(module: Any, tool_name: str, config: Any) -> Any:
+    """Return a callable dispatching a registered tool through a real FastMCP tool manager."""
+    server = fastmcp.FastMCP("divoid-mcp-smoke")
+    server.config = config  # type: ignore[attr-defined]
+    module.register(server)
+
+    async def call(**kwargs: Any) -> Any:
+        return await server._tool_manager.call_tool(tool_name, kwargs)
+
+    return call
+
+
+class _CallRecorder:
+    """Records, in order, the http_client calls made inside its with-block."""
+
+    _WRAPPED = ("post_json", "post_bytes", "patch_json")
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+        self._original: dict[str, Any] = {}
+
+    def __enter__(self) -> "_CallRecorder":
+        for name in self._WRAPPED:
+            original = getattr(http_client, name)
+            self._original[name] = original
+            setattr(http_client, name, self._wrap(name, original))
+        return self
+
+    def _wrap(self, name: str, original: Any) -> Any:
+        async def recorded(path: str, *args: Any, **kwargs: Any) -> Any:
+            self.calls.append((name, path))
+            return await original(path, *args, **kwargs)
+        return recorded
+
+    def __exit__(self, *exc_info: Any) -> bool:
+        for name, original in self._original.items():
+            setattr(http_client, name, original)
+        return False
+
+
+def _first_call_index(calls: list[tuple[str, str]], verb: str, path: str) -> int:
+    """Index of the first recorded call matching verb and path, or -1 when absent."""
+    for index, (recorded_verb, recorded_path) in enumerate(calls):
+        if recorded_verb == verb and recorded_path == path:
+            return index
+    return -1
 
 
 # ---------------------------------------------------------------------------
@@ -3839,6 +3893,384 @@ async def smoke_path_gate_accepts_ordinary_in_root_round_trip(config: Any) -> No
 
 ### -----------------------------------------------------------------------
 
+async def smoke_patch_node_substance_lifecycle(config: Any) -> None:
+    """
+    divoid_patch_node/divoid_get_node: substance is set, survives an unrelated patch, then clears to null.
+    """
+    print("\n--- divoid_patch_node (substance: set + verify + survive + clear + verify) ---")
+
+    get_node = _registered_tool(_get_node_module, "divoid_get_node", config)
+
+    create_result = await http_client.post_json("nodes", {
+        "name": "[smoke] patch_node substance - delete me",
+        "type": "documentation",
+    })
+    _assert("POST scratch node returns 2xx", create_result.ok, f"status={create_result.status}")
+    if not create_result.ok:
+        return
+    node_id = create_result.json()["id"]
+
+    try:
+        fresh = await get_node(id=node_id)
+        _assert(
+            "get_node returns a substance key on a node that has none",
+            "substance" in fresh,
+            f"keys={sorted(fresh.keys())}",
+        )
+        _assert(
+            "substance is null before any client writes one",
+            fresh.get("substance") is None,
+            f"substance={fresh.get('substance')!r}",
+        )
+
+        patch_result = await _execute_patch_node(
+            id=node_id, config=config, substance="facts only, no prose",
+        )
+        _assert(
+            "patch substance returns no isError",
+            not patch_result.get("isError", False),
+            str(patch_result.get("content", "")),
+        )
+        if patch_result.get("isError"):
+            return
+
+        after_set = await get_node(id=node_id)
+        _assert(
+            "get_node reports the substance the patch wrote",
+            after_set.get("substance") == "facts only, no prose",
+            f"substance={after_set.get('substance')!r}",
+        )
+
+        name_patch = await _execute_patch_node(
+            id=node_id, config=config, name="[smoke] patch_node substance renamed - delete me",
+        )
+        _assert(
+            "name-only patch returns no isError",
+            not name_patch.get("isError", False),
+            str(name_patch.get("content", "")),
+        )
+
+        after_name = await get_node(id=node_id)
+        _assert(
+            "a patch that does not mention substance leaves it untouched",
+            after_name.get("substance") == "facts only, no prose",
+            f"substance={after_name.get('substance')!r}",
+        )
+
+        clear_result = await _execute_patch_node(
+            id=node_id, config=config, clear_substance=True,
+        )
+        _assert(
+            "patch clear_substance=True returns no isError",
+            not clear_result.get("isError", False),
+            str(clear_result.get("content", "")),
+        )
+        if clear_result.get("isError"):
+            return
+
+        after_clear = await get_node(id=node_id)
+        _assert(
+            "substance is null after clear_substance=True",
+            after_clear.get("substance") is None,
+            f"substance={after_clear.get('substance')!r}",
+        )
+
+    finally:
+        delete_result = await http_client.delete(f"nodes/{node_id}")
+        _assert(
+            f"DELETE scratch node ({node_id}) returns 2xx (cleanup)",
+            delete_result.ok,
+            f"status={delete_result.status}",
+        )
+
+
+async def smoke_patch_node_substance_verbatim(config: Any) -> None:
+    """
+    divoid_patch_node: a >=50 KB substance and an empty string both round-trip unaltered.
+    """
+    print("\n--- divoid_patch_node (substance: 50 KB + empty string pass through verbatim) ---")
+
+    get_node = _registered_tool(_get_node_module, "divoid_get_node", config)
+
+    large = ("substance-payload-" * 3000)[:51200]
+    _assert(
+        "test payload is at least 50 KB",
+        len(large.encode("utf-8")) >= 51200,
+        f"bytes={len(large.encode('utf-8'))}",
+    )
+
+    create_result = await http_client.post_json("nodes", {
+        "name": "[smoke] patch_node substance verbatim - delete me",
+        "type": "documentation",
+    })
+    _assert("POST scratch node returns 2xx", create_result.ok, f"status={create_result.status}")
+    if not create_result.ok:
+        return
+    node_id = create_result.json()["id"]
+
+    try:
+        large_result = await _execute_patch_node(id=node_id, config=config, substance=large)
+        _assert(
+            "patch of a 50 KB substance returns no isError",
+            not large_result.get("isError", False),
+            str(large_result.get("content", "")),
+        )
+        if large_result.get("isError"):
+            return
+
+        after_large = await get_node(id=node_id)
+        _assert(
+            "the 50 KB substance is returned byte-identical",
+            after_large.get("substance") == large,
+            f"len_out={len(after_large.get('substance') or '')} len_in={len(large)}",
+        )
+
+        empty_result = await _execute_patch_node(id=node_id, config=config, substance="")
+        _assert(
+            "patch of an empty substance returns no isError",
+            not empty_result.get("isError", False),
+            str(empty_result.get("content", "")),
+        )
+
+        after_empty = await get_node(id=node_id)
+        _assert(
+            "an empty substance is stored as '' and not normalised to null",
+            after_empty.get("substance") == "",
+            f"substance={after_empty.get('substance')!r}",
+        )
+
+    finally:
+        delete_result = await http_client.delete(f"nodes/{node_id}")
+        _assert(
+            f"DELETE scratch node ({node_id}) returns 2xx (cleanup)",
+            delete_result.ok,
+            f"status={delete_result.status}",
+        )
+
+
+async def smoke_patch_node_substance_only_is_a_valid_patch(config: Any) -> None:
+    """
+    divoid_patch_node invariant guard: substance and clear_substance each satisfy no_fields_to_patch alone.
+    """
+    print("\n--- divoid_patch_node (substance participates in no_fields_to_patch) ---")
+
+    raised = False
+    try:
+        _check_patch_node_invariants(None, None, None, None, None, None, substance="only this")
+    except InvariantViolation as exc:
+        raised = True
+        _record("substance-only patch rejected", False, f"code={exc.code}")
+    _assert("a patch carrying only substance passes the guard", not raised)
+
+    raised = False
+    try:
+        _check_patch_node_invariants(None, None, None, None, None, None, clear_substance=True)
+    except InvariantViolation as exc:
+        raised = True
+        _record("clear_substance-only patch rejected", False, f"code={exc.code}")
+    _assert("a patch carrying only clear_substance passes the guard", not raised)
+
+    raised = False
+    try:
+        _check_patch_node_invariants(None, None, None, None, None, None)
+    except InvariantViolation as exc:
+        raised = exc.code == "no_fields_to_patch"
+    _assert("a patch carrying no fields at all still raises no_fields_to_patch", raised)
+
+
+async def smoke_create_composites_substance_after_content(config: Any) -> None:
+    """
+    The four composite creators PATCH substance after the content POST, and issue no PATCH when none is supplied.
+    """
+    print("\n--- composite creators (substance written after content; skipped when absent) ---")
+
+    create_task = _registered_tool(_create_task_module, "divoid_create_task", config)
+    create_documentation = _registered_tool(_create_documentation_module, "divoid_create_documentation", config)
+    create_node = _registered_tool(_create_node_module, "divoid_create_node", config)
+
+    content = "# Smoke body\n\nProse a human reads, with an em-dash — and a euro sign €."
+    substance = "smoke; substance written after content"
+
+    async def _task(sub: str | None) -> dict[str, Any]:
+        return await create_task(
+            name="[smoke] composite substance task - delete me",
+            content=content,
+            status="open",
+            tasks_group_id=_DIVOID_TASKS_GROUP_ID,
+            substance=sub,
+        )
+
+    async def _doc(sub: str | None) -> dict[str, Any]:
+        return await create_documentation(
+            name="[smoke] composite substance doc - delete me",
+            content=content,
+            docs_group_id=_DIVOID_DOCS_GROUP_ID,
+            substance=sub,
+        )
+
+    async def _session_log(sub: str | None) -> dict[str, Any]:
+        return await _execute_create_session_log(
+            name="[smoke] composite substance session-log - delete me",
+            content=content,
+            config=config,
+            docs_group_id=_DIVOID_DOCS_GROUP_ID,
+            substance=sub,
+        )
+
+    async def _node(sub: str | None) -> dict[str, Any]:
+        return await create_node(
+            name="[smoke] composite substance node - delete me",
+            type="meeting",
+            content=content,
+            extra_links=[_DIVOID_DOCS_GROUP_ID],
+            substance=sub,
+        )
+
+    creators = [
+        ("divoid_create_task", _task),
+        ("divoid_create_documentation", _doc),
+        ("divoid_create_session_log", _session_log),
+        ("divoid_create_node", _node),
+    ]
+
+    get_node = _registered_tool(_get_node_module, "divoid_get_node", config)
+
+    for label, creator in creators:
+        with _CallRecorder() as recorder:
+            result = await creator(substance)
+        _assert(
+            f"{label} with substance returns no isError",
+            not result.get("isError", False),
+            str(result.get("content", "")),
+        )
+        if result.get("isError"):
+            continue
+        node_id = result["id"]
+
+        try:
+            content_index = _first_call_index(recorder.calls, "post_bytes", f"nodes/{node_id}/content")
+            link_index = _first_call_index(recorder.calls, "post_json", f"nodes/{node_id}/links")
+            substance_index = _first_call_index(recorder.calls, "patch_json", f"nodes/{node_id}")
+
+            _assert(
+                f"{label} issues a substance PATCH",
+                substance_index >= 0,
+                f"calls={recorder.calls}",
+            )
+            _assert(
+                f"{label} posts the content body",
+                content_index >= 0,
+                f"calls={recorder.calls}",
+            )
+            _assert(
+                f"{label} links the node",
+                link_index >= 0,
+                f"calls={recorder.calls}",
+            )
+            _assert(
+                f"{label} issues the substance PATCH after the content POST",
+                0 <= content_index < substance_index,
+                f"content_index={content_index} substance_index={substance_index} calls={recorder.calls}",
+            )
+            _assert(
+                f"{label} issues the substance PATCH after the links are made",
+                0 <= link_index < substance_index,
+                f"link_index={link_index} substance_index={substance_index} calls={recorder.calls}",
+            )
+
+            stored = await get_node(id=node_id)
+            _assert(
+                f"{label} leaves the substance readable on the node",
+                stored.get("substance") == substance,
+                f"substance={stored.get('substance')!r}",
+            )
+        finally:
+            delete_result = await http_client.delete(f"nodes/{node_id}")
+            _assert(
+                f"DELETE {label} node ({node_id}) returns 2xx (cleanup)",
+                delete_result.ok,
+                f"status={delete_result.status}",
+            )
+
+    for label, creator in creators:
+        with _CallRecorder() as recorder:
+            result = await creator(None)
+        _assert(
+            f"{label} without substance returns no isError",
+            not result.get("isError", False),
+            str(result.get("content", "")),
+        )
+        if result.get("isError"):
+            continue
+        node_id = result["id"]
+
+        try:
+            _assert(
+                f"{label} without substance issues no PATCH at all",
+                _first_call_index(recorder.calls, "patch_json", f"nodes/{node_id}") == -1,
+                f"calls={recorder.calls}",
+            )
+            stored = await get_node(id=node_id)
+            _assert(
+                f"{label} without substance leaves it null",
+                stored.get("substance") is None,
+                f"substance={stored.get('substance')!r}",
+            )
+        finally:
+            delete_result = await http_client.delete(f"nodes/{node_id}")
+            _assert(
+                f"DELETE {label} node ({node_id}) returns 2xx (cleanup)",
+                delete_result.ok,
+                f"status={delete_result.status}",
+            )
+
+
+async def smoke_create_node_empty_substance_is_written(config: Any) -> None:
+    """
+    Composite create: an empty substance is still written, so the helper tests presence and not truthiness.
+    """
+    print("\n--- divoid_create_node (substance='' is written, not skipped) ---")
+
+    create_node = _registered_tool(_create_node_module, "divoid_create_node", config)
+    get_node = _registered_tool(_get_node_module, "divoid_get_node", config)
+
+    with _CallRecorder() as recorder:
+        result = await create_node(
+            name="[smoke] composite empty substance - delete me",
+            type="meeting",
+            content="# Smoke body\n\nProse for a human reader.",
+            substance="",
+        )
+    _assert(
+        "create_node with substance='' returns no isError",
+        not result.get("isError", False),
+        str(result.get("content", "")),
+    )
+    if result.get("isError"):
+        return
+    node_id = result["id"]
+
+    try:
+        _assert(
+            "create_node issues a substance PATCH even for an empty value",
+            _first_call_index(recorder.calls, "patch_json", f"nodes/{node_id}") >= 0,
+            f"calls={recorder.calls}",
+        )
+        stored = await get_node(id=node_id)
+        _assert(
+            "the empty substance is stored as '' rather than left null",
+            stored.get("substance") == "",
+            f"substance={stored.get('substance')!r}",
+        )
+    finally:
+        delete_result = await http_client.delete(f"nodes/{node_id}")
+        _assert(
+            f"DELETE scratch node ({node_id}) returns 2xx (cleanup)",
+            delete_result.ok,
+            f"status={delete_result.status}",
+        )
+
+
 async def _run_all(config: Any) -> None:
     tests = [
         smoke_search,
@@ -3921,6 +4353,11 @@ async def _run_all(config: Any) -> None:
         smoke_path_gate_refuses_sensitive_read,
         smoke_path_gate_refuses_sensitive_write,
         smoke_path_gate_accepts_ordinary_in_root_round_trip,
+        smoke_patch_node_substance_lifecycle,
+        smoke_patch_node_substance_verbatim,
+        smoke_patch_node_substance_only_is_a_valid_patch,
+        smoke_create_composites_substance_after_content,
+        smoke_create_node_empty_substance_is_written,
         # Bootstrap: subprocess spawn verifies FastMCP API compat at startup
         smoke_server_bootstrap,
     ]

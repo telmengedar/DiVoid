@@ -2,20 +2,21 @@
 divoid_create_documentation -- composite tool: create node + post content + link to Docs group.
 
 From the caller's perspective this is a single atomic operation. Under the hood it
-makes 3-4 HTTP calls:
+makes 3-5 HTTP calls:
   1. GET /nodes?path=[id:<project_id>]/[name:Docs]  (only if project_id is given)
   2. POST /nodes                                      -- create the documentation node
   3. POST /nodes/{id}/content                         -- set the content body
   4. POST /nodes/{id}/links                           -- link to Docs group
      (plus extra_links, one call each)
+  5. PATCH /nodes/{id}                                -- set substance (if provided)
 
 Content is always required for documentation (no 'new' escape). FastMCP exposes
 content as a plain {"type": "string"} parameter without minLength or required
 enforcement — the invariant guard is the sole enforcement layer (catches both
 missing and whitespace-only content per DiVoid #493 §4).
 
-Partial failure semantics (per architecture §6.3): if step 2 succeeds but step 3 or 4
-fails, the server does NOT roll back. It returns an MCP error naming the surviving
+Partial failure semantics (per architecture §6.3): if step 2 succeeds but step 3, 4
+or 5 fails, the server does NOT roll back. It returns an MCP error naming the surviving
 node id and the missing step so the caller can repair manually.
 
 Architecture reference: §8.5, §6.3
@@ -32,13 +33,15 @@ from .. import http_client
 from ..config import DivoidConfig
 from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
 from ._groups import resolve_group
+from ._substance import write_substance
 from .patch_node import _canonicalize_access
 
 logger = logging.getLogger(__name__)
 
 _TOOL_DESCRIPTION = """\
-Create a documentation node atomically: creates the node, sets its content, and links \
-it to the project's Docs group — all in one call. Use this for design docs, \
+Create a documentation node atomically: creates the node, sets its content, links it \
+to the project's Docs group, and sets substance when given — all in one call. Use this \
+for design docs, \
 architectural notes, gotchas, tutorials, anti-patterns, closure notes — anything that \
 is reusable knowledge per DiVoid #190 Rule 2. Content is always required (there is no \
 'new' escape for documentation per #493 §4 — do not create a documentation node until \
@@ -48,7 +51,8 @@ directly if you already know it (e.g. DiVoid Docs = 7). When project_id is given
 root_node_id is omitted, root_node_id defaults to project_id (DiVoid #6857 v1.2 — the \
 node's structural home, not the group link) so the doc is not left null-rooted; pass \
 root_node_id explicitly to override. The response reports the resulting rootNodeId so \
-a caller can confirm it landed.\
+a caller can confirm it landed. substance is an \
+optional client-written condensed form of the content, stored verbatim.\
 """
 
 
@@ -115,6 +119,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         access: int | str | None = None,
         severity: int | None = None,
         root_node_id: int | None = None,
+        substance: str | None = None,
     ) -> dict[str, Any]:
         """
         Create a documentation node in DiVoid atomically.
@@ -160,6 +165,11 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                           (rootNodeId=null), which is a first-class-correct answer for a
                           genuinely cross-project or homeless doc (#6857 v1.6.2), not an
                           error state.
+            substance: Optional client-written condensed form of the content —
+                       the facts an agent needs without the prose the content
+                       carries for human readers. Stored verbatim: no length check,
+                       no shape check and no normalisation. When absent the server
+                       defaults to NULL.
         """
         if extra_links is None:
             extra_links = []
@@ -326,6 +336,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
 
             links_created.append(link_target)
             logger.info("divoid_create_documentation node_id=%d linked to %d", node_id, link_target)
+
+        substance_error = await write_substance(node_id, substance, config)
+        if substance_error is not None:
+            return substance_error
 
         logger.info(
             "divoid_create_documentation node_id=%d ok links=%s content_length=%d",
