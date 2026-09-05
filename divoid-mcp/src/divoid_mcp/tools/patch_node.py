@@ -2,8 +2,8 @@
 divoid_patch_node -- primitive JSON-Patch wrapper around PATCH /api/nodes/{id}.
 
 Accepts the patchable properties (name, status, x, y, access, owner_id,
-severity, root_node_id) as explicit parameters and composes the JSON-Patch
-array internally. The caller does not need to know the patch format.
+severity, root_node_id, substance) as explicit parameters and composes the
+JSON-Patch array internally. The caller does not need to know the patch format.
 
 Supported paths per DiVoid #8:
   /name       -- node name (string)
@@ -18,6 +18,8 @@ Supported paths per DiVoid #8:
   /severity   -- node severity (positive integer); use clear_severity=True to set NULL.
   /rootNodeId -- structural group pointer (positive integer); use clear_root_node_id=True
                  to ungroup (set NULL).
+  /substance  -- client-written condensed form of the content (string); use
+                 clear_substance=True to set NULL.
 
 At least one of the supported fields must be provided — the invariant guard fires
 before any HTTP call with code 'no_fields_to_patch'.
@@ -57,7 +59,10 @@ not gate it). severity accepts a positive integer; to clear severity, pass \
 clear_severity=True — the tool composes a replace /severity null op internally. \
 root_node_id assigns a structural group pointer (set/reassign group); to ungroup \
 (set to NULL), pass clear_root_node_id=True — the tool composes a replace \
-/rootNodeId null op internally.\
+/rootNodeId null op internally. substance is the client-written condensed form of \
+the node's content, stored verbatim as an opaque string with no length or shape \
+check; to clear it, pass clear_substance=True — the tool composes a replace \
+/substance null op internally.\
 """
 
 _ACCESS_STRING_MAP: dict[str, int] = {
@@ -93,6 +98,8 @@ def _check_invariants(
     clear_severity: bool = False,
     root_node_id: int | None = None,
     clear_root_node_id: bool = False,
+    substance: str | None = None,
+    clear_substance: bool = False,
 ) -> None:
     """
     Check runtime invariants before making any HTTP call.
@@ -104,13 +111,14 @@ def _check_invariants(
     """
     has_severity_op = severity is not None or clear_severity
     has_root_node_id_op = root_node_id is not None or clear_root_node_id
+    has_substance_op = substance is not None or clear_substance
     if (name is None and status is None and x is None and y is None
             and access is None and owner_id is None and not has_severity_op
-            and not has_root_node_id_op):
+            and not has_root_node_id_op and not has_substance_op):
         raise InvariantViolation(
             "no_fields_to_patch",
-            "At least one of name, status, severity, root_node_id, x, y, access, or owner_id "
-            "must be provided. A PATCH with no fields is a no-op.",
+            "At least one of name, status, severity, root_node_id, substance, x, y, access, "
+            "or owner_id must be provided. A PATCH with no fields is a no-op.",
         )
     if access is not None:
         _canonicalize_access(access)
@@ -129,6 +137,8 @@ async def _execute(
     clear_severity: bool = False,
     root_node_id: int | None = None,
     clear_root_node_id: bool = False,
+    substance: str | None = None,
+    clear_substance: bool = False,
 ) -> dict[str, Any]:
     """
     Core implementation of divoid_patch_node.
@@ -160,6 +170,10 @@ async def _execute(
         ops.append({"op": "replace", "path": "/rootNodeId", "value": root_node_id})
     elif clear_root_node_id:
         ops.append({"op": "replace", "path": "/rootNodeId", "value": None})
+    if substance is not None:
+        ops.append({"op": "replace", "path": "/substance", "value": substance})
+    elif clear_substance:
+        ops.append({"op": "replace", "path": "/substance", "value": None})
 
     logger.info(
         "divoid_patch_node id=%d ops=%s",
@@ -210,6 +224,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         clear_severity: bool = False,
         root_node_id: int | None = None,
         clear_root_node_id: bool = False,
+        substance: str | None = None,
+        clear_substance: bool = False,
     ) -> dict[str, Any]:
         """
         Patch one or more properties of a DiVoid node.
@@ -245,15 +261,22 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                                 removing the node from its current group (ungroup).
                                 Mutually implied exclusive with root_node_id — if
                                 both are set, the explicit root_node_id value wins.
+            substance: The client-written condensed form of the node's content.
+                       Stored verbatim — no length check, no shape check and no
+                       normalisation; "" is stored as an empty string, not NULL.
+                       To clear it (set to NULL), pass clear_substance=True instead.
+            clear_substance: If True, sets substance to NULL on the server. Mutually
+                             implied exclusive with substance — if both are set, the
+                             explicit substance value wins.
 
         At least one of name, status, severity, clear_severity, root_node_id,
-        clear_root_node_id, x, y, access, or owner_id must be provided
-        (invariant guard: no_fields_to_patch).
+        clear_root_node_id, substance, clear_substance, x, y, access, or owner_id
+        must be provided (invariant guard: no_fields_to_patch).
         """
         try:
             _check_invariants(
                 name, status, x, y, access, owner_id, severity, clear_severity,
-                root_node_id, clear_root_node_id,
+                root_node_id, clear_root_node_id, substance, clear_substance,
             )
         except InvariantViolation as exc:
             logger.debug("divoid_patch_node invariant violation: %s", exc.code)
@@ -272,4 +295,6 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             clear_severity=clear_severity,
             root_node_id=root_node_id,
             clear_root_node_id=clear_root_node_id,
+            substance=substance,
+            clear_substance=clear_substance,
         )
