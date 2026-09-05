@@ -54,6 +54,12 @@ public class NodeDetails
     public string Content { get; set; }
 
     /// <summary>
+    /// client-supplied compressed form of <see cref="Content"/>; null when unset.
+    /// present on <c>GET /api/nodes/{id}</c>; in list responses only via <c>?fields=substance</c>.
+    /// </summary>
+    public string Substance { get; set; }
+
+    /// <summary>
     /// transient raw bytes populated by the <c>content</c> field-mapping in
     /// <see cref="NodeMapper"/>.  never serialised to JSON.
     /// the post-process callback in <see cref="NodeMapper"/> uses this alongside

@@ -83,6 +83,9 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
         yield return new FieldMapping<NodeDetails, byte[]>("content",
                                                         DB.Property<Node>(n => n.Content, "node"),
                                                         (n, v) => n.RawContent = v);
+        yield return new FieldMapping<NodeDetails, string>("substance",
+                                                        DB.Property<Node>(n => n.Substance, "node"),
+                                                        (n, v) => n.Substance = v);
         yield return new FieldMapping<NodeDetails, long>("ownerId",
                                                         DB.Property<Node>(n => n.OwnerId, "node"),
                                                         (n, v) => n.OwnerId = v);
