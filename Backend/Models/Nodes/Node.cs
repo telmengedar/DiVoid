@@ -42,6 +42,12 @@ public class Node
     public byte[] Content { get; set; }
 
     /// <summary>
+    /// client-supplied compressed form of <see cref="Content"/>; null when unset, never written by the server.
+    /// </summary>
+    [AllowPatch]
+    public string Substance { get; set; }
+
+    /// <summary>
     /// content embedding (only for text / markdown nodes)
     /// </summary>
     [Size(3072)]
