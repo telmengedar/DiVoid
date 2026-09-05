@@ -50,7 +50,11 @@ lifecycle (per #493 §5). \
 Link to every node the arc touched using extra_links — tasks, bugs, documentation, \
 PRs, research nodes. The links are what make the session-log findable from any of the \
 nodes it references. The Docs group is resolved from project_id by walking the graph; \
-alternatively supply docs_group_id directly if you already know it (e.g. DiVoid Docs = 7).\
+alternatively supply docs_group_id directly if you already know it (e.g. DiVoid Docs = 7). \
+When project_id is given and root_node_id is omitted, root_node_id defaults to project_id \
+(DiVoid #6857 v1.2 — the node's structural home, not the group link) so the session-log \
+is not left null-rooted; pass root_node_id explicitly to override. The response reports \
+the resulting rootNodeId so a caller can confirm it landed.\
 """
 
 
@@ -133,11 +137,13 @@ async def _execute(
     else:
         resolved_group_id = docs_group_id  # type: ignore[assignment]
 
+    resolved_root_node_id: int | None = root_node_id if root_node_id is not None else project_id
+
     node_body: dict[str, Any] = {"name": name, "type": "session-log"}
     if severity is not None:
         node_body["severity"] = severity
-    if root_node_id is not None:
-        node_body["rootNodeId"] = root_node_id
+    if resolved_root_node_id is not None:
+        node_body["rootNodeId"] = resolved_root_node_id
     if access is not None:
         node_body["access"] = _canonicalize_access(access)
     try:
@@ -279,6 +285,7 @@ async def _execute(
         "type": "session-log",
         "name": name,
         "docs_group_id": resolved_group_id,
+        "rootNodeId": node_data.get("rootNodeId", resolved_root_node_id),
         "extra_links_attached": [lid for lid in links_created if lid != resolved_group_id],
         "content_length": content_length,
     }
@@ -314,7 +321,11 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                      (not JSON Schema — FastMCP exposes content as plain string).
             project_id: The id of the project whose Docs group this session-log
                         belongs to. Resolved via [id:<project_id>]/[name:Docs].
-                        Mutually exclusive with docs_group_id (invariant guard).
+                        Mutually exclusive with docs_group_id (invariant guard). Also
+                        supplies the default for root_node_id (see below) when
+                        root_node_id is omitted — this is what keeps a session-log
+                        from landing null-rooted just because only project_id was
+                        passed.
             docs_group_id: Direct id of the Docs group node. Use when you already
                            know it (e.g. DiVoid Docs = 7). Mutually exclusive with
                            project_id (invariant guard).
@@ -328,10 +339,21 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                     private node visible only to owner/admin.
             severity: Optional integer severity for this node. When absent the server
                       defaults to NULL (no severity set).
-            root_node_id: Optional group pointer. When set, the session-log is filed
-                          under the specified root node (soft pointer — no existence
-                          validation). Null (default) = ungrouped. Forwarded as
-                          rootNodeId in the POST body.
+            root_node_id: The session-log's structural home (DiVoid #6857 v1.2) — the
+                          scalar that answers "list(type=session-log, root_node_id=P)"
+                          queries, distinct from the Docs-group LINK above (both are
+                          set; they are not the same thing). Soft pointer — no existence
+                          validation. Defaults to project_id when project_id is given
+                          and this is omitted; pass it explicitly to home the log
+                          somewhere other than the project whose Docs group it is filed
+                          under. Passing docs_group_id instead of project_id does NOT
+                          trigger this default (the group's own project is not
+                          resolved) — pass root_node_id explicitly in that case if you
+                          want the log rooted. Omitting both project_id and
+                          root_node_id leaves the log ungrouped (rootNodeId=null),
+                          which is a first-class-correct answer for a genuinely
+                          cross-project or homeless log (#6857 v1.6.2), not an error
+                          state.
         """
         try:
             _check_invariants(name, content, project_id, docs_group_id)

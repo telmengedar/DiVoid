@@ -44,7 +44,11 @@ is reusable knowledge per DiVoid #190 Rule 2. Content is always required (there 
 'new' escape for documentation per #493 §4 — do not create a documentation node until \
 you have the document). Documentation nodes have no status field. The Docs group is \
 resolved from project_id by walking the graph; alternatively supply docs_group_id \
-directly if you already know it (e.g. DiVoid Docs = 7).\
+directly if you already know it (e.g. DiVoid Docs = 7). When project_id is given and \
+root_node_id is omitted, root_node_id defaults to project_id (DiVoid #6857 v1.2 — the \
+node's structural home, not the group link) so the doc is not left null-rooted; pass \
+root_node_id explicitly to override. The response reports the resulting rootNodeId so \
+a caller can confirm it landed.\
 """
 
 
@@ -125,7 +129,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                      layer (FastMCP exposes content as plain string, no minLength).
             project_id: The id of the project whose Docs group this documentation
                         belongs to. Resolved via [id:<project_id>]/[name:Docs].
-                        Mutually exclusive with docs_group_id.
+                        Mutually exclusive with docs_group_id. Also supplies the
+                        default for root_node_id (see below) when root_node_id is
+                        omitted — this is what keeps a doc from landing null-rooted
+                        just because only project_id was passed.
             docs_group_id: Direct id of the Docs group node. Use when you already
                            know it (e.g. DiVoid Docs = 7). Mutually exclusive with
                            project_id.
@@ -138,11 +145,21 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                     private node visible only to owner/admin.
             severity: Optional integer severity for this node. When absent the server
                       defaults to NULL (no severity set).
-            root_node_id: Optional group pointer. When set, the documentation node is
-                          filed under the specified root node (soft pointer — no existence
-                          validation). Primary use case: scope a docs-group so that
-                          divoid_search(root_node_id=[N]) returns only this group's docs.
-                          Null (default) = ungrouped. Forwarded as rootNodeId in the POST body.
+            root_node_id: The documentation node's structural home (DiVoid #6857 v1.2) —
+                          the scalar that answers "list(type=documentation, root_node_id=P)"
+                          / scoped-search queries, distinct from the Docs-group LINK above
+                          (both are set; they are not the same thing). Soft pointer — no
+                          existence validation. Defaults to project_id when project_id is
+                          given and this is omitted; pass it explicitly to home the doc
+                          somewhere other than the project whose Docs group it is filed
+                          under (e.g. a repo-map root it documents code for). Passing
+                          docs_group_id instead of project_id does NOT trigger this default
+                          (the group's own project is not resolved) — pass root_node_id
+                          explicitly in that case if you want the doc rooted. Omitting both
+                          project_id and root_node_id leaves the doc ungrouped
+                          (rootNodeId=null), which is a first-class-correct answer for a
+                          genuinely cross-project or homeless doc (#6857 v1.6.2), not an
+                          error state.
         """
         if extra_links is None:
             extra_links = []
@@ -168,11 +185,13 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         else:
             resolved_group_id = docs_group_id  # type: ignore[assignment]
 
+        resolved_root_node_id: int | None = root_node_id if root_node_id is not None else project_id
+
         node_body: dict[str, Any] = {"name": name, "type": "documentation"}
         if severity is not None:
             node_body["severity"] = severity
-        if root_node_id is not None:
-            node_body["rootNodeId"] = root_node_id
+        if resolved_root_node_id is not None:
+            node_body["rootNodeId"] = resolved_root_node_id
         if access is not None:
             try:
                 node_body["access"] = _canonicalize_access(access)
@@ -318,6 +337,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             "type": "documentation",
             "name": name,
             "docs_group_id": resolved_group_id,
+            "rootNodeId": node_data.get("rootNodeId", resolved_root_node_id),
             "extra_links_attached": [lid for lid in links_created if lid != resolved_group_id],
             "content_length": content_length,
         }
