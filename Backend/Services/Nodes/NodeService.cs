@@ -1165,7 +1165,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         DateTime uploadedAt = DateTime.UtcNow;
         if (await database.Update<Node>()
-                          .Set(n => n.ContentType == contentType, n => n.Content == blob, n => n.LastUpdate == uploadedAt)
+                          .Set(n => n.ContentType == contentType, n => n.Content == blob, n => n.Substance == (string) null, n => n.LastUpdate == uploadedAt)
                           .Where(predicate.Content)
                           .ExecuteAsync(transaction) == 0)
             throw new NotFoundException<Node>(nodeId);
@@ -1234,7 +1234,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         DateTime editedAt = DateTime.UtcNow;
         await database.Update<Node>()
-                      .Set(n => n.Content == edited, n => n.LastUpdate == editedAt)
+                      .Set(n => n.Content == edited, n => n.Substance == (string) null, n => n.LastUpdate == editedAt)
                       .Where(n => n.Id == nodeId)
                       .ExecuteAsync(transaction);
 

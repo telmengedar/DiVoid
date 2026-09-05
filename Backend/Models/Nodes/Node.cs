@@ -42,7 +42,7 @@ public class Node
     public byte[] Content { get; set; }
 
     /// <summary>
-    /// client-supplied compressed form of <see cref="Content"/>; null when unset, never written by the server.
+    /// client-supplied compressed form of <see cref="Content"/>; null when unset; cleared by the server on every content write.
     /// </summary>
     [AllowPatch]
     public string Substance { get; set; }
