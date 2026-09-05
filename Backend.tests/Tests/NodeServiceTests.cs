@@ -263,12 +263,12 @@ public class NodeServiceTests
     }
 
     [Test]
-    public void LinkNodes_SelfLink_ThrowsInvalidOperationException()
+    public void LinkNodes_SelfLink_ThrowsNotSupportedException()
     {
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
 
-        Assert.ThrowsAsync<InvalidOperationException>(() => svc.LinkNodes(1, 1, callerId: 0, isAdmin: true));
+        Assert.ThrowsAsync<NotSupportedException>(() => svc.LinkNodes(1, 1, callerId: 0, isAdmin: true));
     }
 
     [Test]

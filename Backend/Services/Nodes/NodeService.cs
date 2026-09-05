@@ -220,7 +220,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     public async Task LinkNodes(long sourceNodeId, long targetNodeId, long callerId, bool isAdmin, LinkType linkType = LinkType.None, string context = null)
     {
         if (sourceNodeId == targetNodeId)
-            throw new InvalidOperationException("Unable to link node to itself");
+            throw new NotSupportedException("Unable to link node to itself");
 
         PredicateExpression<Node> gate = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write: true);
         PredicateExpression<Node> sourcePredicate = new PredicateExpression<Node>(n => n.Id == sourceNodeId);
