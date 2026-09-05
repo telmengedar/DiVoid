@@ -73,6 +73,24 @@ public class NodeSubstanceHttpTests
         resp.EnsureSuccessStatusCode();
     }
 
+    async Task<HttpResponseMessage> PatchContentAsync(long nodeId, string editsJson)
+    {
+        using HttpClient client = factory.CreateClient();
+        HttpRequestMessage request = new(HttpMethod.Patch, $"/api/nodes/{nodeId}/content")
+        {
+            Content = new StringContent(editsJson, Encoding.UTF8, "application/json")
+        };
+        return await client.SendAsync(request);
+    }
+
+    async Task<string> GetContentStringAsync(long nodeId)
+    {
+        using HttpClient client = factory.CreateClient();
+        HttpResponseMessage resp = await client.GetAsync($"/api/nodes/{nodeId}/content");
+        resp.EnsureSuccessStatusCode();
+        return await resp.Content.ReadAsStringAsync();
+    }
+
     [Test, Parallelizable]
     [Description("S1 — guards the positional Columns/Values pairing in CreateNode: a substance supplied on POST must come back from a separate GET, and the name must not have absorbed it.")]
     public async Task CreateNode_WithSubstance_SubstancePersistedToDatabase()
@@ -192,8 +210,12 @@ public class NodeSubstanceHttpTests
     [Description("S7 — invariants I1/I2: ?fields=id,substance returns substance and no content.")]
     public async Task ListPaged_FieldsSubstance_ReturnsSubstanceAndNoContent()
     {
-        NodeDetails created = await CreateNodeAsync("S7_FieldsOptIn", "S7|requested");
+        NodeDetails created = await CreateNodeAsync("S7_FieldsOptIn");
         await UploadTextAsync(created.Id, "text/markdown", "# S7 prose body that must not travel");
+        HttpResponseMessage setResp = await PatchAsync(created.Id,
+            new PatchOperation { Op = "replace", Path = "/substance", Value = "S7|requested" });
+        Assert.That((int) setResp.StatusCode, Is.EqualTo(200),
+            "precondition: the substance must be written after the content upload, which clears it");
 
         (List<NodeDetails> items, string rawJson) = await ListWithRawAsync($"?id={created.Id}&fields=id,substance");
 
@@ -255,6 +277,222 @@ public class NodeSubstanceHttpTests
                 "a 50 KB substance must come back at full length — a shorter value means the column was mapped to a bounded type");
             Assert.That(fetched.Substance, Is.EqualTo(large),
                 "the stored substance must be byte-for-byte what was posted");
+        });
+    }
+
+    [Test, Parallelizable]
+    [Description("C1 — a content upload clears the node's substance to NULL, so the key is absent from a later GET.")]
+    public async Task UploadContent_ClearsSubstance()
+    {
+        NodeDetails created = await CreateNodeAsync("C1_UploadClears", "C1|stale-after-upload");
+
+        (NodeDetails before, string beforeJson) = await GetWithRawAsync(created.Id);
+        Assert.Multiple(() => {
+            Assert.That(before.Substance, Is.EqualTo("C1|stale-after-upload"),
+                "precondition: the node must carry a substance before the upload, or an absent key afterwards proves nothing");
+            Assert.That(beforeJson.Contains("\"substance\""), Is.True,
+                "precondition: the substance key must be present before the upload");
+        });
+
+        await UploadTextAsync(created.Id, "text/markdown", "# C1 body uploaded after the substance was written");
+
+        (NodeDetails after, string afterJson) = await GetWithRawAsync(created.Id);
+        Assert.Multiple(() => {
+            Assert.That(after.Substance, Is.Null,
+                "the content upload must clear the substance - a surviving value means the clear term is missing from the upload UPDATE, "
+                + "or was folded into the embedding helper whose capability early-return fires on SQLite");
+            Assert.That(afterJson.Contains("\"substance\""), Is.False,
+                "the cleared substance must be NULL and therefore omitted from the JSON - a present key means the clear wrote an empty string");
+        });
+    }
+
+    [Test, Parallelizable]
+    [Description("C2 — a content range edit clears the node's substance to NULL.")]
+    public async Task PatchContent_ClearsSubstance()
+    {
+        NodeDetails created = await CreateNodeAsync("C2_PatchContentClears");
+        await UploadTextAsync(created.Id, "text/plain", "alpha\nbravo\ncharlie\n");
+
+        HttpResponseMessage setResp = await PatchAsync(created.Id,
+            new PatchOperation { Op = "replace", Path = "/substance", Value = "C2|stale-after-edit" });
+        Assert.That((int) setResp.StatusCode, Is.EqualTo(200), "precondition: the substance write must succeed");
+
+        (NodeDetails before, string beforeJson) = await GetWithRawAsync(created.Id);
+        Assert.Multiple(() => {
+            Assert.That(before.Substance, Is.EqualTo("C2|stale-after-edit"),
+                "precondition: the node must carry a substance before the edit, or an absent key afterwards proves nothing");
+            Assert.That(beforeJson.Contains("\"substance\""), Is.True,
+                "precondition: the substance key must be present before the edit");
+        });
+
+        HttpResponseMessage resp = await PatchContentAsync(created.Id,
+            """[ { "unit": "line", "start": 1, "length": 1, "value": "BRAVO\n" } ]""");
+        Assert.That((int) resp.StatusCode, Is.EqualTo(200), "the content edit must succeed");
+
+        (NodeDetails after, string afterJson) = await GetWithRawAsync(created.Id);
+        string storedContent = await GetContentStringAsync(created.Id);
+        Assert.Multiple(() => {
+            Assert.That(storedContent, Is.EqualTo("alpha\nBRAVO\ncharlie\n"),
+                "precondition: the edit must actually have changed the stored content");
+            Assert.That(after.Substance, Is.Null,
+                "the content edit must clear the substance - a surviving value means the clear term is missing from the patch UPDATE, "
+                + "or was folded into the embedding helper whose capability early-return fires on SQLite");
+            Assert.That(afterJson.Contains("\"substance\""), Is.False,
+                "the cleared substance must be NULL and therefore omitted from the JSON - a present key means the clear wrote an empty string");
+        });
+    }
+
+    [Test, Parallelizable]
+    [Description("C3 — the PATCH /content response body itself reports the clear, without a follow-up GET.")]
+    public async Task PatchContent_Response_OmitsClearedSubstance()
+    {
+        NodeDetails created = await CreateNodeAsync("C3_PatchContentResponse");
+        await UploadTextAsync(created.Id, "text/plain", "one\ntwo\nthree\n");
+
+        HttpResponseMessage setResp = await PatchAsync(created.Id,
+            new PatchOperation { Op = "replace", Path = "/substance", Value = "C3|reported-gone" });
+        Assert.That((int) setResp.StatusCode, Is.EqualTo(200), "precondition: the substance write must succeed");
+
+        (NodeDetails before, string beforeJson) = await GetWithRawAsync(created.Id);
+        Assert.Multiple(() => {
+            Assert.That(before.Substance, Is.EqualTo("C3|reported-gone"),
+                "precondition: the node must carry a substance before the edit");
+            Assert.That(beforeJson.Contains("\"substance\""), Is.True,
+                "precondition: the substance key must be present before the edit");
+        });
+
+        HttpResponseMessage resp = await PatchContentAsync(created.Id,
+            """[ { "unit": "line", "start": 1, "length": 1, "value": "TWO\n" } ]""");
+        Assert.That((int) resp.StatusCode, Is.EqualTo(200), "the content edit must succeed");
+
+        string responseJson = await resp.Content.ReadAsStringAsync();
+        NodeDetails returned = Json.Read<NodeDetails>(responseJson);
+        Assert.Multiple(() => {
+            Assert.That(returned.Id, Is.EqualTo(created.Id),
+                "precondition: the response must be the edited node, or the absent key below is read off the wrong body");
+            Assert.That(returned.Substance, Is.Null,
+                "the PATCH /content response must already report the cleared substance - a value here means the response was "
+                + "assembled before the write rather than re-read after it");
+            Assert.That(responseJson.Contains("\"substance\""), Is.False,
+                "the response body must omit the substance key entirely");
+        });
+    }
+
+    [Test, Parallelizable]
+    [Description("C4 — the clear is unconditional: re-uploading byte-identical content still clears a substance written in between.")]
+    public async Task UploadContent_WithByteIdenticalContent_StillClearsSubstance()
+    {
+        const string body = "# C4 identical body\n\nunchanged between the two uploads";
+
+        NodeDetails created = await CreateNodeAsync("C4_IdenticalUpload");
+        await UploadTextAsync(created.Id, "text/markdown", body);
+
+        HttpResponseMessage setResp = await PatchAsync(created.Id,
+            new PatchOperation { Op = "replace", Path = "/substance", Value = "C4|written-between-uploads" });
+        Assert.That((int) setResp.StatusCode, Is.EqualTo(200), "precondition: the substance write must succeed");
+
+        (NodeDetails before, string beforeJson) = await GetWithRawAsync(created.Id);
+        Assert.Multiple(() => {
+            Assert.That(before.Substance, Is.EqualTo("C4|written-between-uploads"),
+                "precondition: the substance must be present after the first upload and before the second");
+            Assert.That(beforeJson.Contains("\"substance\""), Is.True,
+                "precondition: the substance key must be present before the second upload");
+        });
+
+        await UploadTextAsync(created.Id, "text/markdown", body);
+
+        (NodeDetails after, string afterJson) = await GetWithRawAsync(created.Id);
+        string storedContent = await GetContentStringAsync(created.Id);
+        Assert.Multiple(() => {
+            Assert.That(storedContent, Is.EqualTo(body),
+                "precondition: the second upload must have stored the same bytes");
+            Assert.That(after.Substance, Is.Null,
+                "a byte-identical re-upload must still clear the substance - a surviving value means a change-comparison was added to the upload path");
+            Assert.That(afterJson.Contains("\"substance\""), Is.False,
+                "the cleared substance must be omitted from the JSON");
+        });
+    }
+
+    [Test, Parallelizable]
+    [Description("C5 — the clear is unconditional: a range edit that replaces a line with its own current text still clears the substance.")]
+    public async Task PatchContent_WithNoOpEdit_StillClearsSubstance()
+    {
+        const string body = "alpha\nbravo\ncharlie\n";
+
+        NodeDetails created = await CreateNodeAsync("C5_NoOpEdit");
+        await UploadTextAsync(created.Id, "text/plain", body);
+
+        HttpResponseMessage setResp = await PatchAsync(created.Id,
+            new PatchOperation { Op = "replace", Path = "/substance", Value = "C5|survives-nothing" });
+        Assert.That((int) setResp.StatusCode, Is.EqualTo(200), "precondition: the substance write must succeed");
+
+        (NodeDetails before, string beforeJson) = await GetWithRawAsync(created.Id);
+        Assert.Multiple(() => {
+            Assert.That(before.Substance, Is.EqualTo("C5|survives-nothing"),
+                "precondition: the node must carry a substance before the no-op edit");
+            Assert.That(beforeJson.Contains("\"substance\""), Is.True,
+                "precondition: the substance key must be present before the no-op edit");
+        });
+
+        HttpResponseMessage resp = await PatchContentAsync(created.Id,
+            """[ { "unit": "line", "start": 1, "length": 1, "value": "bravo\n" } ]""");
+        Assert.That((int) resp.StatusCode, Is.EqualTo(200), "the no-op content edit must succeed");
+
+        (NodeDetails after, string afterJson) = await GetWithRawAsync(created.Id);
+        string storedContent = await GetContentStringAsync(created.Id);
+        Assert.Multiple(() => {
+            Assert.That(storedContent, Is.EqualTo(body),
+                "precondition: the edit must have produced byte-identical content, or this is not a no-op edit");
+            Assert.That(after.Substance, Is.Null,
+                "a no-op range edit must still clear the substance - a surviving value means a change-comparison was added to the patch path");
+            Assert.That(afterJson.Contains("\"substance\""), Is.False,
+                "the cleared substance must be omitted from the JSON");
+        });
+    }
+
+    [Test, Parallelizable]
+    [Description("C6 — the clear is keyed on content writes only: a name PATCH leaves the substance intact.")]
+    public async Task Patch_ReplaceName_LeavesSubstanceIntact()
+    {
+        NodeDetails created = await CreateNodeAsync("C6_NamePatch", "C6|must-survive-a-rename");
+
+        HttpResponseMessage resp = await PatchAsync(created.Id,
+            new PatchOperation { Op = "replace", Path = "/name", Value = "C6_NamePatch_Renamed" });
+        Assert.That((int) resp.StatusCode, Is.EqualTo(200), "PATCH replace /name must return 200");
+
+        (NodeDetails fetched, string _) = await GetWithRawAsync(created.Id);
+        Assert.Multiple(() => {
+            Assert.That(fetched.Name, Is.EqualTo("C6_NamePatch_Renamed"),
+                "precondition: the rename must actually have happened");
+            Assert.That(fetched.Substance, Is.EqualTo("C6|must-survive-a-rename"),
+                "a name PATCH must leave the substance intact - a null here means the clear was placed on the shared node-PATCH path");
+        });
+    }
+
+    [Test, Parallelizable]
+    [Description("C8 — PATCH /api/nodes/{id} cannot reach content, so the content-write inventory the clear covers stays closed at two paths.")]
+    public async Task Patch_ReplaceContent_IsRejected()
+    {
+        NodeDetails created = await CreateNodeAsync("C8_ContentNotPatchable");
+        await UploadTextAsync(created.Id, "text/plain", "C8 original body");
+        HttpResponseMessage setResp = await PatchAsync(created.Id,
+            new PatchOperation { Op = "replace", Path = "/substance", Value = "C8|untouched" });
+        Assert.That((int) setResp.StatusCode, Is.EqualTo(200),
+            "precondition: the substance must be written after the content upload, which clears it");
+
+        HttpResponseMessage resp = await PatchAsync(created.Id,
+            new PatchOperation { Op = "replace", Path = "/content", Value = "C8 smuggled body" });
+
+        Assert.That((int) resp.StatusCode, Is.EqualTo(400),
+            "PATCH replace /content must be rejected - a 200 means [AllowPatch] reached Node.Content and a third content-write path exists with no clear");
+
+        (NodeDetails fetched, string _) = await GetWithRawAsync(created.Id);
+        string storedContent = await GetContentStringAsync(created.Id);
+        Assert.Multiple(() => {
+            Assert.That(storedContent, Is.EqualTo("C8 original body"),
+                "the rejected patch must leave the stored content untouched");
+            Assert.That(fetched.Substance, Is.EqualTo("C8|untouched"),
+                "the rejected patch must leave the substance untouched");
         });
     }
 }

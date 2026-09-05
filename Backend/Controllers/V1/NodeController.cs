@@ -171,6 +171,7 @@ namespace Backend.Controllers.V1
 
         /// <summary>
         /// uploads data for a node.
+        /// the node's substance is cleared.
         /// on Postgres: also (re)generates a vector embedding from the node's name plus the
         /// new content (or name alone if content is non-text/empty; null only if both are empty).
         /// on SQLite: content is written; embedding is not touched.
@@ -191,6 +192,7 @@ namespace Backend.Controllers.V1
         /// range replacements (replace / insert / delete / append) addressed by line or
         /// character, all against the content as read.  a safer alternative to a wholesale
         /// content re-upload via <c>POST /content</c>.
+        /// the node's substance is cleared.
         /// on Postgres the embedding is regenerated in the same transaction.
         /// </summary>
         /// <param name="nodeId">id of the node whose content is edited</param>
