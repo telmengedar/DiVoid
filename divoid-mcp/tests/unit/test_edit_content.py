@@ -80,6 +80,75 @@ async def _call(server: FastMCP, args: dict[str, Any]) -> dict[str, Any]:
 _OK_NODE = {"id": _NODE_ID, "type": "documentation", "name": "Test node"}
 
 
+async def _capture_backend_edits(
+    server: FastMCP, edits: list[dict[str, Any]], get_content: str | None = None
+) -> list[dict[str, Any]]:
+    """Calls divoid_edit_content and returns the backend_edits array sent in the PATCH body.
+
+    If get_content is given, also mocks the GET pre-read that "append" issues, returning it.
+    """
+    captured: list[Any] = []
+    with respx.mock(assert_all_called=False) as mock:
+        def capture_patch(req: httpx.Request) -> httpx.Response:
+            captured.append(json.loads(req.content))
+            return httpx.Response(200, json=_OK_NODE)
+
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=capture_patch)
+        if get_content is not None:
+            mock.get(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(
+                return_value=httpx.Response(
+                    200, content=get_content.encode("utf-8"), headers={"content-type": "text/plain"}
+                )
+            )
+
+        result = await _call(server, {"id": _NODE_ID, "edits": edits})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert len(captured) == 1, "Expected exactly one PATCH call"
+    return captured[0]
+
+
+def _apply_line_and_char_edits(content: str, backend_edits: list[dict[str, Any]]) -> str:
+    """Mirrors Backend/Models/Nodes/ContentEditor.Apply against a Python str.
+
+    Python str indices already address Unicode code points (unlike C#'s UTF-16 string), so
+    char-unit offsets need no surrogate-pair handling here. Used to assert the resulting
+    document text for a batch of translated backend edits without a live backend.
+    """
+    line_offsets = [0]
+    for i, ch in enumerate(content):
+        if ch == "\n":
+            line_offsets.append(i + 1)
+    line_offsets.append(len(content))
+    char_offsets = list(range(len(content) + 1))
+
+    resolved: list[tuple[int, int, str]] = []
+    for edit in backend_edits:
+        offsets = line_offsets if edit["unit"] == "line" else char_offsets
+        count = len(offsets) - 1
+        start, length = edit["start"], edit["length"]
+        end = start + length
+        if end > count:
+            raise ValueError(f"{edit['unit']} range [{start}, {end}) out of bounds; content has {count}")
+        resolved.append((offsets[start], offsets[end], edit["value"] or ""))
+
+    order = sorted(range(len(resolved)), key=lambda i: (resolved[i][0], i))
+
+    parts: list[str] = []
+    cursor = 0
+    previous_end = 0
+    for k, i in enumerate(order):
+        start, end, value = resolved[i]
+        if k > 0 and start < previous_end:
+            raise ValueError("content edits overlap")
+        parts.append(content[cursor:start])
+        parts.append(value)
+        cursor = end
+        previous_end = end
+    parts.append(content[cursor:])
+    return "".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # replace_lines translation: 1-based inclusive → 0-based half-open
 #
@@ -153,6 +222,78 @@ async def test_replace_lines_single_line_has_length_one(server: FastMCP) -> None
         f"Expected length=1 for a single-line replace, got: {e['length']!r}. "
         "Substitution probe: length must be el-sl+1, not el-sl."
     )
+
+
+@pytest.mark.asyncio
+async def test_replace_lines_value_without_newline_gets_terminated(server: FastMCP) -> None:
+    """value='X' (no trailing newline) reaches the wire as 'X\\n'."""
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 2, "end_line": 2, "value": "X"},
+    ])
+    assert edits[0]["value"] == "X\n", f"Expected 'X\\n', got: {edits[0]['value']!r}"
+
+
+@pytest.mark.asyncio
+async def test_replace_lines_multiline_value_without_trailing_newline_gets_terminated(server: FastMCP) -> None:
+    """A multi-line value only needs its final line terminated, not each internal line."""
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 2, "end_line": 3, "value": "A\nB"},
+    ])
+    assert edits[0]["value"] == "A\nB\n", f"Expected 'A\\nB\\n', got: {edits[0]['value']!r}"
+
+
+@pytest.mark.asyncio
+async def test_replace_lines_value_already_terminated_is_unchanged(server: FastMCP) -> None:
+    """Dual: value='X\\n' must NOT become 'X\\n\\n'."""
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 2, "end_line": 2, "value": "X\n"},
+    ])
+    assert edits[0]["value"] == "X\n", f"Expected 'X\\n' unchanged, got: {edits[0]['value']!r}"
+
+
+@pytest.mark.asyncio
+async def test_replace_lines_value_with_double_newline_is_unchanged(server: FastMCP) -> None:
+    """Dual: value='X\\n\\n' (caller preserving a following blank line) is left exactly as-is."""
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 2, "end_line": 2, "value": "X\n\n"},
+    ])
+    assert edits[0]["value"] == "X\n\n", f"Expected 'X\\n\\n' unchanged, got: {edits[0]['value']!r}"
+
+
+@pytest.mark.asyncio
+async def test_replace_lines_empty_value_is_not_terminated(server: FastMCP) -> None:
+    """Dual: an explicit empty value (the delete-via-replace primitive) must stay empty."""
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 2, "end_line": 2, "value": ""},
+    ])
+    assert edits[0]["value"] == "", f"Expected '' unchanged, got: {edits[0]['value']!r}"
+
+
+@pytest.mark.asyncio
+async def test_replace_lines_crlf_internal_value_gets_crlf_terminated(server: FastMCP) -> None:
+    """A value already using CRLF between its own internal lines is terminated with \\r\\n."""
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 2, "end_line": 3, "value": "A\r\nB"},
+    ])
+    assert edits[0]["value"] == "A\r\nB\r\n", f"Expected 'A\\r\\nB\\r\\n', got: {edits[0]['value']!r}"
+
+
+@pytest.mark.asyncio
+async def test_replace_lines_value_already_crlf_terminated_is_unchanged(server: FastMCP) -> None:
+    """Dual: value='X\\r\\n' must NOT gain a second terminator."""
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 2, "end_line": 2, "value": "X\r\n"},
+    ])
+    assert edits[0]["value"] == "X\r\n", f"Expected 'X\\r\\n' unchanged, got: {edits[0]['value']!r}"
+
+
+@pytest.mark.asyncio
+async def test_replace_lines_mixed_line_endings_value_defaults_to_lf(server: FastMCP) -> None:
+    """Dual: a value mixing \\r\\n and bare \\n internally is ambiguous, so it defaults to \\n."""
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 2, "end_line": 4, "value": "A\r\nB\nC"},
+    ])
+    assert edits[0]["value"] == "A\r\nB\nC\n", f"Expected 'A\\r\\nB\\nC\\n', got: {edits[0]['value']!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +377,51 @@ async def test_insert_before_line_has_zero_length(server: FastMCP) -> None:
         "Substitution probe: insert_before_line must set length=0, not any positive value."
     )
     assert e["value"] == "inserted\n", f"Expected value='inserted\\n', got: {e['value']!r}"
+
+
+@pytest.mark.asyncio
+async def test_insert_before_line_value_without_newline_gets_terminated(server: FastMCP) -> None:
+    """value='X' (no trailing newline) reaches the wire as 'X\\n'."""
+    edits = await _capture_backend_edits(server, [
+        {"op": "insert_before_line", "line": 3, "value": "X"},
+    ])
+    assert edits[0]["value"] == "X\n", f"Expected 'X\\n', got: {edits[0]['value']!r}"
+
+
+@pytest.mark.asyncio
+async def test_insert_before_line_value_already_terminated_is_unchanged(server: FastMCP) -> None:
+    """Dual: value='X\\n' must NOT become 'X\\n\\n'."""
+    edits = await _capture_backend_edits(server, [
+        {"op": "insert_before_line", "line": 3, "value": "X\n"},
+    ])
+    assert edits[0]["value"] == "X\n", f"Expected 'X\\n' unchanged, got: {edits[0]['value']!r}"
+
+
+@pytest.mark.asyncio
+async def test_insert_before_line_value_with_double_newline_is_unchanged(server: FastMCP) -> None:
+    """Dual: value='X\\n\\n' (inserting a line plus a deliberate blank line) is left as-is."""
+    edits = await _capture_backend_edits(server, [
+        {"op": "insert_before_line", "line": 3, "value": "X\n\n"},
+    ])
+    assert edits[0]["value"] == "X\n\n", f"Expected 'X\\n\\n' unchanged, got: {edits[0]['value']!r}"
+
+
+@pytest.mark.asyncio
+async def test_insert_before_line_crlf_internal_value_gets_crlf_terminated(server: FastMCP) -> None:
+    """A value already using CRLF between its own internal lines is terminated with \\r\\n."""
+    edits = await _capture_backend_edits(server, [
+        {"op": "insert_before_line", "line": 3, "value": "A\r\nB"},
+    ])
+    assert edits[0]["value"] == "A\r\nB\r\n", f"Expected 'A\\r\\nB\\r\\n', got: {edits[0]['value']!r}"
+
+
+@pytest.mark.asyncio
+async def test_insert_before_line_empty_value_is_not_terminated(server: FastMCP) -> None:
+    """Dual: an explicit empty value stays a true no-op insertion, not a blank-line insertion."""
+    edits = await _capture_backend_edits(server, [
+        {"op": "insert_before_line", "line": 3, "value": ""},
+    ])
+    assert edits[0]["value"] == "", f"Expected '' unchanged, got: {edits[0]['value']!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +557,13 @@ async def test_append_unicode_char_count_uses_code_points(server: FastMCP) -> No
         "Substitution probe: using byte count (10) instead of code-point count (7) "
         "would give start=10; backend would reject the edit as out-of-bounds."
     )
+
+
+@pytest.mark.asyncio
+async def test_append_value_is_not_line_terminated(server: FastMCP) -> None:
+    """Dual against reusing _terminate_line_value for append: value='X' must stay 'X'."""
+    edits = await _capture_backend_edits(server, [{"op": "append", "value": "X"}], get_content="hello")
+    assert edits[0]["value"] == "X", f"Expected 'X' unchanged, got: {edits[0]['value']!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -1007,3 +1200,174 @@ async def test_reported_incident_shape_replace_lines_with_text_key_rejected(serv
     assert not http_called, "HTTP must NOT be called — this is exactly the silent-deletion shape from DiVoid #8288"
     text = result["content"][0]["text"]
     assert "unknown_field" in text, f"Expected 'unknown_field' code, got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_e2e_replace_lines_mid_document_no_longer_swallows_next_line(server: FastMCP) -> None:
+    """Minimal repro: replace_lines(2,2,'X') on 'L1/L2/L3' must not join L3."""
+    content = "L1\nL2\nL3\n"
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 2, "end_line": 2, "value": "X"},
+    ])
+    assert _apply_line_and_char_edits(content, edits) == "L1\nX\nL3\n"
+
+
+@pytest.mark.asyncio
+async def test_e2e_replace_lines_table_header_does_not_swallow_separator_row(server: FastMCP) -> None:
+    """Replacing the header row must leave the separator row intact."""
+    content = "| A | B |\n|---|---|\n| 1 | 2 |\n"
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 1, "end_line": 1, "value": "| Placeholder | Means |"},
+    ])
+    assert _apply_line_and_char_edits(content, edits) == "| Placeholder | Means |\n|---|---|\n| 1 | 2 |\n"
+
+
+@pytest.mark.asyncio
+async def test_e2e_replace_lines_preserves_intended_single_blank_line(server: FastMCP) -> None:
+    """A caller already terminating value with '\\n\\n' keeps exactly one blank line — not zero, not two."""
+    content = "L1\nL2\nL3\n"
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 2, "end_line": 2, "value": "X\n\n"},
+    ])
+    assert _apply_line_and_char_edits(content, edits) == "L1\nX\n\nL3\n"
+
+
+@pytest.mark.asyncio
+async def test_e2e_replace_lines_empty_value_deletes_line_cleanly(server: FastMCP) -> None:
+    """An explicit empty value removes the line entirely rather than blanking it."""
+    content = "L1\nL2\nL3\n"
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 2, "end_line": 2, "value": ""},
+    ])
+    assert _apply_line_and_char_edits(content, edits) == "L1\nL3\n", (
+        "If empty values were forced to '\\n', this would be 'L1\\n\\nL3\\n' instead."
+    )
+
+
+@pytest.mark.asyncio
+async def test_e2e_replace_lines_value_is_bare_newline_blanks_the_line(server: FastMCP) -> None:
+    """value='\\n' (not empty) is a deliberate blank-line replacement, not a deletion."""
+    content = "L1\nL2\nL3\n"
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 2, "end_line": 2, "value": "\n"},
+    ])
+    assert _apply_line_and_char_edits(content, edits) == "L1\n\nL3\n"
+
+
+@pytest.mark.asyncio
+async def test_e2e_replace_lines_wholly_empty_document(server: FastMCP) -> None:
+    """A wholly empty document has exactly one (empty) addressable line."""
+    content = ""
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 1, "end_line": 1, "value": "X"},
+    ])
+    assert _apply_line_and_char_edits(content, edits) == "X\n"
+
+
+@pytest.mark.asyncio
+async def test_e2e_replace_lines_last_line_of_trailing_newline_document(server: FastMCP) -> None:
+    """Distinct boundary from the no-trailing-newline case: when the document already ends in
+    '\\n', BuildLineOffsets emits a duplicated sentinel for the terminal line, so this exercises
+    a different addressed range even though the visible outcome matches."""
+    content = "L1\nL2\nL3\n"
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 3, "end_line": 3, "value": "X"},
+    ])
+    assert _apply_line_and_char_edits(content, edits) == "L1\nL2\nX\n"
+
+
+@pytest.mark.asyncio
+async def test_e2e_replace_lines_crlf_multiline_value_preserves_crlf_document(server: FastMCP) -> None:
+    """A value already using CRLF between its own internal lines keeps a CRLF document clean."""
+    content = "L1\r\nL2\r\nL3\r\n"
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 2, "end_line": 3, "value": "A\r\nB"},
+    ])
+    assert _apply_line_and_char_edits(content, edits) == "L1\r\nA\r\nB\r\n"
+
+
+@pytest.mark.asyncio
+async def test_e2e_replace_lines_crlf_document_with_plain_value_still_mixes_endings(server: FastMCP) -> None:
+    """Disclosed residual: a single-line value carries no signal about the document's line-ending
+    convention, so replacing one line of a CRLF document with a plain value still mixes endings —
+    the same class of trade-off as the last-line case, and unfixable without a pre-read."""
+    content = "L1\r\nL2\r\nL3\r\n"
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 2, "end_line": 2, "value": "X"},
+    ])
+    assert _apply_line_and_char_edits(content, edits) == "L1\r\nX\nL3\r\n"
+
+
+@pytest.mark.asyncio
+async def test_e2e_replace_lines_last_line_without_trailing_newline_gains_one(server: FastMCP) -> None:
+    """Accepted trade-off: replacing the terminal line of a document that itself has no trailing
+    newline gains one, because distinguishing this case would require an unconditional GET before
+    every line op, which the architecture (no pre-read unless append is present) rules out."""
+    content = "L1\nL2\nL3"
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 3, "end_line": 3, "value": "X"},
+    ])
+    assert _apply_line_and_char_edits(content, edits) == "L1\nL2\nX\n"
+
+
+@pytest.mark.asyncio
+async def test_e2e_replace_lines_single_line_document(server: FastMCP) -> None:
+    content = "only line"
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_lines", "start_line": 1, "end_line": 1, "value": "X"},
+    ])
+    assert _apply_line_and_char_edits(content, edits) == "X\n"
+
+
+@pytest.mark.asyncio
+async def test_e2e_insert_before_line_no_longer_merges_with_target_line(server: FastMCP) -> None:
+    """insert_before_line's zero-width insertion point sits at the target line's start, so a
+    non-terminated value merges with it exactly as directly as replace_lines does."""
+    content = "L1\nL2\nL3\n"
+    edits = await _capture_backend_edits(server, [
+        {"op": "insert_before_line", "line": 2, "value": "NEW"},
+    ])
+    assert _apply_line_and_char_edits(content, edits) == "L1\nNEW\nL2\nL3\n"
+
+
+@pytest.mark.asyncio
+async def test_e2e_delete_lines_removes_cleanly_no_value_needed(server: FastMCP) -> None:
+    """delete_lines is correct by construction: the removed range already includes its own
+    terminator, so the surrounding lines close up without any join risk."""
+    content = "L1\nL2\nL3\n"
+    edits = await _capture_backend_edits(server, [
+        {"op": "delete_lines", "start_line": 2, "end_line": 2},
+    ])
+    assert _apply_line_and_char_edits(content, edits) == "L1\nL3\n"
+
+
+@pytest.mark.asyncio
+async def test_e2e_replace_chars_is_precise_and_line_unaware(server: FastMCP) -> None:
+    """replace_chars is correct by construction: codepoint-addressed, so it never touches a
+    line boundary and has no analog to the line-unit join bug."""
+    content = "L1\nL2\nL3\n"
+    edits = await _capture_backend_edits(server, [
+        {"op": "replace_chars", "start": 4, "end": 5, "value": "XY"},
+    ])
+    assert _apply_line_and_char_edits(content, edits) == "L1\nXY\nL3\n"
+
+
+@pytest.mark.asyncio
+async def test_e2e_append_value_is_not_line_terminated(server: FastMCP) -> None:
+    """append onto content already ending in '\\n' needs no terminator on its own value to start
+    a clean new line — confirming append's char-unit insertion is unaffected by the line-unit fix."""
+    content = "L1\nL2\n"
+    edits = await _capture_backend_edits(server, [{"op": "append", "value": "L3"}], get_content=content)
+    assert _apply_line_and_char_edits(content, edits) == "L1\nL2\nL3"
+
+
+@pytest.mark.asyncio
+async def test_e2e_append_onto_content_without_trailing_newline_merges_unless_value_supplies_one(
+    server: FastMCP,
+) -> None:
+    """append is a pure insertion at the exact end of content, nothing consumed: if content has no
+    trailing newline and value has no leading one, they sit on the same line by construction — the
+    tool description already shows a leading '\\n' in its append example for exactly this reason."""
+    content = "L1\nL2"
+    edits = await _capture_backend_edits(server, [{"op": "append", "value": "L3"}], get_content=content)
+    assert _apply_line_and_char_edits(content, edits) == "L1\nL2L3"
