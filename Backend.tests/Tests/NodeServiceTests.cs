@@ -673,6 +673,39 @@ public class NodeServiceTests
     }
 
     [Test]
+    public async Task ListPaged_FilterByLinkedTo_MultiSeed_ReturnsUnionOfNeighboursExcludingSeeds()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails seedA = await Create(svc, name: "SeedA");
+        NodeDetails seedB = await Create(svc, name: "SeedB");
+        NodeDetails seedC = await Create(svc, name: "SeedC");
+        NodeDetails neighbourA = await Create(svc, name: "NeighbourA");
+        NodeDetails neighbourB = await Create(svc, name: "NeighbourB");
+        NodeDetails neighbourC = await Create(svc, name: "NeighbourC");
+        NodeDetails shared = await Create(svc, name: "Shared");
+        NodeDetails unrelated = await Create(svc, name: "Unrelated");
+
+        await svc.LinkNodes(seedA.Id, neighbourA.Id, callerId: 0, isAdmin: true);
+        await svc.LinkNodes(seedB.Id, neighbourB.Id, callerId: 0, isAdmin: true);
+        await svc.LinkNodes(seedC.Id, neighbourC.Id, callerId: 0, isAdmin: true);
+        await svc.LinkNodes(seedA.Id, shared.Id, callerId: 0, isAdmin: true);
+        await svc.LinkNodes(seedB.Id, shared.Id, callerId: 0, isAdmin: true);
+
+        long[] seeds = [seedA.Id, seedB.Id, seedC.Id];
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { LinkedTo = seeds, Count = 100 }, callerId: 0, isAdmin: true);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Is.SupersetOf(new[] { neighbourA.Id, neighbourB.Id, neighbourC.Id, shared.Id }));
+            Assert.That(ids.Intersect(seeds), Is.Empty);
+            Assert.That(ids, Does.Not.Contain(unrelated.Id));
+        });
+    }
+
+    [Test]
     public async Task ListPaged_Paging_RespectsCountAndContinue()
     {
         using DatabaseFixture fixture = new();

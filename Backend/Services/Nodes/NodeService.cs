@@ -466,39 +466,16 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     }
 
     /// <summary>
-    /// builds the linkedto predicate for <paramref name="operation"/> and returns the
-    /// predicate fragment to AND into the caller's combined <c>Where</c> expression.
-    ///
-    /// on databases that support LATERAL JOIN (Postgres, MySQL, MSSQL) a correlated
-    /// subquery is attached to <paramref name="operation"/> as a side effect and
-    /// only the neighbour-exclude predicate (<c>!n.Id.In(linkedTo)</c>) is returned.
-    /// on SQLite the existing UNION-of-two-directions shape is used as a fallback
-    /// (per Ocelot architecture #537 §8.5.2).
-    ///
-    /// the caller must AND the returned expression into the final predicate before
-    /// calling <c>Where</c> on the operation — do not call <c>Where</c> a second time
-    /// after this method, as Ocelot replaces the existing clause on each call.
+    /// builds the linkedto predicate: nodes with at least one link to any id in
+    /// <paramref name="linkedTo"/>, excluding the seeds themselves.
     /// </summary>
-    PredicateExpression<Node> BuildLinkedToFilter(LoadOperation<Node> operation, long[] linkedTo)
+    PredicateExpression<Node> BuildLinkedToFilter(long[] linkedTo)
     {
-        if (database.DBClient.DBInfo.SupportsLateralJoin)
-        {
-            LoadOperation<NodeLink> lateral = database.Load<NodeLink>(l => l.SourceId, l => l.TargetId)
-                .Where(l => (l.SourceId == DB.Property<Node>(n => n.Id, "node").Int64
-                          || l.TargetId == DB.Property<Node>(n => n.Id, "node").Int64)
-                         && (l.SourceId.In(linkedTo) || l.TargetId.In(linkedTo)))
-                .Limit(1);
-            operation.LateralJoin(lateral, joinAlias: "link");
-            return new PredicateExpression<Node>(n => !n.Id.In(linkedTo));
-        }
-        else
-        {
-            LoadOperation<NodeLink> linkOp = database.Load<NodeLink>(l => l.SourceId)
-                                                     .Where(l => l.SourceId.In(linkedTo) || l.TargetId.In(linkedTo))
-                                                     .Union(database.Load<NodeLink>(n => n.TargetId)
-                                                                    .Where(l => l.SourceId.In(linkedTo) || l.TargetId.In(linkedTo)));
-            return new PredicateExpression<Node>(n => n.Id.In(linkOp) && !n.Id.In(linkedTo));
-        }
+        LoadOperation<NodeLink> linkOp = database.Load<NodeLink>(l => l.SourceId)
+                                                 .Where(l => l.SourceId.In(linkedTo) || l.TargetId.In(linkedTo))
+                                                 .Union(database.Load<NodeLink>(n => n.TargetId)
+                                                                .Where(l => l.SourceId.In(linkedTo) || l.TargetId.In(linkedTo)));
+        return new PredicateExpression<Node>(n => n.Id.In(linkOp) && !n.Id.In(linkedTo));
     }
 
     /// <summary>
@@ -591,7 +568,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         LoadOperation<Node> terminal = mapper.CreateOperation(database, filter.Fields);
         terminal.ApplyFilter(filter, mapper);
         if (filter.LinkedTo?.Length > 0)
-            combined &= BuildLinkedToFilter(terminal, filter.LinkedTo);
+            combined &= BuildLinkedToFilter(filter.LinkedTo);
 
         // semantic predicates ANDed into combined BEFORE the single Where() call —
         // mirrors the fix applied to ListPaged: type/status/linkedto filters survive.
@@ -811,7 +788,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (generatedFilter != null)
             listPredicate &= new PredicateExpression<Node>(generatedFilter);
         if (filter.LinkedTo?.Length > 0)
-            listPredicate &= BuildLinkedToFilter(operation, filter.LinkedTo);
+            listPredicate &= BuildLinkedToFilter(filter.LinkedTo);
 
         // semantic predicates (Embedding IS NOT NULL, MinSimilarity floor) are ANDed into
         // listPredicate here — BEFORE the single Where() call — so that type/status/linkedto
