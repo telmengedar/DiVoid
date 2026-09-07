@@ -40,7 +40,7 @@ _SUBSTANCE = "facts only, no prose"
 
 @pytest.fixture(scope="module")
 def server() -> FastMCP:
-    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)
+    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")
     http_client.init(_DUMMY_BASE, _DUMMY_KEY)
 
     mcp_server = FastMCP("divoid-mcp-substance-test")

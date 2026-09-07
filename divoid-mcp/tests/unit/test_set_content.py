@@ -36,7 +36,7 @@ _TRAP_BYTES = (
 @pytest.fixture(scope="module")
 def server() -> FastMCP:
     """Module-scoped FastMCP server with only divoid_set_content registered."""
-    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)
+    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")
     http_client.init(_DUMMY_BASE, _DUMMY_KEY)
 
     mcp_server = FastMCP("divoid-mcp-set-content-test")
@@ -361,7 +361,7 @@ async def test_execute_called_directly_with_out_of_root_path_is_still_rejected(
     secret = evil_dir / "secret.txt"
     secret.write_bytes(b"should never leave this directory")
 
-    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)
+    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")
 
     with respx.mock(assert_all_called=False) as mock:
         http_called = False
@@ -408,7 +408,7 @@ async def test_execute_opens_the_resolved_path_not_the_raw_caller_string(
 
     monkeypatch.setattr("builtins.open", spy_open)
 
-    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)
+    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")
     with respx.mock(assert_all_called=True) as mock:
         mock.post(_CONTENT_URL).mock(return_value=httpx.Response(200, json={"id": _NODE_ID}))
         result = await _execute_set_content(id=_NODE_ID, config=config, path=raw_relative)
@@ -479,7 +479,7 @@ async def test_execute_called_directly_with_sensitive_path_never_opens_the_file(
 
     monkeypatch.setattr("builtins.open", spy_open)
 
-    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)
+    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")
 
     with respx.mock(assert_all_called=False) as mock:
         http_called = False

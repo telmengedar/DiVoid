@@ -4,6 +4,8 @@
       "command": "divoid-mcp",
       "args": [],
       "env": {
+        "DIVOID_MCP_URL": "https://divoid.mamgo.io/api",
+        "DIVOID_MCP_API_KEY": "<your-divoid-api-key>",
         "DIVOID_MCP_LOG_LEVEL": "INFO"
       }
     }

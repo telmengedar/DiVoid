@@ -65,7 +65,7 @@ def server() -> FastMCP:
     module-level client is initialised with the dummy base URL so respx can
     intercept it.
     """
-    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)
+    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")
     http_client.init(_DUMMY_BASE, _DUMMY_KEY)
 
     mcp_server = FastMCP("divoid-mcp-test")
@@ -1266,7 +1266,7 @@ async def test_create_task_access_zero_in_post_body(server: FastMCP) -> None:
     from divoid_mcp.tools.create_task import register as register_create_task
 
     ct_server = FastMCP("divoid-mcp-create-test")
-    ct_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    ct_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")  # type: ignore[attr-defined]
     register_create_task(ct_server)
 
     task_id = 500
@@ -1314,7 +1314,7 @@ async def test_create_task_access_string_none_canonicalized(server: FastMCP) -> 
     from divoid_mcp.tools.create_task import register as register_create_task
 
     ct_server = FastMCP("divoid-mcp-create-test-2")
-    ct_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    ct_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")  # type: ignore[attr-defined]
     register_create_task(ct_server)
 
     task_id = 501
@@ -1721,7 +1721,7 @@ async def test_create_task_severity_in_post_body(server: FastMCP) -> None:
     from divoid_mcp.tools.create_task import register as register_create_task
 
     ct_server = FastMCP("divoid-mcp-severity-test")
-    ct_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    ct_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")  # type: ignore[attr-defined]
     register_create_task(ct_server)
 
     task_id = 600
@@ -1839,7 +1839,7 @@ async def test_create_documentation_severity_in_post_body(server: FastMCP) -> No
     from divoid_mcp.tools.create_documentation import register as register_create_documentation
 
     doc_server = FastMCP("divoid-mcp-severity-doc-test")
-    doc_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    doc_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")  # type: ignore[attr-defined]
     register_create_documentation(doc_server)
 
     doc_id = 700
@@ -1887,7 +1887,7 @@ async def test_create_session_log_severity_in_post_body(server: FastMCP) -> None
     from divoid_mcp.tools.create_session_log import register as register_create_session_log
 
     sl_server = FastMCP("divoid-mcp-severity-sl-test")
-    sl_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    sl_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")  # type: ignore[attr-defined]
     register_create_session_log(sl_server)
 
     sl_id = 800
@@ -1947,7 +1947,7 @@ async def test_create_node_empty_name_rejected_before_http(server: FastMCP) -> N
     from divoid_mcp.tools.create_node import register as register_create_node
 
     cn_server = FastMCP("divoid-mcp-create-node-guard-test")
-    cn_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    cn_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")  # type: ignore[attr-defined]
     register_create_node(cn_server)
 
     captured_requests: list[httpx.Request] = []
@@ -1995,7 +1995,7 @@ async def test_create_node_meeting_type_post_body_correct(server: FastMCP) -> No
     from divoid_mcp.tools.create_node import register as register_create_node
 
     cn_server = FastMCP("divoid-mcp-create-node-meeting-test")
-    cn_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    cn_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")  # type: ignore[attr-defined]
     register_create_node(cn_server)
 
     meeting_id = 1357
@@ -2333,7 +2333,7 @@ async def test_create_node_root_node_id_in_post_body(server: FastMCP) -> None:
     from divoid_mcp.tools.create_node import register as register_create_node
 
     cn_server = FastMCP("divoid-mcp-create-node-rni-test")
-    cn_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    cn_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")  # type: ignore[attr-defined]
     register_create_node(cn_server)
 
     node_id = 1500
@@ -2378,7 +2378,7 @@ async def test_create_task_root_node_id_in_post_body(server: FastMCP) -> None:
     from divoid_mcp.tools.create_task import register as register_create_task
 
     ct_server = FastMCP("divoid-mcp-create-task-rni-test")
-    ct_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    ct_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")  # type: ignore[attr-defined]
     register_create_task(ct_server)
 
     task_id = 1600
@@ -2426,7 +2426,7 @@ async def test_create_documentation_root_node_id_in_post_body(server: FastMCP) -
     from divoid_mcp.tools.create_documentation import register as register_create_documentation
 
     doc_server = FastMCP("divoid-mcp-create-doc-rni-test")
-    doc_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    doc_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")  # type: ignore[attr-defined]
     register_create_documentation(doc_server)
 
     doc_id = 1700
@@ -2474,7 +2474,7 @@ async def test_create_session_log_root_node_id_in_post_body(server: FastMCP) -> 
     from divoid_mcp.tools.create_session_log import register as register_create_session_log
 
     sl_server = FastMCP("divoid-mcp-create-sl-rni-test")
-    sl_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)  # type: ignore[attr-defined]
+    sl_server.config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")  # type: ignore[attr-defined]
     register_create_session_log(sl_server)
 
     sl_id = 1800

@@ -34,24 +34,20 @@ That is one line — copy it verbatim. The `pip` command downloads the package d
 
 ---
 
-## Step 2 — Create the secrets file
+## Step 2 — Get your DiVoid credentials ready
 
-Both your operating system and the divoid-mcp server need to find your API key. We put it in one well-known location.
+divoid-mcp takes its credentials from two environment variables, set in the `"env"` block of its entry in your MCP host's configuration — that is the MCP specification's own answer for stdio servers (see Architecture below). You do not create any file for this step; Step 3 shows the exact `env` block for each host.
 
-Create a folder at `~/.claude/secrets/` (the `~` means your home directory — on Mac that is `/Users/<you>/`, on Windows that is `C:\Users\<you>\`). Inside it, create a text file called `.divoid-online` (note the leading dot) with exactly these two lines:
+- `DIVOID_MCP_URL` — the DiVoid API base URL, including the `/api` suffix: `https://divoid.mamgo.io/api`
+- `DIVOID_MCP_API_KEY` — your DiVoid API key (your operator gives you this)
 
-```
-Url=https://divoid.mamgo.io/api
-ApiKey=<paste-your-api-key-here>
-```
+Keep your key handy; you will paste it into the `env` block in Step 3.
 
-Replace `<paste-your-api-key-here>` with your actual key — no quotes, no spaces around the `=`. The trailing `/api` on the URL is mandatory; the server expects it.
+**Never paste the API key anywhere else** — not into chat messages, not into DiVoid nodes, not into git commits. If you suspect it leaked, ask the operator to rotate it. **`claude mcp get divoid` prints environment values in full plaintext**, so avoid running it in a shared or logged terminal once your key is configured.
 
-**On Windows:** the folder is `C:\Users\<you>\.claude\secrets\`. If File Explorer hides dot-prefixed files, type the full path into the address bar instead. Notepad will append `.txt` to the filename automatically — use "Save As" with the "All Files" filter selected, or save it as `.divoid-online.txt` and rename it in a terminal with `ren ".divoid-online.txt" ".divoid-online"`.
+### Deprecated fallback — existing installs only
 
-**On Mac:** open Terminal, run `mkdir -p ~/.claude/secrets && touch ~/.claude/secrets/.divoid-online`, then edit with `nano ~/.claude/secrets/.divoid-online` or any text editor.
-
-**Never paste the API key anywhere else** — not into chat messages, not into DiVoid nodes, not into git commits. If you suspect it leaked, ask the operator to rotate it.
+If you already have a `~/.claude/secrets/.divoid-online` file from before this server read the environment, it keeps working: divoid-mcp falls back to it whenever neither `DIVOID_MCP_URL` nor `DIVOID_MCP_API_KEY` is set. Once either variable is set, both are required and this file is not consulted at all, even if it exists — see Troubleshooting if that surprises you. This fallback is deprecated and will be removed — startup logs a `WARNING` and the agent's own instructions carry a deprecation notice while you're running on it. Move your credentials into the `env` block in Step 3 when convenient; there is no urgency, but do it before you are asked to. The file format, if you still need it: a two-line `Url=...` / `ApiKey=...` text file at `~/.claude/secrets/.divoid-online` (Windows: `C:\Users\<you>\.claude\secrets\.divoid-online`).
 
 ---
 
@@ -61,13 +57,15 @@ Pick the section that matches the MCP host you use.
 
 ### 3a — Claude Code
 
-Claude Code has a built-in command for registering MCP servers. Run:
+Claude Code has a built-in command for registering MCP servers. Run (replacing `<paste-your-api-key-here>` with your actual key):
 
 ```
-claude mcp add --transport stdio --scope user divoid -- python -m divoid_mcp
+claude mcp add --transport stdio --scope user divoid \
+  -e DIVOID_MCP_URL=https://divoid.mamgo.io/api -e DIVOID_MCP_API_KEY=<paste-your-api-key-here> \
+  -- python -m divoid_mcp
 ```
 
-The `--scope user` part makes the server available across every project on your machine, so you only do this once. The `--` separates Claude Code's own flags from the command that runs the server.
+The `--scope user` part makes the server available across every project on your machine, so you only do this once. The `-e` flags set the `env` block from Step 2. The `--` separates Claude Code's own flags from the command that runs the server.
 
 Verify with:
 
@@ -75,7 +73,10 @@ Verify with:
 claude mcp list
 ```
 
-You should see a line like `divoid: python -m divoid_mcp - Connected`. If it says `Connected`, skip to **Step 4**. If it says `Failed to connect`, go to Troubleshooting.
+This is the safe command for this check: it prints only the server's name, command, and
+connect status, never environment values — unlike `claude mcp get`, which does (see the
+warning above). You should see a line like `divoid: python -m divoid_mcp - Connected`. If it
+says `Connected`, skip to **Step 4**. If it says `Failed to connect`, go to Troubleshooting.
 
 ### 3b — Claude Desktop
 
@@ -91,11 +92,17 @@ Open that file in any text editor. If it does not exist yet, create it with the 
   "mcpServers": {
     "divoid": {
       "command": "python",
-      "args": ["-m", "divoid_mcp"]
+      "args": ["-m", "divoid_mcp"],
+      "env": {
+        "DIVOID_MCP_URL": "https://divoid.mamgo.io/api",
+        "DIVOID_MCP_API_KEY": "<paste-your-api-key-here>"
+      }
     }
   }
 }
 ```
+
+Replace `<paste-your-api-key-here>` with your actual key.
 
 **On Windows specifically:** `python` may not be the right command name; check by running `python --version` in Command Prompt. If that errors, try `py --version`. Use whichever works as the `"command"` value in the JSON.
 
@@ -112,6 +119,7 @@ If your host is something other than the two above, follow its documentation for
 - **Command:** `python` (or `python3` on Mac if `python` points to Python 2.x)
 - **Args:** `-m divoid_mcp`
 - **Transport:** stdio (the server does not listen on a port; it talks over standard input/output)
+- **Environment (required):** `DIVOID_MCP_URL=<the DiVoid API base URL, incl. /api>`, `DIVOID_MCP_API_KEY=<your key>`
 - **Environment (optional):** `DIVOID_MCP_LOG_LEVEL=INFO` for default verbosity; set to `DEBUG` while troubleshooting
 
 Most hosts that support MCP accept some flavour of the JSON config shown in section 3b. The exact path and surrounding keys vary; the server-spec values do not.
@@ -143,8 +151,10 @@ python -m divoid_mcp
 The server should print a couple of startup log lines, then hang waiting for input (that is normal — kill it with Ctrl+C). If instead it prints an error and exits immediately, the message tells you what went wrong. The most common causes:
 
 - **`ModuleNotFoundError: No module named 'divoid_mcp'`** — the package is not installed in this Python. Re-run Step 1.
-- **`FileNotFoundError: .divoid-online`** — the secrets file is missing or in the wrong place. Re-check Step 2.
-- **`KeyError: 'Url'` or `KeyError: 'ApiKey'`** — the secrets file is missing a line, or has typos in the keys. Re-check Step 2.
+- **`No DiVoid credentials found -- divoid-mcp cannot start.`** — neither `DIVOID_MCP_URL`/`DIVOID_MCP_API_KEY` nor the fallback file is set up. Re-check Step 2 and the `env` block in Step 3.
+- **`DIVOID_MCP_API_KEY is set but DIVOID_MCP_URL is empty or missing`** — you set the key but not the URL in the `env` block; both are required together. Re-check Step 3.
+- **`DIVOID_MCP_URL is set but DIVOID_MCP_API_KEY is empty or missing`** — you set the URL but not the key in the `env` block. The fallback file is deliberately **not** consulted here, even if it exists — using its key with the URL you just set could send that key to a different DiVoid instance than the one the file was written for. Re-check that the key is spelled exactly `DIVOID_MCP_API_KEY` in the same `env` block.
+- **The fallback credentials file is malformed / has an empty value** — if you're on the deprecated file fallback, re-check its `Url=` / `ApiKey=` lines have no typos and no empty values.
 
 ### Claude Desktop does not see `divoid_*` tools
 
@@ -154,7 +164,7 @@ The server should print a couple of startup log lines, then hang waiting for inp
 
 ### `401 Unauthorized` errors when the agent uses the tools
 
-The API key is wrong or expired. Re-check the `ApiKey=` line in `~/.claude/secrets/.divoid-online`. If the key was rotated by the operator, get the new one and replace it.
+The API key is wrong or expired. Check the credentials this server was started with — the startup log line `Config loaded: source=...` names which source was used (`env`, or `file:<path>` for the deprecated fallback). Re-check `DIVOID_MCP_API_KEY` in your host's `env` block, or the `ApiKey=` line in `~/.claude/secrets/.divoid-online` if you're on the fallback. If the key was rotated by the operator, get the new one and replace it.
 
 ### `data_entitynotfound` on every call
 

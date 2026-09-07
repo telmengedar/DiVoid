@@ -4,8 +4,10 @@
 Smoke tests for divoid-mcp tools.
 
 These are live integration scripts -- they call the real DiVoid instance
-using the admin key from ~/.claude/secrets/.divoid-online. They are NOT
-pytest-based; they print PASS/FAIL and exit non-zero on any failure.
+using whatever credentials config.load_secret() resolves (DIVOID_MCP_URL /
+DIVOID_MCP_API_KEY in the environment, or the fallback file at
+~/.claude/secrets/.divoid-online). They are NOT pytest-based; they print
+PASS/FAIL and exit non-zero on any failure.
 
 Run from the repo root after `pip install -e .`:
 

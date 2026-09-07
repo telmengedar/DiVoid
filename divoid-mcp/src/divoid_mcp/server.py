@@ -3,7 +3,8 @@ Bootstrap module for divoid-mcp.
 
 Startup sequence (see architecture §14 / §6.1):
 1. Configure logging to stderr at the level from DIVOID_MCP_LOG_LEVEL.
-2. Load the DiVoid secret (fail-closed on missing/malformed).
+2. Resolve DiVoid credentials from the environment or the fallback file (fail-closed on
+   missing/malformed).
 3. Initialise the shared HTTP client with auth header pre-set.
 3b. Initialise the filesystem path containment roots (paths.py).
 4. Run the drift canary (warn on mismatch, never block startup).
@@ -23,7 +24,7 @@ import os
 import sys
 
 from . import http_client, paths
-from .config import load_secret
+from .config import DivoidConfig, load_secret
 from .drift import run_canary
 from .resources import register_resources
 from .tools import register_tools
@@ -59,7 +60,25 @@ def main() -> None:
     asyncio.run(_async_main(config))
 
 
-async def _async_main(config) -> None:
+def _build_instructions(config: DivoidConfig) -> str:
+    """Builds the MCP `instructions` string, appending a deprecation notice when
+    config.source is the fallback file."""
+    instructions = (
+        f"divoid-mcp {__version__} — wraps the DiVoid graph API. "
+        "Start with divoid_search for question-shaped queries. "
+        "Use divoid_get_node to inspect metadata, divoid_get_content for bodies. "
+        "Resources divoid://node/9 and divoid://node/190 carry the operating conventions."
+    )
+    if config.source.startswith("file:"):
+        instructions += (
+            " NOTE: this server started from the DEPRECATED credentials file fallback; "
+            "ask your operator to move the DiVoid credentials into the MCP client's env "
+            "block (DIVOID_MCP_URL / DIVOID_MCP_API_KEY) before that fallback is removed."
+        )
+    return instructions
+
+
+async def _async_main(config: DivoidConfig) -> None:
     # Step 4: drift canary
     await run_canary()
 
@@ -68,12 +87,7 @@ async def _async_main(config) -> None:
 
     mcp_server = FastMCP(
         "divoid-mcp",
-        instructions=(
-            f"divoid-mcp {__version__} — wraps the DiVoid graph API. "
-            "Start with divoid_search for question-shaped queries. "
-            "Use divoid_get_node to inspect metadata, divoid_get_content for bodies. "
-            "Resources divoid://node/9 and divoid://node/190 carry the operating conventions."
-        ),
+        instructions=_build_instructions(config),
     )
 
     # Attach config so tool dispatchers can access the api_key for redaction.

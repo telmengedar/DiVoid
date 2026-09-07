@@ -6,7 +6,7 @@ assert structurally correct responses. No mocking, no pytest infrastructure.
 ## Prerequisites
 
 - Python 3.11+
-- `~/.claude/secrets/.divoid-online` must exist and contain valid credentials
+- Valid DiVoid credentials: `DIVOID_MCP_URL` / `DIVOID_MCP_API_KEY` in the environment, or the fallback file at `~/.claude/secrets/.divoid-online`
 - The package must be installed: `pip install -e .` from the repo root
 
 ## Running

@@ -59,7 +59,7 @@ def server() -> FastMCP:
     Uses dummy config -- no real credentials, no network. http_client is
     initialised with the dummy base URL so respx can intercept every call.
     """
-    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)
+    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")
     http_client.init(_DUMMY_BASE, _DUMMY_KEY)
 
     mcp_server = FastMCP("divoid-mcp-patch-link-test")
