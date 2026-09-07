@@ -38,7 +38,7 @@ src/divoid_mcp/        # installable package
   errors.py            # InvariantViolation + error_mapper
   drift.py             # startup canary against node #8 hash
   resources.py         # MCP resources for canonical DiVoid docs
-  version.py           # __version__ + PINNED_API_REF_HASH
+  version.py           # version's single source; pyproject.toml derives + PINNED_API_REF_HASH
   tools/               # one module per registered tool; __init__.py wires them
 tests/smoke/           # live integration scripts (not pytest); run with pip install -e .
 docs/architecture/     # architecture docs committed here

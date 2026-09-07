@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "divoid-mcp"
-version = "0.10.0"
+dynamic = ["version"]
 description = "MCP server wrapping the DiVoid graph API"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -27,6 +27,9 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests/unit"]
+
+[tool.hatch.version]
+path = "src/divoid_mcp/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/divoid_mcp"]
