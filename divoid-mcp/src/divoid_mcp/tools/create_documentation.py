@@ -10,10 +10,11 @@ makes 3-5 HTTP calls:
      (plus extra_links, one call each)
   5. PATCH /nodes/{id}                                -- set substance (if provided)
 
-Content is always required for documentation (no 'new' escape). FastMCP exposes
-content as a plain {"type": "string"} parameter without minLength or required
-enforcement — the invariant guard is the sole enforcement layer (catches both
-missing and whitespace-only content per DiVoid #493 §4).
+A body is always required for documentation, supplied via `content` or `path`
+(no 'new' escape). FastMCP exposes both as plain {"type": "string"} parameters
+without minLength, oneOf, or required enforcement — the invariant guard is the
+sole enforcement layer (catches both missing and whitespace-only content per
+DiVoid #493 §4; `path` failures are resolved by the shared `_content` helper).
 
 Partial failure semantics (per architecture §6.3): if step 2 succeeds but step 3, 4
 or 5 fails, the server does NOT roll back. It returns an MCP error naming the surviving
@@ -32,6 +33,7 @@ import mcp.server.fastmcp as fastmcp
 from .. import http_client
 from ..config import DivoidConfig
 from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
+from ._content import PATH_DESCRIPTION_CLAUSE, guard_exclusive, resolve_body
 from ._groups import resolve_group
 from ._substance import write_substance
 from .patch_node import _canonicalize_access
@@ -43,9 +45,10 @@ Create a documentation node atomically: creates the node, sets its content, link
 to the project's Docs group, and sets substance when given — all in one call. Use this \
 for design docs, \
 architectural notes, gotchas, tutorials, anti-patterns, closure notes — anything that \
-is reusable knowledge per DiVoid #190 Rule 2. Content is always required (there is no \
-'new' escape for documentation per #493 §4 — do not create a documentation node until \
-you have the document). Documentation nodes have no status field. The Docs group is \
+is reusable knowledge per DiVoid #190 Rule 2. A body is always required, from either \
+`content` or `path` (there is no 'new' escape for documentation per #493 §4 — do not \
+create a documentation node until you have the document). """ + PATH_DESCRIPTION_CLAUSE + """ \
+Documentation nodes have no status field. The Docs group is \
 resolved from project_id by walking the graph; alternatively supply docs_group_id \
 directly if you already know it (e.g. DiVoid Docs = 7). When project_id is given and \
 root_node_id is omitted, root_node_id defaults to project_id (DiVoid #6857 v1.2 — the \
@@ -58,9 +61,10 @@ optional client-written condensed form of the content, stored verbatim.\
 
 def _check_invariants(
     name: str,
-    content: str,
+    content: str | None,
     project_id: int | None,
     docs_group_id: int | None,
+    path: str | None = None,
 ) -> None:
     """
     Check runtime invariants before making any HTTP call.
@@ -69,6 +73,8 @@ def _check_invariants(
     The invariant guard is the sole enforcement layer for all constraints —
     FastMCP exposes parameters as plain {"type": "string"} in the JSON Schema
     without minLength, oneOf, or required enforcement; enforcement is entirely here.
+    File-read outcomes (missing/unreadable/empty file, empty path) are resolved
+    separately by resolve_body.
     """
     if project_id is not None and docs_group_id is not None:
         raise InvariantViolation(
@@ -85,14 +91,14 @@ def _check_invariants(
             "or provide docs_group_id directly (e.g. DiVoid Docs = 7).",
         )
 
-    # Whitespace-only content is structurally invalid (per #493 §4 — a doc of
-    # just spaces is not a document). FastMCP does not enforce this in schema.
-    if not content or not content.strip():
+    guard_exclusive(content, path)
+    if path is None and (not content or not content.strip()):
         raise InvariantViolation(
             "content_whitespace_only",
             "Documentation content must be non-empty and non-whitespace (per #493 §4). "
             "A documentation node with no meaningful content is structurally invalid. "
-            "Do not create the node until you have the document.",
+            "Do not create the node until you have the document. Provide it inline via "
+            "'content' or from a file via 'path'.",
         )
 
 
@@ -112,7 +118,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
     @mcp_server.tool(description=_TOOL_DESCRIPTION)
     async def divoid_create_documentation(
         name: str,
-        content: str,
+        content: str | None = None,
+        path: str | None = None,
         project_id: int | None = None,
         docs_group_id: int | None = None,
         extra_links: list[int] | None = None,
@@ -127,11 +134,20 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         Args:
             name: Search-friendly title (required).
                   Include keywords a future agent would query for.
-            content: The document body (required, must be non-empty, markdown).
-                     Per DiVoid #493 §4 a content-empty documentation node is
-                     structurally invalid. Do not create the node until you have
-                     the content ready. The invariant guard is the sole enforcement
-                     layer (FastMCP exposes content as plain string, no minLength).
+            content: The document body as a string. Exactly one of `content` or
+                     `path` is required (per DiVoid #493 §4 a content-empty
+                     documentation node is structurally invalid). Do not create
+                     the node until you have the content ready. The invariant
+                     guard is the sole enforcement layer (FastMCP exposes content
+                     as plain string, no minLength).
+            path: Local file whose bytes become the document body. Mutually
+                  exclusive with `content` -- exactly one is required. DOES accept
+                  a file: a refusal names which of path_outside_root (fixable --
+                  choose an in-root path) or path_denied_sensitive (permanent, no
+                  retry, no re-spelled path, do not copy the file to another name)
+                  stopped this path. A zero-byte file is refused (file_empty); a
+                  whitespace-only file is uploaded as-is, unlike whitespace-only
+                  `content`.
             project_id: The id of the project whose Docs group this documentation
                         belongs to. Resolved via [id:<project_id>]/[name:Docs].
                         Mutually exclusive with docs_group_id. Also supplies the
@@ -175,10 +191,14 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             extra_links = []
 
         try:
-            _check_invariants(name, content, project_id, docs_group_id)
+            _check_invariants(name, content, project_id, docs_group_id, path=path)
         except InvariantViolation as exc:
             logger.debug("divoid_create_documentation invariant violation: %s", exc.code)
             return {"isError": True, "content": make_error_content(exc.code, exc.message)}
+
+        content_bytes, err = resolve_body(content, path, "divoid_create_documentation")
+        if err is not None:
+            return err
 
         logger.info(
             "divoid_create_documentation name=%r project_id=%s docs_group_id=%s",
@@ -239,8 +259,6 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
 
         logger.info("divoid_create_documentation node_id=%d created", node_id)
 
-        # --- Step 3: Post content ---
-        content_bytes = content.encode("utf-8")
         try:
             content_result = await http_client.post_bytes(
                 f"nodes/{node_id}/content",

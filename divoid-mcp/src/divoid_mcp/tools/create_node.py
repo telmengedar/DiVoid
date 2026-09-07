@@ -19,7 +19,8 @@ Partial failure semantics (per architecture §6.3): if step 1 succeeds but step 
 the surviving node id and the missing step so the caller can repair manually.
 
 Invariant guard (before any HTTP call):
-  - name must be non-empty (the only hard guard; everything else is optional)
+  - name must be non-empty (the only hard requirement; everything else is optional)
+  - content and path are mutually exclusive -> content_path_conflict
   - access, if provided, must be a valid int or recognised string
 
 No group auto-resolution, no content-required check, no lifecycle enforcement.
@@ -38,6 +39,7 @@ import mcp.server.fastmcp as fastmcp
 from .. import http_client
 from ..config import DivoidConfig
 from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
+from ._content import PATH_DESCRIPTION_CLAUSE, guard_exclusive, resolve_body
 from ._substance import write_substance
 from .patch_node import _canonicalize_access
 
@@ -48,8 +50,9 @@ Generic atomic create for any DiVoid node type. Use this when the type-specific 
 creators (divoid_create_task, divoid_create_documentation, divoid_create_session_log) \
 don't cover the type you need — meeting, plan, project, group (type=None/omitted), \
 event, chat, or any custom type. Creates the node, optionally sets its content \
-(UTF-8 safe), optionally links it to one or more existing nodes, and optionally sets \
-substance — all in one call. \
+(UTF-8 safe) from `content` or `path`, optionally links it to one or more existing \
+nodes, and optionally sets \
+substance — all in one call. """ + PATH_DESCRIPTION_CLAUSE + """ \
 No content-required check, no group auto-resolution, no lifecycle status validation; \
 those invariants belong to the type-specific tools. The only hard requirement is a \
 non-empty name. On partial failure (node created but content, link or substance step \
@@ -61,13 +64,20 @@ optional client-written condensed form of the content, stored verbatim.\
 """
 
 
-def _check_invariants(name: str, access: int | str | None) -> None:
+def _check_invariants(
+    name: str,
+    access: int | str | None,
+    content: str | None = None,
+    path: str | None = None,
+) -> None:
     """
     Check runtime invariants before making any HTTP call.
 
     Raises InvariantViolation with a stable code if any invariant is broken.
     This is the sole enforcement layer — FastMCP exposes parameters as plain
-    JSON Schema types without cross-parameter constraints.
+    JSON Schema types without cross-parameter constraints. File-read outcomes
+    (missing/unreadable/empty file, empty path) are resolved separately by
+    resolve_body.
     """
     if not name or not name.strip():
         raise InvariantViolation(
@@ -75,6 +85,7 @@ def _check_invariants(name: str, access: int | str | None) -> None:
             "name must be a non-empty string. "
             "Lead with a search-friendly title (e.g. '2026-06-26 — Tech Sync: ...').",
         )
+    guard_exclusive(content, path)
     if access is not None:
         _canonicalize_access(access)
 
@@ -87,6 +98,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         name: str,
         type: str | None = None,
         content: str | None = None,
+        path: str | None = None,
         status: str | None = None,
         severity: int | None = None,
         access: int | str | None = None,
@@ -104,10 +116,19 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                   'project', 'event', 'chat', 'documentation', 'task', etc.) or omit /
                   pass None to create an untyped group/container node.
             content: Optional body text. Posted as UTF-8 bytes (no shell encoding trap).
-                     If omitted the node is created content-empty, which is valid for
-                     group nodes and quick captures. For types where content is
-                     structurally required (task, documentation, session-log) prefer the
-                     type-specific creator tools which enforce the content invariant.
+                     Mutually exclusive with `path` -- at most one may be given. If
+                     neither is given the node is created content-empty, which is
+                     valid for group nodes and quick captures. For types where a body
+                     is structurally required (task, documentation, session-log)
+                     prefer the type-specific creator tools which enforce that
+                     invariant.
+            path: Local file whose bytes become the node's body. Mutually exclusive
+                  with `content`. DOES accept a file: a refusal names which of
+                  path_outside_root (fixable -- choose an in-root path) or
+                  path_denied_sensitive (permanent, no retry, no re-spelled path, do
+                  not copy the file to another name) stopped this path. A zero-byte
+                  file is refused (file_empty); a whitespace-only file is uploaded
+                  as-is, unlike whitespace-only `content`.
             status: Optional status string, passed through verbatim. No lifecycle
                     validation is applied — any string is accepted. Use the type-specific
                     creators or divoid_set_status if you want lifecycle enforcement.
@@ -140,10 +161,14 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             extra_links = []
 
         try:
-            _check_invariants(name, access)
+            _check_invariants(name, access, content=content, path=path)
         except InvariantViolation as exc:
             logger.debug("divoid_create_node invariant violation: %s", exc.code)
             return {"isError": True, "content": make_error_content(exc.code, exc.message)}
+
+        content_bytes, err = resolve_body(content, path, "divoid_create_node")
+        if err is not None:
+            return err
 
         logger.info(
             "divoid_create_node name=%r type=%s status=%s extra_links=%s",
@@ -194,8 +219,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
 
         content_posted = False
         content_length = 0
-        if content and content.strip():
-            content_bytes = content.encode("utf-8")
+        if content_bytes is not None and (path is not None or (content and content.strip())):
             try:
                 content_result = await http_client.post_bytes(
                     f"nodes/{node_id}/content",
