@@ -63,8 +63,11 @@ def map_http_error(
     if status == 401:
         return (
             "divoid_unauthorized",
-            f"{prefix}DiVoid rejected the request as unauthorized (401). "
-            "The API key may be invalid or expired. Check ~/.claude/secrets/.divoid-online.",
+            f"{prefix}DiVoid rejected the request as unauthorized (401). The API key may "
+            "be invalid or expired. Check the credentials this server was started with -- "
+            "DIVOID_MCP_API_KEY in the MCP client's env block, or the fallback credentials "
+            "file. The startup log line \"Config loaded: source=...\" names which one was "
+            "used.",
         )
 
     if status == 404:

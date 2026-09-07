@@ -45,18 +45,27 @@ Five MCP resources are also exposed for the canonical DiVoid reference documents
 ## Prerequisites
 
 - Python 3.11+
-- A DiVoid API key in `~/.claude/secrets/.divoid-online` (two-line `Url=...` / `ApiKey=...` format)
+- A DiVoid API key, supplied via `DIVOID_MCP_URL` / `DIVOID_MCP_API_KEY` in your MCP host's `env` block (see Configuration below), or, as a deprecated fallback, in `~/.claude/secrets/.divoid-online`
 
 ## Configuration
 
-The server reads `~/.claude/secrets/.divoid-online` at startup. This file must exist and contain:
+**Credentials.** divoid-mcp reads two environment variables at startup — the MCP specification's own answer for stdio servers (credentials come from the environment, not OAuth):
 
 ```
-Url=https://divoid.mamgo.io/api
-ApiKey=<your-key>
+DIVOID_MCP_URL=https://divoid.mamgo.io/api
+DIVOID_MCP_API_KEY=<your-key>
 ```
 
-The API key **never** appears in tool parameters, error messages, or logs. The file path may appear in error messages.
+Set them in the `"env"` block of this server's entry in your MCP client configuration, e.g.:
+
+```
+claude mcp add --transport stdio --scope user divoid \
+  -e DIVOID_MCP_URL=<url> -e DIVOID_MCP_API_KEY=<key> -- python -m divoid_mcp
+```
+
+**Deprecated fallback.** If neither `DIVOID_MCP_URL` nor `DIVOID_MCP_API_KEY` is set, the server falls back to the legacy secrets file at `~/.claude/secrets/.divoid-online` (same `Url=...` / `ApiKey=...` format). Once either variable is set, both are required and the file is not consulted at all — see `docs/install.md`'s Troubleshooting section if you hit that refusal. Existing installs keep working through the fallback, but startup logs a `WARNING` and the server's MCP instructions carry a deprecation notice — move your credentials into the `env` block above when convenient. See `docs/install.md` for full instructions.
+
+The API key **never** appears in tool parameters, error messages, or logs. The fallback file's path may appear in error messages.
 
 **Log level** is controlled via `DIVOID_MCP_LOG_LEVEL` (default `INFO`). Valid values: `DEBUG`, `INFO`, `WARNING`, `ERROR`. All logs go to **stderr** (stdout carries the JSON-RPC stream).
 
@@ -75,7 +84,7 @@ pip install -e .
 python tests/smoke/run_all.py
 ```
 
-Results print as `PASS` / `FAIL` with details. Requires `~/.claude/secrets/.divoid-online` with valid credentials. See `tests/smoke/README.md` for the full assertion table.
+Results print as `PASS` / `FAIL` with details. Requires `DIVOID_MCP_URL` / `DIVOID_MCP_API_KEY` in the environment, or the fallback file at `~/.claude/secrets/.divoid-online`. See `tests/smoke/README.md` for the full assertion table.
 
 **Hermetic unit tests** pin the tool routing logic without network calls:
 
@@ -93,7 +102,7 @@ Key decisions:
 - **No retries** — tools that are non-idempotent (create) must not be retried blindly; the caller decides
 - **No caching** — every call goes to DiVoid live; the one exception is the startup drift-canary snapshot of node #8
 - **UTF-8 safety** — content is posted as `bytes` via httpx, no shell interpolation
-- **Fail-closed auth** — if the secret file is absent or malformed, the server exits non-zero immediately
+- **Fail-closed auth** — if no usable credential source is found (neither environment variable set and no fallback file), or the environment is only partially set, the server exits non-zero immediately rather than falling back or merging sources
 
 ## API drift canary
 

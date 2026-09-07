@@ -16,7 +16,7 @@ New tools require human sign-off from the repo owner before implementation — t
 
 ## Key invariants
 
-1. **The API key never leaves the process boundary.** It lives in `config.py`'s frozen container and the HTTP client's pre-built header — nowhere else. Do not add it to log lines, error messages, tool return values, or any output.
+1. **The API key never leaves the process boundary.** The raw key value is read once from its configured source and thereafter lives only in `config.py`'s frozen `DivoidConfig` container and the HTTP client's pre-built header — nowhere else. Under the environment credential source, the source itself is the process environment for the lifetime of the process (see `docs/architecture/divoid-mcp-credential-contract.md` §9). Do not add it to log lines, error messages, tool return values, or any output.
 
 2. **All logs go to stderr.** stdout is reserved for the JSON-RPC stream. A `print()` to stdout corrupts the MCP session.
 
@@ -33,7 +33,7 @@ New tools require human sign-off from the repo owner before implementation — t
 ```
 src/divoid_mcp/        # installable package
   server.py            # bootstrap — wires everything, calls mcp.serve_stdio()
-  config.py            # reads ~/.claude/secrets/.divoid-online; fail-closed
+  config.py            # resolves credentials from the environment, fallback file; fail-closed
   http_client.py       # shared async httpx client with auth header pre-set
   errors.py            # InvariantViolation + error_mapper
   drift.py             # startup canary against node #8 hash

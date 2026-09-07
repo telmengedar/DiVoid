@@ -52,7 +52,7 @@ _LINKS_URL = f"{_DUMMY_BASE}/nodes/links"
 @pytest.fixture(scope="module")
 def server() -> FastMCP:
     """Module-scoped FastMCP server with only divoid_get_links registered."""
-    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)
+    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")
     http_client.init(_DUMMY_BASE, _DUMMY_KEY)
 
     mcp_server = FastMCP("divoid-mcp-get-links-test")

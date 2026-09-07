@@ -58,7 +58,7 @@ def server() -> FastMCP:
     Dummy config — no real credentials, no network. http_client initialised
     with the dummy base URL so respx can intercept all outbound requests.
     """
-    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)
+    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")
     http_client.init(_DUMMY_BASE, _DUMMY_KEY)
 
     mcp_server = FastMCP("divoid-mcp-download-content-test")
@@ -357,7 +357,7 @@ async def test_execute_called_directly_with_sensitive_path_never_writes_the_file
     target = claude_dir / "settings.local.json"
     paths.init(env={"DIVOID_MCP_FILE_ROOT": str(root_dir)})
 
-    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY)
+    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")
 
     with respx.mock(assert_all_called=False) as mock:
         http_called = False

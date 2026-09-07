@@ -30,7 +30,7 @@ divoid-mcp is a stdio MCP server that wraps the DiVoid REST API. It exposes:
 See node #695 for the full document. Highlights:
 
 - **Stdio transport only** — no HTTP listener, no port binding.
-- **Fail-closed auth** — missing/malformed secret file exits the process before the stdio loop.
+- **Fail-closed auth** — no usable credential source (neither environment variable set and no fallback file), or an environment that is only partially set, exits the process before the stdio loop. Narrowed by `docs/architecture/divoid-mcp-credential-contract.md` (DiVoid #13108), which is authoritative for credential resolution; node #695 carries the pre-Phase-1-credential-contract wording and is reconciled separately.
 - **No retries** — non-idempotent calls (POST) must not be retried blindly.
 - **No caching** — every call is live; the startup drift canary is the only point-in-time snapshot.
 - **UTF-8 safety** — content is posted as `bytes` via httpx; no shell heredoc path.
