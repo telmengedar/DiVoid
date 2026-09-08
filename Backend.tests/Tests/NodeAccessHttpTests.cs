@@ -30,6 +30,9 @@ namespace Backend.tests.Tests;
 ///      patch gates using minted JWTs.
 ///
 /// Design spec §14 is the reference for the full test matrix.
+///
+/// Not [Parallelizable]: every test shares the same <c>db</c> and <c>jwtFixture</c>/factory
+/// instances seeded once in [OneTimeSetUp], so sibling list-style tests would race over them.
 /// </summary>
 [TestFixture]
 public class NodeAccessHttpTests
@@ -372,6 +375,76 @@ public class NodeAccessHttpTests
         HttpResponseMessage resp = await PatchNodeRawAsync(strangerClient, node.Id, ops);
         Assert.That((int)resp.StatusCode, Is.EqualTo(200),
             "stranger must be able to patch a node with Access=Write");
+    }
+
+    [Test]
+    [Description("Regression guard for the access-gate fix: pins both halves together, because either " +
+                 "assertion alone passes against a half-fix (status-only misses a still-tampered LastUpdate; " +
+                 "timestamp-only misses a still-disclosed node body).")]
+    public async Task Patch_Stranger_EmptyPatchOnPrivateNode_Returns404AndLeavesLastUpdateUnchanged()
+    {
+        long ownerId = await CreateUserAsync();
+        long strangerId = await CreateUserAsync();
+        HttpClient ownerClient = AuthClient(ownerId);
+        HttpClient strangerClient = AuthClient(strangerId);
+
+        NodeDetails node = await PostNodeAsync(ownerClient,
+            new NodeDetails { Type = "task", Name = "PatchEmptyStrangerTest", Access = NodeAccess.None });
+
+        HttpResponseMessage beforeResp = await GetNodeRawAsync(ownerClient, node.Id);
+        NodeDetails before = Json.Read<NodeDetails>(await beforeResp.Content.ReadAsStringAsync())!;
+
+        HttpResponseMessage resp = await PatchNodeRawAsync(strangerClient, node.Id, []);
+
+        HttpResponseMessage afterResp = await GetNodeRawAsync(ownerClient, node.Id);
+        NodeDetails after = Json.Read<NodeDetails>(await afterResp.Content.ReadAsStringAsync())!;
+
+        Assert.Multiple(() => {
+            Assert.That((int)resp.StatusCode, Is.EqualTo(404),
+                "stranger sending an empty patch array to a private node must receive 404, not the ungated touch-and-disclose path");
+            Assert.That(after.LastUpdate, Is.EqualTo(before.LastUpdate),
+                "the tail LastUpdate write must not fire when the gate rejects the caller, even on an empty patch array");
+        });
+    }
+
+    [Test]
+    [Description("Regression guard for the access-gate fix: an empty patch from a caller who already " +
+                 "passes the gate must stay the pre-fix touch behaviour (200, LastUpdate bumped), not turn " +
+                 "into a spurious rejection.")]
+    public async Task Patch_Owner_EmptyPatchOnOwnNode_Returns200()
+    {
+        long ownerId = await CreateUserAsync();
+        HttpClient ownerClient = AuthClient(ownerId);
+
+        NodeDetails node = await PostNodeAsync(ownerClient,
+            new NodeDetails { Type = "task", Name = "PatchEmptyOwnerTest", Access = NodeAccess.None });
+
+        HttpResponseMessage resp = await PatchNodeRawAsync(ownerClient, node.Id, []);
+        Assert.That((int)resp.StatusCode, Is.EqualTo(200),
+            "an empty patch array by a permitted caller stays a touch — 200, LastUpdate bumped");
+    }
+
+    [Test]
+    [Description("Bounds the severity of the access-gate fix's readback: determines whether the " +
+                 "isAdmin:true readback Patch relies on could disclose raw content, not just metadata, " +
+                 "to a caller who fails the write gate.")]
+    public async Task GetById_Owner_WithContent_OmitsContentField()
+    {
+        long ownerId = await CreateUserAsync();
+        HttpClient ownerClient = AuthClient(ownerId);
+
+        NodeDetails node = await PostNodeAsync(ownerClient,
+            new NodeDetails { Type = "task", Name = "GetByIdContentReadbackProbe", Access = NodeAccess.None });
+
+        using StringContent uploadBody = new("probe body", Encoding.UTF8, "text/plain");
+        HttpResponseMessage uploadResp = await ownerClient.PostAsync($"/api/nodes/{node.Id}/content", uploadBody);
+        uploadResp.EnsureSuccessStatusCode();
+
+        HttpResponseMessage getResp = await GetNodeRawAsync(ownerClient, node.Id);
+        string rawJson = await getResp.Content.ReadAsStringAsync();
+
+        Assert.That(rawJson.Contains("\"content\""), Is.False,
+            "GET /api/nodes/{id} does not encode Content without a ?fields= opt-in");
     }
 
     [Test]
