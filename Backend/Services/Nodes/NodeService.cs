@@ -969,10 +969,12 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         }
 
         DateTime patchedAt = DateTime.UtcNow;
-        await database.Update<Node>()
-                      .Set(n => n.LastUpdate == patchedAt)
-                      .Where(n => n.Id == nodeId)
-                      .ExecuteAsync(transaction);
+        long touchAffected = await database.Update<Node>()
+                                           .Set(n => n.LastUpdate == patchedAt)
+                                           .Where(predicate.Content)
+                                           .ExecuteAsync(transaction);
+        if (touchAffected == 0)
+            throw new NotFoundException<Node>(nodeId);
 
         if (nameTouched)
         {
