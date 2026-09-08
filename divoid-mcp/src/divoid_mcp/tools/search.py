@@ -22,7 +22,7 @@ import mcp.server.fastmcp as fastmcp
 from .. import http_client
 from ..config import DivoidConfig
 from ..errors import make_error_content, map_http_error, map_unreachable
-from ._link_details import normalize_link_details
+from ._link_details import normalize_labelled_link_details, normalize_link_details
 
 logger = logging.getLogger(__name__)
 
@@ -41,15 +41,23 @@ status, and contentType. type is null for structural group nodes (Tasks, Docs \
 containers); status is null for nodes whose type does not carry a lifecycle \
 (most types other than task / bug); rootNodeId is null for ungrouped nodes. \
 Use n.get() rather than direct key access when consuming results. \
+Every row also carries link_details by default: the edges incident to this node that \
+a human labelled with a context (e.g. supersedes, fixes, depends-on) — no flag needed, \
+this is how obsolescence surfaces without a second call. If a labelled edge's context \
+names a supersession and its target_id equals this row's id, THIS row is the stale one \
+— source_id names the node to read instead. The key is omitted when a row has no \
+labelled edges. Once include_link_details=True widens the row to all edges, an \
+isolated node's link_details is [] instead — present, not omitted, matching \
+divoid_get_links's isolated-node convention. \
 Set include_content=True to fetch the body inline on each row — opt-in for \
 research / lookup flows that need to read the bodies of the top hits; costs bandwidth. \
 Set include_links=True to fetch direct neighbor ids inline on each row — opt-in for \
 graph-walking / fan-out-avoidance flows; costs bandwidth proportional to adjacency density. \
-Set include_link_details=True to fetch enriched inline edges (source_id, target_id, \
-link_type, context) on each row as link_details — opt-in for flows that need edge metadata, \
-not just neighbor ids; composes with include_links (both may be set together). Same \
-pass-through convention as divoid_get_links: link_type/context are surfaced only when the \
-backend row carries them (invariant 6 — no vocabulary policing).
+Set include_link_details=True to widen link_details from the labelled subset to every \
+incident edge (source_id, target_id, link_type, context) — opt-in for flows that need the \
+full adjacency, not just the labelled subset; composes with include_links (both may be set \
+together). Same pass-through convention as divoid_get_links: link_type/context are \
+surfaced only when the backend row carries them (invariant 6 — no vocabulary policing).
 
 SCOPED SEARCH: supply root_node_id=[N] to constrain results to nodes grouped \
 under root N. This is the primary use case for the rootNodeId grouping feature — \
@@ -101,14 +109,17 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                            links: [id, ...] (or [] for isolated nodes). Use for graph-walking /
                            fan-out-avoidance flows. Opt-in; costs bandwidth proportional to
                            adjacency density.
-            include_link_details: If true, fetch enriched inline edges on each row. Returns
-                                  link_details: [{source_id, target_id, link_type, context}, ...]
-                                  (or [] for isolated nodes), normalized to snake_case the same
-                                  way divoid_get_links normalizes its rows; link_type/context are
-                                  pass-through, surfaced only when the backend row carries them
-                                  (invariant 6 — no vocabulary policing). Composes with
-                                  include_links (both may be set together). Opt-in; costs
-                                  bandwidth proportional to adjacency density.
+            include_link_details: Every row already carries link_details for edges a human
+                                  labelled with a context (default, no flag needed) — this is
+                                  how obsolescence (supersedes / superseded-by) surfaces
+                                  without a second call. Set true to widen link_details from
+                                  the labelled subset to every incident edge (source_id,
+                                  target_id, link_type, context), normalized to snake_case the
+                                  same way divoid_get_links normalizes its rows; link_type/
+                                  context are pass-through, surfaced only when the backend row
+                                  carries them (invariant 6 — no vocabulary policing).
+                                  Composes with include_links (both may be set together).
+                                  Costs bandwidth proportional to adjacency density.
             created_from: ISO 8601 datetime string. Return only nodes created at or after
                           this timestamp (inclusive). Forwarded as-is to the backend.
             created_to: ISO 8601 datetime string. Return only nodes created before this
@@ -152,15 +163,22 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             params["linkedto"] = linkedto
         if status:
             params["status"] = status
-        if include_content or include_links or include_link_details:
-            base_fields = ["id", "type", "name", "status", "contentType", "similarity"]
-            if include_content:
-                base_fields.append("content")
-            if include_links:
-                base_fields.append("links")
-            if include_link_details:
-                base_fields.append("linkDetails")
-            params["fields"] = base_fields
+        base_fields = [
+            "id",
+            "type",
+            "name",
+            "status",
+            "severity",
+            "contentType",
+            "similarity",
+            "rootNodeId",
+            "linkDetails",
+        ]
+        if include_content:
+            base_fields.append("content")
+        if include_links:
+            base_fields.append("links")
+        params["fields"] = base_fields
         if created_from is not None:
             params["CreatedFrom"] = created_from
         if created_to is not None:
@@ -215,7 +233,13 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             if "links" in n:
                 row["links"] = n["links"]
             if "linkDetails" in n:
-                row["link_details"] = normalize_link_details(n["linkDetails"])
+                raw_links = n["linkDetails"]
+                if include_link_details:
+                    row["link_details"] = normalize_link_details(raw_links)
+                else:
+                    labelled = normalize_labelled_link_details(raw_links)
+                    if labelled:
+                        row["link_details"] = labelled
             nodes.append(row)
 
         logger.info("divoid_search ok total=%d returned=%d", total, len(nodes))

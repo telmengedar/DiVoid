@@ -41,6 +41,7 @@ src/divoid_mcp/        # installable package
   version.py           # version's single source; pyproject.toml derives + PINNED_API_REF_HASH
   tools/               # one module per registered tool; __init__.py wires them
 tests/smoke/           # live integration scripts (not pytest); run with pip install -e .
+tests/unit/            # pytest unit tests (mocked HTTP transport, no credentials needed)
 docs/architecture/     # architecture docs committed here
 examples/              # .mcp.json registration examples
 ```
