@@ -36,7 +36,7 @@ import mcp.server.fastmcp as fastmcp
 from .. import http_client
 from ..config import DivoidConfig
 from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
-from ._link_details import normalize_link_details
+from ._link_details import normalize_labelled_link_details, normalize_link_details
 
 logger = logging.getLogger(__name__)
 
@@ -83,9 +83,30 @@ PAGINATION: supply the `continue` value from a previous response to fetch the ne
   page. `continue` is null/absent when there are no more results. count defaults to
   20 and is capped at 500.
 
-FIELDS: default projection is [id, type, name, status, contentType]. Add x or y to
-  get canvas positions, or substance for the client-written condensed form of each
-  node's content. Omit fields to reduce token footprint on large result sets.
+FIELDS: default projection is [id, type, name, status, contentType, severity, rootNodeId,
+  ownerId]. severity and rootNodeId are in the default because they back this tool's
+  own severity/no_severity/severity_min/severity_max and root_node_id/no_root_node_id
+  filters — a caller who filters on them should see them without a second call.
+  ownerId is in the default because it is a non-nullable backend column: when it is
+  not requested the backend still emits it, fabricated to 0 rather than omitted, and
+  0 collides with the most common genuine owner value on this graph — dropping it
+  would silently misreport ownership on every row, not merely omit a field.
+  created, lastUpdate, and access are deliberately NOT in the default: they back the
+  created_*/updated_* timestamp filters, but the filter itself works server-side
+  without echoing the value back, and access is ACL-shaped metadata no filter here
+  reads at all — request them explicitly via fields= if you need to see them. Add x
+  or y to get canvas positions, or substance for the client-written condensed form of
+  each node's content. Omit fields to reduce token footprint on large result sets.
+  Every row also carries link_details by default: the incident edges a human labelled
+  with a context (e.g. supersedes, fixes, depends-on) — this is appended to the fields
+  projection unconditionally, even when fields= narrows the row to fewer columns, and
+  id is force-included whenever it is appended so a narrowed fields= can never make the
+  row silently come back with no edges. If a labelled edge's context names a
+  supersession and its target_id equals this row's id, THIS row is the stale one —
+  source_id names the node to read instead. The key is omitted when a row has no
+  labelled edges. Once include_link_details=True widens the row to all edges, an
+  isolated node's link_details is [] instead — present, not omitted, matching
+  divoid_get_links's isolated-node convention.
   Set include_content=True to fetch the body inline on each row — opt-in for research /
   lookup flows; costs bandwidth proportional to the total body size of the page; for many
   small documentation nodes this saves N follow-up divoid_get_content calls.
@@ -93,11 +114,12 @@ FIELDS: default projection is [id, type, name, status, contentType]. Add x or y 
   graph-walking / fan-out-avoidance flows; costs bandwidth proportional to adjacency
   density; saves N follow-up divoid_get_links calls when you need the full adjacency of a
   page of nodes.
-  Set include_link_details=True to fetch enriched inline edges (source_id, target_id,
-  link_type, context) on each row as link_details — opt-in for flows that need edge
-  metadata, not just neighbor ids; composes with include_links (both flags can be set
-  together). Same pass-through convention as divoid_get_links: link_type/context are
-  surfaced only when the backend row carries them (invariant 6 — no vocabulary policing).
+  Set include_link_details=True to widen link_details from labelled edges to every
+  incident edge (source_id, target_id, link_type, context) on each row — opt-in for flows
+  that need the full adjacency, not just the labelled subset; composes with include_links
+  (both flags can be set together). Same pass-through convention as divoid_get_links:
+  link_type/context are surfaced only when the backend row carries them (invariant 6 —
+  no vocabulary policing).
 
 SEVERITY FILTERS:
   - severity=[3,5]: exact match — return only nodes whose severity is 3 or 5.
@@ -185,7 +207,16 @@ def _check_invariants(
         )
 
 
-_DEFAULT_FIELDS = ["id", "type", "name", "status", "contentType"]
+_DEFAULT_FIELDS = [
+    "id",
+    "type",
+    "name",
+    "status",
+    "contentType",
+    "severity",
+    "rootNodeId",
+    "ownerId",
+]
 
 
 async def _execute(
@@ -228,15 +259,16 @@ async def _execute(
     """
     count = max(1, min(500, count))
 
-    if include_content or include_links or include_link_details:
-        base_fields = list(fields) if fields is not None else list(_DEFAULT_FIELDS)
-        if include_content and "content" not in base_fields:
-            base_fields.append("content")
-        if include_links and "links" not in base_fields:
-            base_fields.append("links")
-        if include_link_details and "linkDetails" not in base_fields:
-            base_fields.append("linkDetails")
-        fields = base_fields
+    base_fields = list(fields) if fields is not None else list(_DEFAULT_FIELDS)
+    if include_content and "content" not in base_fields:
+        base_fields.append("content")
+    if include_links and "links" not in base_fields:
+        base_fields.append("links")
+    if "linkDetails" not in base_fields:
+        base_fields.append("linkDetails")
+    if "id" not in base_fields:
+        base_fields.append("id")
+    fields = base_fields
 
     params: dict[str, Any] = {"count": count}
 
@@ -311,16 +343,15 @@ async def _execute(
     total = data.get("total", len(raw_results))
     continue_val = data.get("continue", None)
 
-    # linkDetails is the one field that needs per-row normalization on this
-    # otherwise pass-through endpoint: the backend returns it as an array of
-    # camelCase objects, and divoid-mcp's convention (see get_links.py) is to
-    # surface link metadata as snake_case link_details. Every other field
-    # (id, type, name, status, contentType, links, x, y, ...) already matches
-    # the backend's wire shape, so it is intentionally left untouched.
-    if include_link_details:
-        for row in raw_results:
-            if "linkDetails" in row:
-                row["link_details"] = normalize_link_details(row.pop("linkDetails"))
+    for row in raw_results:
+        if "linkDetails" in row:
+            raw_links = row.pop("linkDetails")
+            if include_link_details:
+                row["link_details"] = normalize_link_details(raw_links)
+            else:
+                labelled = normalize_labelled_link_details(raw_links)
+                if labelled:
+                    row["link_details"] = labelled
 
     logger.info("divoid_list ok total=%d returned=%d continue=%s", total, len(raw_results), continue_val)
 
@@ -390,7 +421,12 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             sort: Sort field: 'id', 'type', 'name', 'status', or 'severity'. Validated by invariant guard.
             descending: If true, sort descending. Default false (ascending).
             fields: Fields to include in each result node. Default: id, type, name, status,
-                    contentType. Also available: x, y, substance.
+                    contentType, severity, rootNodeId, ownerId. Also available: x, y,
+                    substance, created, lastUpdate, access -- not in the default (see
+                    FIELDS section); request them explicitly if needed. linkDetails and
+                    id are force-appended regardless of this list (see
+                    include_link_details) so every row's default-on obsolescence signal
+                    is never silently dropped.
             include_content: If true, fetch the body inline on each row. Appends 'content' to
                              the fields projection (and uses the full default projection if
                              fields was not specified). Text content arrives as a UTF-8 string;
@@ -401,15 +437,17 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                            for isolated nodes). Use for graph-walking / fan-out-avoidance flows
                            that would otherwise issue N divoid_get_links calls. Opt-in; costs
                            bandwidth proportional to adjacency density.
-            include_link_details: If true, fetch enriched inline edges on each row. Appends
-                                  'linkDetails' to the fields projection. Returns
-                                  link_details: [{source_id, target_id, link_type, context}, ...]
-                                  (or [] for isolated nodes), normalized to snake_case the same
-                                  way divoid_get_links normalizes its rows; link_type/context are
-                                  pass-through, surfaced only when the backend row carries them
-                                  (invariant 6 — no vocabulary policing). Composes with
-                                  include_links (both may be set together). Opt-in; costs
-                                  bandwidth proportional to adjacency density.
+            include_link_details: Every row already carries link_details for edges a human
+                                  labelled with a context (default, no flag needed) — this is
+                                  how obsolescence (supersedes / superseded-by) surfaces
+                                  without a second call. Set true to widen link_details from
+                                  the labelled subset to every incident edge (source_id,
+                                  target_id, link_type, context), normalized to snake_case the
+                                  same way divoid_get_links normalizes its rows; link_type/
+                                  context are pass-through, surfaced only when the backend row
+                                  carries them (invariant 6 — no vocabulary policing).
+                                  Composes with include_links (both may be set together).
+                                  Costs bandwidth proportional to adjacency density.
             created_from: ISO 8601 datetime string. Return only nodes created at or after
                           this timestamp (inclusive). Forwarded as-is to the backend.
             created_to: ISO 8601 datetime string. Return only nodes created before this
