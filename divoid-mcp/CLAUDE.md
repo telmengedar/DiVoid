@@ -47,7 +47,7 @@ examples/              # .mcp.json registration examples
 
 ## Running
 
-**Dev/test the code in an ISOLATED virtualenv — never `pip install -e .` into the environment that backs the operational MCP registration.** The machine's operational MCP (registered as `python -m divoid_mcp`, used by every session) must be the **pinned, non-editable** install from git — see the "Install / update the operational MCP" section below. An editable install into that same env silently overrides the pin and makes the running server float with whatever this working tree currently holds (wrong branch, uncommitted edits, half-finished work). That has bitten us more than once: an agent runs the smoke suite here, does `pip install -e .` as this section used to say, and every other session on the box is suddenly running unreviewed working-tree code.
+**Dev/test the code in an ISOLATED virtualenv — never `pip install -e .` into the environment that backs the operational MCP registration.** The machine's operational MCP (registered by the absolute path of the `divoid-mcp` console script inside its own dedicated venv, used by every session — see `docs/install.md` §1/§3) must be the **pinned, non-editable** install from git — see the "Install / update the operational MCP" section below. An editable install into that same env silently overrides the pin and makes the running server float with whatever this working tree currently holds (wrong branch, uncommitted edits, half-finished work). That has bitten us more than once: an agent runs the smoke suite here, does `pip install -e .` as this section used to say, and every other session on the box is suddenly running unreviewed working-tree code.
 
 So, to work on the code:
 
@@ -66,7 +66,6 @@ The MCP every session loads is a **frozen git install in site-packages**, decoup
 ```bash
 pip uninstall -y divoid-mcp   # if a stray editable install is present, clear it first
 pip install --force-reinstall "git+https://github.com/telmengedar/DiVoid.git#subdirectory=divoid-mcp"
-# private repo → prefix the host with a token: git+https://x-access-token:$(~/.claude/secrets/gh-app-token.sh --profile pooshit)@github.com/...
 ```
 
 Then fully restart the MCP host (Claude Code / Desktop) — a running session does NOT pick up a reinstall. Verify it is pinned, not editable:

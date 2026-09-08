@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "divoid": {
-      "command": "/home/<you>/.divoid-mcp/venv/bin/divoid-mcp",
+      "command": "C:\\Users\\<you>\\.divoid-mcp\\venv\\Scripts\\divoid-mcp.exe",
       "args": [],
       "env": {
         "DIVOID_MCP_URL": "https://divoid.mamgo.io/api",
