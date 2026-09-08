@@ -140,6 +140,12 @@ def test_no_credentials_message_names_both_variables_and_the_path(tmp_path, capl
     assert "claude mcp add --transport stdio" in text
 
 
+def test_env_hint_names_the_console_script_form():
+    assert "python -m divoid_mcp" not in config._ENV_HINT
+    assert "-- ~/.divoid-mcp/venv/bin/divoid-mcp" in config._ENV_HINT
+    assert "%USERPROFILE%\\.divoid-mcp\\venv\\Scripts\\divoid-mcp.exe" in config._ENV_HINT
+
+
 def test_malformed_file_missing_url_line_names_url(tmp_path, caplog):
     path = tmp_path / ".divoid-online"
     path.write_text("ApiKey=file-key\n", encoding="utf-8")

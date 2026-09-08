@@ -9,9 +9,12 @@ Full step-by-step guide (non-technical friendly, covers Claude Code, Claude Desk
 Quick path for experienced users:
 
 ```
-pip install "git+https://github.com/telmengedar/DiVoid.git#subdirectory=divoid-mcp"
-claude mcp add --transport stdio --scope user divoid -- python -m divoid_mcp
+python -m venv ~/.divoid-mcp/venv
+~/.divoid-mcp/venv/bin/python -m pip install "git+https://github.com/telmengedar/DiVoid.git#subdirectory=divoid-mcp"
+claude mcp add --transport stdio --scope user divoid -- ~/.divoid-mcp/venv/bin/divoid-mcp
 ```
+
+(Windows: `%USERPROFILE%\.divoid-mcp\venv`, `\Scripts\python.exe`, `\Scripts\divoid-mcp.exe`.) Registering the console script by absolute path, rather than `python -m divoid_mcp`, is deliberate — see `docs/install.md` Step 1 for why.
 
 ## Tools (22)
 
@@ -60,7 +63,7 @@ Set them in the `"env"` block of this server's entry in your MCP client configur
 
 ```
 claude mcp add --transport stdio --scope user divoid \
-  -e DIVOID_MCP_URL=<url> -e DIVOID_MCP_API_KEY=<key> -- python -m divoid_mcp
+  -e DIVOID_MCP_URL=<url> -e DIVOID_MCP_API_KEY=<key> -- ~/.divoid-mcp/venv/bin/divoid-mcp
 ```
 
 **Deprecated fallback.** If neither `DIVOID_MCP_URL` nor `DIVOID_MCP_API_KEY` is set, the server falls back to the legacy secrets file at `~/.claude/secrets/.divoid-online` (same `Url=...` / `ApiKey=...` format). Once either variable is set, both are required and the file is not consulted at all — see `docs/install.md`'s Troubleshooting section if you hit that refusal. Existing installs keep working through the fallback, but startup logs a `WARNING` and the server's MCP instructions carry a deprecation notice — move your credentials into the `env` block above when convenient. See `docs/install.md` for full instructions.

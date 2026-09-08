@@ -32,9 +32,15 @@ _ENV_HINT: Final[str] = (
     f"    {ENV_URL}      the DiVoid API base URL, including the /api suffix\n"
     "                        (for the mamgo instance: https://divoid.mamgo.io/api)\n"
     f"    {ENV_API_KEY}  your DiVoid API key\n"
+    "\"command\" is the absolute path to the divoid-mcp console script in its dedicated\n"
+    "venv, not \"python\" -- that way it does not depend on which interpreter is first on\n"
+    "this host's PATH:\n"
+    "    POSIX:   ~/.divoid-mcp/venv/bin/divoid-mcp\n"
+    "    Windows: %USERPROFILE%\\.divoid-mcp\\venv\\Scripts\\divoid-mcp.exe\n"
     "In Claude Code:\n"
     "    claude mcp add --transport stdio --scope user divoid \\\n"
-    f"      -e {ENV_URL}=<url> -e {ENV_API_KEY}=<key> -- python -m divoid_mcp\n"
+    f"      -e {ENV_URL}=<url> -e {ENV_API_KEY}=<key> \\\n"
+    "      -- ~/.divoid-mcp/venv/bin/divoid-mcp\n"
     "Full instructions: divoid-mcp/docs/install.md (DiVoid node #829)."
 )
 
