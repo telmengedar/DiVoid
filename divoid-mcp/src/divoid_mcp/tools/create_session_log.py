@@ -10,8 +10,9 @@ makes 3-5 HTTP calls:
      (plus extra_links, one call each)
   5. PATCH /nodes/{id}                                -- set substance (if provided)
 
-Content is always required for session-logs (no 'new' escape, per DiVoid #493 §4).
-Session-logs have no status lifecycle (per #493 §5) — the status field is never set.
+A body is always required for session-logs, supplied via `content` or `path`
+(no 'new' escape, per DiVoid #493 §4). Session-logs have no status lifecycle
+(per #493 §5) — the status field is never set.
 
 Partial failure semantics (per architecture §6.3): if step 2 succeeds but step 3, 4
 or 5 fails, the server does NOT roll back. It returns an MCP error naming the surviving
@@ -34,6 +35,7 @@ import mcp.server.fastmcp as fastmcp
 from .. import http_client
 from ..config import DivoidConfig
 from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
+from ._content import PATH_DESCRIPTION_CLAUSE, guard_exclusive, resolve_body
 from ._groups import resolve_group
 from ._substance import write_substance
 from .patch_node import _canonicalize_access
@@ -47,8 +49,10 @@ record the narrative of \
 a work arc: what was investigated, what was tried, what worked, what failed, and what \
 the next agent should know. Session-logs are the memory of the hivemind (DiVoid #190 \
 Rule 3) — file them at the end of any non-trivial arc, not just when things go wrong. \
-Content is always required (there is no 'new' escape for session-logs per #493 §4 — \
-do not create the node until you have the narrative). Session-logs have no status \
+A body is always required, from either `content` or `path` (there is no 'new' escape \
+for session-logs per #493 §4 — do not create the node until you have the narrative). """ \
++ PATH_DESCRIPTION_CLAUSE + """ \
+Session-logs have no status \
 lifecycle (per #493 §5). \
 Link to every node the arc touched using extra_links — tasks, bugs, documentation, \
 PRs, research nodes. The links are what make the session-log findable from any of the \
@@ -64,9 +68,10 @@ optional client-written condensed form of the content, stored verbatim.\
 
 def _check_invariants(
     name: str,
-    content: str,
+    content: str | None,
     project_id: int | None,
     docs_group_id: int | None,
+    path: str | None = None,
 ) -> None:
     """
     Check runtime invariants before making any HTTP call.
@@ -74,9 +79,10 @@ def _check_invariants(
     Raises InvariantViolation with a stable code if any invariant is broken.
     The invariant guard is the sole enforcement layer for these constraints —
     FastMCP exposes the parameters as plain {"type": "string"} in the JSON
-    Schema without minLength or oneOf; enforcement is entirely here.
+    Schema without minLength or oneOf; enforcement is entirely here. File-read
+    outcomes (missing/unreadable/empty file, empty path) are resolved separately
+    by resolve_body.
     """
-    # Mutual exclusion: exactly one of project_id / docs_group_id must be given.
     if project_id is not None and docs_group_id is not None:
         raise InvariantViolation(
             "mutually_exclusive_link_target",
@@ -92,20 +98,22 @@ def _check_invariants(
             "or provide docs_group_id directly (e.g. DiVoid Docs = 7).",
         )
 
-    # Content must be non-empty and non-whitespace (per DiVoid #493 §4).
-    if not content or not content.strip():
+    guard_exclusive(content, path)
+    if path is None and (not content or not content.strip()):
         raise InvariantViolation(
             "content_whitespace_only",
             "Session-log content must be non-empty and non-whitespace (per #493 §4). "
             "A session-log node with no meaningful content is structurally invalid. "
-            "Do not create the node until you have the narrative.",
+            "Do not create the node until you have the narrative. Provide it inline "
+            "via 'content' or from a file via 'path'.",
         )
 
 
 async def _execute(
     name: str,
-    content: str,
+    content: str | None,
     config: "DivoidConfig",
+    path: str | None = None,
     project_id: int | None = None,
     docs_group_id: int | None = None,
     extra_links: list[int] | None = None,
@@ -126,6 +134,10 @@ async def _execute(
     """
     if extra_links is None:
         extra_links = []
+
+    content_bytes, err = resolve_body(content, path, "divoid_create_session_log")
+    if err is not None:
+        return err
 
     logger.info(
         "divoid_create_session_log name=%r project_id=%s docs_group_id=%s",
@@ -182,8 +194,6 @@ async def _execute(
 
     logger.info("divoid_create_session_log node_id=%d created", node_id)
 
-    # --- Step 3: Post content ---
-    content_bytes = content.encode("utf-8")
     try:
         content_result = await http_client.post_bytes(
             f"nodes/{node_id}/content",
@@ -306,7 +316,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
     @mcp_server.tool(description=_TOOL_DESCRIPTION)
     async def divoid_create_session_log(
         name: str,
-        content: str,
+        content: str | None = None,
+        path: str | None = None,
         project_id: int | None = None,
         docs_group_id: int | None = None,
         extra_links: list[int] | None = None,
@@ -323,12 +334,21 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                   Include keywords that describe the arc, the problem area, or what
                   was learned — a future agent should be able to find this via query.
                   Example: 'Backend: embedding-regen SQL refactor arc 2026-05-21'.
-            content: The session narrative (required, must be non-empty, markdown).
-                     Include: what was investigated, what was tried, what worked,
-                     what failed, key decisions made, and what the next agent should
-                     know. Per DiVoid #493 §4, a content-empty session-log is
-                     structurally invalid. Enforcement is by the invariant guard
-                     (not JSON Schema — FastMCP exposes content as plain string).
+            content: The session narrative as a string. Exactly one of `content` or
+                     `path` is required. Include: what was investigated, what was
+                     tried, what worked, what failed, key decisions made, and what
+                     the next agent should know. Per DiVoid #493 §4, a content-empty
+                     session-log is structurally invalid. Enforcement is by the
+                     invariant guard (not JSON Schema — FastMCP exposes content as
+                     plain string).
+            path: Local file whose bytes become the session narrative. Mutually
+                  exclusive with `content` -- exactly one is required. DOES accept
+                  a file: a refusal names which of path_outside_root (fixable --
+                  choose an in-root path) or path_denied_sensitive (permanent, no
+                  retry, no re-spelled path, do not copy the file to another name)
+                  stopped this path. A zero-byte file is refused (file_empty); a
+                  whitespace-only file is uploaded as-is, unlike whitespace-only
+                  `content`.
             project_id: The id of the project whose Docs group this session-log
                         belongs to. Resolved via [id:<project_id>]/[name:Docs].
                         Mutually exclusive with docs_group_id (invariant guard). Also
@@ -371,7 +391,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                        defaults to NULL.
         """
         try:
-            _check_invariants(name, content, project_id, docs_group_id)
+            _check_invariants(name, content, project_id, docs_group_id, path=path)
         except InvariantViolation as exc:
             logger.debug("divoid_create_session_log invariant violation: %s", exc.code)
             return {"isError": True, "content": make_error_content(exc.code, exc.message)}
@@ -386,6 +406,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         return await _execute(
             name=name,
             content=content,
+            path=path,
             config=config,
             project_id=project_id,
             docs_group_id=docs_group_id,

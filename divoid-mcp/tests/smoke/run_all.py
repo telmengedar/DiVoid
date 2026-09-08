@@ -66,6 +66,8 @@ from divoid_mcp.tools.edit_content import _check_invariants as _check_edit_conte
 from divoid_mcp.tools.edit_content import _execute as _execute_edit_content
 from divoid_mcp.tools.delete_node import _execute as _execute_delete_node
 from divoid_mcp.tools.download_content import _execute as _execute_download_content
+from divoid_mcp.tools._content import guard_exclusive as _content_guard_exclusive
+from divoid_mcp.tools._content import resolve_body as _content_resolve_body
 import mcp.server.fastmcp as fastmcp
 
 from divoid_mcp.tools import create_documentation as _create_documentation_module
@@ -4273,6 +4275,92 @@ async def smoke_create_node_empty_substance_is_written(config: Any) -> None:
         )
 
 
+async def smoke_content_helper_shared_across_creators(config: Any) -> None:
+    """
+    tools._content.guard_exclusive / resolve_body are imported and called
+    directly by name -- a smoke test that only imports an aliased wrapper
+    proves nothing about the underlying implementation. No HTTP call is made:
+    the exclusivity guard is pure, and resolve_body's refusal fires before it
+    ever reaches http_client.
+    """
+    import os
+    import shutil
+    import tempfile
+
+    print("\n--- tools._content (guard_exclusive / resolve_body, shared across 5 callers) ---")
+
+    raised, code = False, None
+    try:
+        _content_guard_exclusive("inline", "/some/path")
+    except InvariantViolation as exc:
+        raised, code = True, exc.code
+    _assert("guard_exclusive raises on both content and path given", raised)
+    _assert(
+        "violation code is content_path_conflict",
+        code == "content_path_conflict",
+        f"code={code!r}",
+    )
+
+    scratch_root = tempfile.mkdtemp(prefix="divoid_mcp_smoke_content_")
+    try:
+        git_dir = os.path.join(scratch_root, ".git")
+        os.makedirs(git_dir)
+        sensitive_target = os.path.join(git_dir, "config")
+        with open(sensitive_target, "wb") as fh:
+            fh.write(b"[remote]token=shhh")
+
+        good_target = os.path.join(scratch_root, "doc.md")
+        with open(good_target, "wb") as fh:
+            fh.write(b"# Smoke body for resolve_body direct call\n")
+
+        previous_roots = paths.roots()
+        paths.init(env={"DIVOID_MCP_FILE_ROOT": scratch_root})
+        try:
+            refused_bytes, refusal = _content_resolve_body(
+                None, sensitive_target, "smoke-content-helper"
+            )
+            good_bytes, good_err = _content_resolve_body(
+                None, good_target, "smoke-content-helper"
+            )
+        finally:
+            paths._roots = previous_roots
+
+        _assert("resolve_body(path=.git/config) returns a refusal", refusal is not None, str(refusal))
+        _assert("resolve_body returned no bytes on refusal", refused_bytes is None)
+        if refusal is not None:
+            text = refusal.get("content", [{}])[0].get("text", "")
+            _assert(
+                "refusal code is path_denied_sensitive",
+                "path_denied_sensitive" in text,
+                f"text={text!r}",
+            )
+
+        _assert("resolve_body(path=doc.md) returns no error", good_err is None, str(good_err))
+        _assert(
+            "resolve_body(path=doc.md) returns the file's bytes verbatim",
+            good_bytes == b"# Smoke body for resolve_body direct call\n",
+            f"good_bytes={good_bytes!r}",
+        )
+    finally:
+        shutil.rmtree(scratch_root, ignore_errors=True)
+
+    no_raise = True
+    try:
+        _check_doc_invariants(
+            name="Smoke test: path satisfies the content-required rule",
+            content=None,
+            project_id=_DIVOID_PROJECT_ID,
+            docs_group_id=None,
+            path="/does/not/need/to/exist/for/this/pure/argument/check.md",
+        )
+    except InvariantViolation:
+        no_raise = False
+    _assert(
+        "create_documentation._check_invariants accepts path in place of content",
+        no_raise,
+    )
+
+
 async def _run_all(config: Any) -> None:
     tests = [
         smoke_search,
@@ -4355,6 +4443,7 @@ async def _run_all(config: Any) -> None:
         smoke_path_gate_refuses_sensitive_read,
         smoke_path_gate_refuses_sensitive_write,
         smoke_path_gate_accepts_ordinary_in_root_round_trip,
+        smoke_content_helper_shared_across_creators,
         smoke_patch_node_substance_lifecycle,
         smoke_patch_node_substance_verbatim,
         smoke_patch_node_substance_only_is_a_valid_patch,

@@ -35,9 +35,10 @@ from typing import Any
 
 import mcp.server.fastmcp as fastmcp
 
-from .. import http_client, paths
+from .. import http_client
 from ..config import DivoidConfig
 from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
+from ._content import guard_exclusive, resolve_body
 
 logger = logging.getLogger(__name__)
 
@@ -74,34 +75,23 @@ def _check_invariants(content: str | None, path: str | None) -> None:
     Check runtime invariants before making any HTTP call.
 
     Raises InvariantViolation with a stable code if any invariant is broken.
-    File-read outcomes (missing/unreadable/empty file) are resolved separately
-    in _execute, since they require I/O the pure argument check here does not
-    perform.
+    File-read outcomes (missing/unreadable/empty file, empty path) are resolved
+    separately by resolve_body, since they require I/O the pure argument check
+    here does not perform.
     """
-    if content is not None and path is not None:
-        raise InvariantViolation(
-            "content_path_conflict",
-            "Provide either 'content' or 'path', not both. "
-            "They are mutually exclusive ways of supplying the same body.",
-        )
+    guard_exclusive(content, path)
     if content is None and path is None:
         raise InvariantViolation(
             "content_path_required",
             "Provide exactly one of 'content' (inline string) or 'path' "
             "(local file to read and upload).",
         )
-    if content is not None:
-        if not content.strip():
-            raise InvariantViolation(
-                "content_empty",
-                "Content must be non-empty and non-whitespace. "
-                "Posting empty or whitespace-only content creates a structurally inert node "
-                "(per DiVoid #493 §4). Provide the actual content body.",
-            )
-    elif not path.strip():
+    if content is not None and not content.strip():
         raise InvariantViolation(
-            "path_empty",
-            "path must be a non-empty string.",
+            "content_empty",
+            "Content must be non-empty and non-whitespace. "
+            "Posting empty or whitespace-only content creates a structurally inert node "
+            "(per DiVoid #493 §4). Provide the actual content body.",
         )
 
 
@@ -121,46 +111,9 @@ async def _execute(
 
     Callers must run _check_invariants() before calling this function.
     """
-    if path is not None:
-        try:
-            resolved_path = paths.gate(path)
-        except InvariantViolation as exc:
-            logger.info("divoid_set_content id=%d path=%r -> %s", id, path, exc.code)
-            return {"isError": True, "content": make_error_content(exc.code, exc.message)}
-
-        try:
-            with open(resolved_path, "rb") as fh:
-                content_bytes = fh.read()
-        except FileNotFoundError:
-            logger.info("divoid_set_content id=%d path=%r -> file_not_found", id, path)
-            return {
-                "isError": True,
-                "content": make_error_content(
-                    "file_not_found", f"No such file: {path!r}."
-                ),
-            }
-        except OSError as exc:
-            logger.warning("divoid_set_content id=%d path=%r read failed: %s", id, path, exc)
-            return {
-                "isError": True,
-                "content": make_error_content(
-                    "file_read_failed", f"Could not read {path!r}: {exc}"
-                ),
-            }
-
-        if len(content_bytes) == 0:
-            logger.info("divoid_set_content id=%d path=%r -> file_empty", id, path)
-            return {
-                "isError": True,
-                "content": make_error_content(
-                    "file_empty",
-                    f"{path!r} read as zero bytes. Refusing to upload: an empty body "
-                    "would replace the node's existing content with nothing "
-                    "(DiVoid #7878 recorded exactly this incident on node #7872).",
-                ),
-            }
-    else:
-        content_bytes = content.encode("utf-8")
+    content_bytes, err = resolve_body(content, path, "divoid_set_content")
+    if err is not None:
+        return err
 
     logger.info(
         "divoid_set_content id=%d source=%s content_type=%r byte_length=%d",

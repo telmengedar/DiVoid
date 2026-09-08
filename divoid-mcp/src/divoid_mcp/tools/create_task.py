@@ -15,7 +15,8 @@ or 5 fails, the server does NOT roll back. It returns an MCP error that names th
 node id and the missing step so the caller can repair manually.
 
 Invariant guards (before any HTTP call):
-  - If status != "new" and content is missing/empty → content_required
+  - If status != "new" and neither content nor path is given/non-empty → content_required
+  - Both content and path given → content_path_conflict
   - Both project_id and tasks_group_id provided → mutually_exclusive_link_target
   - Neither provided → no_link_target
   - status not in allowed lifecycle values → task_status_not_in_lifecycle
@@ -37,6 +38,7 @@ import mcp.server.fastmcp as fastmcp
 from .. import http_client
 from ..config import DivoidConfig
 from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
+from ._content import PATH_DESCRIPTION_CLAUSE, guard_exclusive, resolve_body
 from ._groups import resolve_group
 from ._substance import write_substance
 from .patch_node import _canonicalize_access
@@ -49,9 +51,10 @@ _TOOL_DESCRIPTION = """\
 Create a task node atomically: creates the node, sets its content, links it to the \
 project's Tasks group, and sets substance when given — all in one call. Use this for \
 any new work item. \
-Content is required unless status="new" (the "quick capture" lifecycle stage per \
-DiVoid structural conventions #493 §4); for any other status the content body must \
-be provided and non-empty. Use "new" only for one-line jot-down captures that you \
+A body is required unless status="new" (the "quick capture" lifecycle stage per \
+DiVoid structural conventions #493 §4); for any other status the body must be provided, \
+via `content` or `path`, and non-empty. """ + PATH_DESCRIPTION_CLAUSE + """ \
+Use "new" only for one-line jot-down captures that you \
 intend to enrich later. The Tasks group is resolved from project_id by walking the \
 graph; if your project does not have a Tasks group yet, this tool returns an error \
 and you will need to create the group first. Alternatively, supply tasks_group_id \
@@ -70,6 +73,7 @@ def _check_invariants(
     status: str,
     project_id: int | None,
     tasks_group_id: int | None,
+    path: str | None = None,
 ) -> None:
     """
     Check runtime invariants before making any HTTP call.
@@ -77,7 +81,9 @@ def _check_invariants(
     Raises InvariantViolation with a stable code if any invariant is broken.
     The invariant guard is the sole enforcement layer for all constraints —
     FastMCP exposes parameters as plain {"type": "string"} in the JSON Schema
-    without minLength, oneOf, or enum; enforcement is entirely here.
+    without minLength, oneOf, or enum; enforcement is entirely here. File-read
+    outcomes (missing/unreadable/empty file, empty path) are resolved separately
+    by resolve_body.
     """
     if project_id is not None and tasks_group_id is not None:
         raise InvariantViolation(
@@ -102,15 +108,15 @@ def _check_invariants(
             "See DiVoid #493 §5 for the task lifecycle.",
         )
 
-    # Content-required check: status-conditional requirement that the invariant
-    # guard is the sole enforcement layer for (not expressible in FastMCP's schema).
-    if status != "new" and (not content or not content.strip()):
+    guard_exclusive(content, path)
+    if status != "new" and path is None and (not content or not content.strip()):
         raise InvariantViolation(
             "content_required",
             f"Task content is required unless status='new' (per DiVoid #493 §4). "
             f"Current status='{status}'. Either provide content describing the current "
-            "state, what is missing, and suggested order of work — or set status='new' "
-            "explicitly and enrich the node afterwards.",
+            "state, what is missing, and suggested order of work (inline via 'content' "
+            "or from a file via 'path') — or set status='new' explicitly and enrich the "
+            "node afterwards.",
         )
 
 
@@ -133,6 +139,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         project_id: int | None = None,
         tasks_group_id: int | None = None,
         content: str | None = None,
+        path: str | None = None,
         status: str = "open",
         extra_links: list[int] | None = None,
         access: int | str | None = None,
@@ -158,8 +165,18 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                             group id (e.g. DiVoid Tasks = 314). Mutually exclusive
                             with project_id.
             content: Task scope: current state, what is missing, suggested order of
-                     work. Required UNLESS status='new'. If status='new' and content
-                     is empty, the task is a quick-capture jot to enrich later.
+                     work. Required UNLESS status='new'. Mutually exclusive with
+                     `path` -- at most one may be given. If status='new' and neither
+                     is given, the task is a quick-capture jot to enrich later.
+            path: Local file whose bytes become the task scope. Mutually exclusive
+                  with `content`. Required UNLESS status='new' -- same rule as
+                  `content`, satisfiable by either. DOES accept a file: a refusal
+                  names which of path_outside_root (fixable -- choose an in-root
+                  path) or path_denied_sensitive (permanent, no retry, no
+                  re-spelled path, do not copy the file to another name) stopped
+                  this path. A zero-byte file is refused (file_empty); a
+                  whitespace-only file is uploaded as-is, unlike whitespace-only
+                  `content`.
             status: Task lifecycle status ('new', 'open', 'in-progress', 'closed').
                     Defaults to 'open'. Use 'new' only for content-not-yet-written
                     captures.
@@ -196,10 +213,14 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             extra_links = []
 
         try:
-            _check_invariants(name, content, status, project_id, tasks_group_id)
+            _check_invariants(name, content, status, project_id, tasks_group_id, path=path)
         except InvariantViolation as exc:
             logger.debug("divoid_create_task invariant violation: %s", exc.code)
             return {"isError": True, "content": make_error_content(exc.code, exc.message)}
+
+        content_bytes, err = resolve_body(content, path, "divoid_create_task")
+        if err is not None:
+            return err
 
         logger.info(
             "divoid_create_task name=%r status=%s project_id=%s tasks_group_id=%s",
@@ -255,11 +276,9 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
 
         logger.info("divoid_create_task node_id=%d created", node_id)
 
-        # --- Step 3: Post content (skip if status=new and no content) ---
         content_posted = False
         content_length = 0
-        if content and content.strip():
-            content_bytes = content.encode("utf-8")
+        if content_bytes is not None and (path is not None or (content and content.strip())):
             try:
                 content_result = await http_client.post_bytes(
                     f"nodes/{node_id}/content",
