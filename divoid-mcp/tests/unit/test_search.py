@@ -1,17 +1,18 @@
 """
-Unit tests for divoid_search's include_link_details flag (DiVoid #7163).
+Unit tests for divoid_search's link_details enrichment.
 
 Mirrors test_list_nodes.py and the divoid_get_links normalization convention:
 these tests mock the HTTP transport (via respx) and assert on both the
 outbound `fields` query param and the exact result rows divoid_search
 produces from a given backend JSON payload.
 
-  - Flag off (default) -> no 'linkDetails' appended to fields, no
-    'link_details' key in any result row. Byte-identical back-compat.
-  - Flag on -> 'linkDetails' appended to the fields projection; each row's
-    raw 'linkDetails' array is normalized into 'link_details' (source_id/
-    target_id always present; link_type/context pass-through, surfaced only
-    when the backend row carries them).
+  - Default (flag off) -> 'linkDetails' is still requested via 'fields' (and
+    'severity'/'rootNodeId' alongside it); each row surfaces only the edges
+    that carry a context (a human label such as supersedes) as
+    'link_details', omitted entirely when none do.
+  - Flag on -> 'link_details' widens to every incident edge, normalized the
+    same way (source_id/target_id always present; link_type/context
+    pass-through, surfaced only when the backend row carries them).
   - Composes with include_links: both 'links' and 'linkDetails' appended to
     fields; both 'links' and 'link_details' present on the row.
 
@@ -72,17 +73,17 @@ def _mock_response(
 
 
 # ---------------------------------------------------------------------------
-# Flag off (default) -> no linkDetails in fields, no link_details in output
+# Default (flag off) -> linkDetails still requested; row shows labelled edges
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_flag_off_no_field_param_and_no_output_key(server: FastMCP) -> None:
-    """Default call (no include_* flags) sends no 'fields' param at all.
+async def test_default_call_requests_link_details(server: FastMCP) -> None:
+    """A default call (no include_* flags) still sends 'fields' with
+    'linkDetails' and 'id' in it -- default-on enrichment needs no flag.
 
-    Substitution probe: if include_link_details defaulted to True, or the
-    fields-building branch fired unconditionally, this would assert 'fields'
-    present with 'linkDetails' in it -- this test fails in that case.
+    Substitution probe: reverting the fields-building back to firing only
+    when an include_* flag is set makes this assert fail.
     """
     payload = {
         "result": [{"id": 1, "type": "task", "name": "n1", "similarity": 0.9}],
@@ -95,11 +96,117 @@ async def test_flag_off_no_field_param_and_no_output_key(server: FastMCP) -> Non
 
     assert result.get("isError") is not True, f"Expected success, got: {result}"
     assert len(captured) == 1
-    sent_params = captured[0].url.params
-    assert "fields" not in sent_params, f"fields must be absent, got: {sent_params}"
+    sent_fields = captured[0].url.params.get_list("fields")
+    assert "linkDetails" in sent_fields, f"Expected linkDetails in fields, got: {sent_fields}"
+    assert "id" in sent_fields, f"Expected id in fields, got: {sent_fields}"
+
+
+@pytest.mark.asyncio
+async def test_default_row_carries_labelled_edges(server: FastMCP) -> None:
+    """A default (flag off) row surfaces the edges that carry a context.
+
+    Substitution probe: a selector that always returns [] makes this fail.
+    """
+    payload = {
+        "result": [
+            {
+                "id": 1,
+                "linkDetails": [
+                    {
+                        "sourceId": 13,
+                        "targetId": 1,
+                        "linkType": "Unidirectional",
+                        "context": "supersedes",
+                    },
+                ],
+            }
+        ],
+        "total": 1,
+    }
+
+    with respx.mock(assert_all_called=True) as mock:
+        _mock_response(mock, payload)
+        result = await _call(server, {"query": "test query"})
+
+    row = result["results"][0]
+    assert row["link_details"] == [
+        {"source_id": 13, "target_id": 1, "link_type": "Unidirectional", "context": "supersedes"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_default_row_omits_unlabelled_edges(server: FastMCP) -> None:
+    """A default (flag off) row drops edges with no context, keeping only
+    the labelled one.
+
+    Substitution probe: a predicate that always returns True (no filtering)
+    makes this fail -- the unlabelled edge would leak into the row.
+    """
+    payload = {
+        "result": [
+            {
+                "id": 1,
+                "linkDetails": [
+                    {"sourceId": 13, "targetId": 1, "context": "supersedes"},
+                    {"sourceId": 1, "targetId": 99},
+                ],
+            }
+        ],
+        "total": 1,
+    }
+
+    with respx.mock(assert_all_called=True) as mock:
+        _mock_response(mock, payload)
+        result = await _call(server, {"query": "test query"})
+
+    row = result["results"][0]
+    assert row["link_details"] == [{"source_id": 13, "target_id": 1, "context": "supersedes"}]
+
+
+@pytest.mark.asyncio
+async def test_row_without_labelled_edges_omits_key(server: FastMCP) -> None:
+    """A default (flag off) row whose edges all lack a context omits
+    'link_details' entirely rather than emitting an empty list.
+
+    Substitution probe: emitting [] unconditionally makes this fail.
+    """
+    payload = {
+        "result": [{"id": 1, "linkDetails": [{"sourceId": 1, "targetId": 99}]}],
+        "total": 1,
+    }
+
+    with respx.mock(assert_all_called=True) as mock:
+        _mock_response(mock, payload)
+        result = await _call(server, {"query": "test query"})
 
     row = result["results"][0]
     assert "link_details" not in row, f"link_details must be absent, got: {row!r}"
+
+
+@pytest.mark.asyncio
+async def test_link_details_projection_keeps_severity_and_root_node_id(server: FastMCP) -> None:
+    """severity and rootNodeId survive the fields projection that now always
+    accompanies linkDetails, instead of silently coming back null.
+
+    Substitution probe: dropping either name from base_fields makes the
+    call still succeed but the row goes null for that key.
+    """
+    payload = {
+        "result": [{"id": 1, "severity": 3, "rootNodeId": 3}],
+        "total": 1,
+    }
+
+    with respx.mock(assert_all_called=True) as mock:
+        captured = _mock_response(mock, payload)
+        result = await _call(server, {"query": "test query"})
+
+    sent_fields = captured[0].url.params.get_list("fields")
+    assert "severity" in sent_fields, f"Expected severity in fields, got: {sent_fields}"
+    assert "rootNodeId" in sent_fields, f"Expected rootNodeId in fields, got: {sent_fields}"
+
+    row = result["results"][0]
+    assert row["severity"] == 3
+    assert row["rootNodeId"] == 3
 
 
 # ---------------------------------------------------------------------------
@@ -155,8 +262,8 @@ async def test_flag_on_appends_field_and_normalizes_output(server: FastMCP) -> N
 
 @pytest.mark.asyncio
 async def test_flag_on_missing_link_type_context_not_fabricated(server: FastMCP) -> None:
-    """A linkDetails entry without linkType/context (pre-#163 backend row
-    shape) normalizes to only source_id/target_id -- no fabricated nulls.
+    """A linkDetails entry without linkType/context normalizes to only
+    source_id/target_id -- no fabricated nulls.
     """
     payload = {
         "result": [{"id": 1, "linkDetails": [{"sourceId": 10, "targetId": 20}]}],
@@ -174,6 +281,44 @@ async def test_flag_on_missing_link_type_context_not_fabricated(server: FastMCP)
     assert row["link_details"] == [{"source_id": 10, "target_id": 20}]
     assert "link_type" not in row["link_details"][0]
     assert "context" not in row["link_details"][0]
+
+
+@pytest.mark.asyncio
+async def test_flag_on_returns_unlabelled_edges_too(server: FastMCP) -> None:
+    """include_link_details=True widens the row to every incident edge, not
+    just the labelled subset -- a labelled and an unlabelled edge in the
+    same payload both survive unchanged.
+
+    Substitution probe: applying the labelled-only selector on the flag-on
+    path too would drop the unlabelled entry. A fixture carrying only a
+    labelled edge cannot discriminate that mutation, since dropping the
+    unlabelled one leaves nothing visibly missing; this fixture carries one
+    of each so the drop is observable.
+    """
+    payload = {
+        "result": [
+            {
+                "id": 1,
+                "linkDetails": [
+                    {"sourceId": 13, "targetId": 1, "context": "supersedes"},
+                    {"sourceId": 1, "targetId": 99},
+                ],
+            }
+        ],
+        "total": 1,
+    }
+
+    with respx.mock(assert_all_called=True) as mock:
+        _mock_response(mock, payload)
+        result = await _call(
+            server, {"query": "test query", "include_link_details": True}
+        )
+
+    row = result["results"][0]
+    assert row["link_details"] == [
+        {"source_id": 13, "target_id": 1, "context": "supersedes"},
+        {"source_id": 1, "target_id": 99},
+    ]
 
 
 # ---------------------------------------------------------------------------
