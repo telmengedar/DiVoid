@@ -743,8 +743,6 @@ public class NodeServiceTests
         await Create(svc, name: "Zebra");
         await Create(svc, name: "Mango");
 
-        // Sort key must be one of NodeMapper's registered keys ("id", "type", "name", "status",
-        // "severity", "refinement", ...). The test uses "name" to exercise the ascending/descending path.
         AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter
         {
             Count = 100,
@@ -762,11 +760,6 @@ public class NodeServiceTests
     [Test]
     public async Task ListPaged_SortByNodeName_TwoPart_ThrowsKeyNotFound()
     {
-        // NodeService.ListPaged routes sorting through the mapper-based ApplyFilter overload,
-        // which does a strict dictionary lookup. NodeMapper registers "id", "type", "name",
-        // "status", "severity", "refinement", ... — two-part keys like "node.name" are not
-        // registered and throw KeyNotFoundException. This is intentional: callers sort by the
-        // fields the mapper exposes, not by join aliases.
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
         await Create(svc, name: "A");

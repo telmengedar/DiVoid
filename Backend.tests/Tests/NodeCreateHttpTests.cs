@@ -125,7 +125,7 @@ public class NodeCreateHttpTests
         NodeDetails fetched = await GetNodeAsync(created.Id);
 
         Assert.That(fetched.Refinement, Is.EqualTo("alpha"),
-            "refinement set on POST /api/nodes must survive a subsequent GET (bug #157)");
+            "refinement set on POST /api/nodes must survive a subsequent GET");
     }
 
     [Test]

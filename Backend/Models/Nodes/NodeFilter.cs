@@ -64,12 +64,14 @@ public class NodeFilter : ListFilter
     public bool NoSeverity { get; set; }
 
     /// <summary>
-    /// refinement values to filter for; matches nodes whose refinement is in this list
+    /// refinement values to filter for; matches nodes whose refinement is in this list.
+    /// OR-composed with <see cref="NoRefinement"/> when both are present.
     /// </summary>
     public string[] Refinement { get; set; }
 
     /// <summary>
-    /// when true, only return nodes with no refinement set (null or empty string)
+    /// when true, only return nodes with no refinement set (null or empty string).
+    /// OR-composed with <see cref="Refinement"/> when both are present.
     /// </summary>
     public bool NoRefinement { get; set; }
 
