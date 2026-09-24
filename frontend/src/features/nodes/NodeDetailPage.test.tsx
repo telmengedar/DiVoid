@@ -249,10 +249,6 @@ describe('NodeDetailPage — read regions', () => {
       expect(screen.getByText('Test Document')).toBeInTheDocument();
     });
 
-    // sampleNode carries no refinement — unset means unclassified (#14810), never a
-    // fabricated default. "Refinement" also labels the neighbours-table column, so
-    // scope to the metadata row specifically (a <span> label, not a <th>) so this
-    // can't pass by matching an unrelated em-dash elsewhere in the page.
     const label = screen.getAllByText('Refinement').find((el) => el.tagName === 'SPAN');
     expect(label).toBeDefined();
     expect(label!.closest('div')?.textContent).toContain('—');
@@ -265,7 +261,6 @@ describe('NodeDetailPage — read regions', () => {
       expect(screen.getByText('Classified task')).toBeInTheDocument();
     });
 
-    // Load-bearing: revert the Refinement MetadataRow in NodeDetailView.tsx and this fails.
     expect(screen.getByText('needs-input')).toBeInTheDocument();
   });
 

@@ -86,13 +86,8 @@ interface FilterBarProps {
 
 /**
  * Type/status/refinement filter row shared by the Semantic and Linked panels.
- *
- * The refinement input is free text, not a dropdown — DiVoid #14810/#14811
- * forbid a hard-coded member list, so unlike a closed vocabulary this can only
- * ever be "whatever string the caller types", including `%`/`_` wildcards that
- * the backend resolves (e.g. `needs-%` matches the whole `needs-*` family).
- * "Unclassified only" sends `norefinement=true` and disables the text input,
- * mirroring the mutually-exclusive shape of the backend's OR-composed filter.
+ * Refinement is free text, open vocabulary (DiVoid #14810); "Unclassified only"
+ * sends `norefinement=true` and disables that input.
  */
 function FilterBar({
   typeFilter,

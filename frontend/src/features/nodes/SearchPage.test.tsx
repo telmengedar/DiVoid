@@ -170,8 +170,6 @@ describe('SearchPage', () => {
       expect(capturedUrl).not.toBeNull();
     });
 
-    // Load-bearing: revert the `refinement:` line in LinkedPanel's filter object
-    // and this param disappears from the outgoing request.
     expect(capturedUrl!.searchParams.get('refinement')).toBe('ready');
   });
 
@@ -242,8 +240,6 @@ describe('SearchPage', () => {
       expect(capturedUrl).not.toBeNull();
     });
 
-    // Load-bearing: revert the `refinement:` line in SemanticPanel's filter object
-    // and this param disappears from the outgoing request.
     expect(capturedUrl!.searchParams.get('refinement')).toBe('needs-%');
     expect(capturedUrl!.searchParams.has('norefinement')).toBe(false);
   });
@@ -271,8 +267,32 @@ describe('SearchPage', () => {
       expect(capturedUrl).not.toBeNull();
     });
 
-    // Load-bearing: revert the `norefinement:` line in SemanticPanel's filter object
-    // and this param disappears from the outgoing request.
+    expect(capturedUrl!.searchParams.get('norefinement')).toBe('true');
+    expect(capturedUrl!.searchParams.has('refinement')).toBe(false);
+  });
+
+  it('T4: linked-tab "Unclassified only" sends norefinement=true (LinkedPanel parity, DiVoid #14811)', async () => {
+    let capturedUrl: URL | null = null;
+    server.use(
+      http.get(`${BASE_URL}/nodes`, ({ request }) => {
+        capturedUrl = new URL(request.url);
+        return HttpResponse.json(samplePage);
+      }),
+    );
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole('tab', { name: /linked/i }));
+    await user.click(screen.getByRole('checkbox', { name: /unclassified only/i }));
+    const input = screen.getByRole('spinbutton', { name: /anchor node id/i });
+    await user.type(input, '3');
+    await user.click(screen.getByRole('button', { name: /browse/i }));
+
+    await waitFor(() => {
+      expect(capturedUrl).not.toBeNull();
+    });
+
     expect(capturedUrl!.searchParams.get('norefinement')).toBe('true');
     expect(capturedUrl!.searchParams.has('refinement')).toBe(false);
   });

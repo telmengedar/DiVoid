@@ -4,9 +4,9 @@
  * Patches name, status, and refinement via PATCH /api/nodes/{id}.
  * Status dropdown is only shown when the node type carries a status
  * (task or bug). Refinement is a free-text input shown for every node type —
- * unlike status it is not type-gated (DiVoid #14810 §"unset means unclassified":
- * any node type may carry a refinement claim). Admin-only fields (Permissions)
- * are guarded via useWhoami.
+ * unlike status it is not type-gated (DiVoid #14810 §"Casing and vocabulary":
+ * no enum, no allow-list and no per-type value table for this field). Admin-only
+ * fields (Permissions) are guarded via useWhoami.
  *
  * On success: the node detail query is invalidated by the mutation hook;
  *             the dialog closes.

@@ -258,8 +258,6 @@ describe('EditNodeDialog — Refinement field (DiVoid #14811)', () => {
       expect(screen.getByRole('textbox', { name: /name/i })).toBeInTheDocument();
     });
 
-    // documentation carries no status dropdown (statusOptionsForType returns null) —
-    // Refinement must still be present, proving it is not gated the way Status is.
     expect(screen.queryByLabelText('Status')).toBeNull();
     expect(screen.getByLabelText('Refinement')).toBeInTheDocument();
   });
