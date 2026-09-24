@@ -35,6 +35,12 @@ public class NodeServiceTests
         return await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = status }], callerId: 0, isAdmin: true, CancellationToken.None);
     }
 
+    static async Task<NodeDetails> CreateWithRefinement(NodeService svc, string refinement, string type = "task", string? status = null, string name = "Test node")
+    {
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = type, Name = name, Status = status }, callerId: 0);
+        return await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/refinement", Value = refinement }], callerId: 0, isAdmin: true, CancellationToken.None);
+    }
+
     // -----------------------------------------------------------------------
     // CreateNode
     // -----------------------------------------------------------------------
@@ -737,8 +743,6 @@ public class NodeServiceTests
         await Create(svc, name: "Zebra");
         await Create(svc, name: "Mango");
 
-        // Sort key must be one of NodeMapper's registered keys ("id", "type", "name", "status").
-        // The test uses "name" to exercise the ascending/descending path.
         AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter
         {
             Count = 100,
@@ -756,10 +760,6 @@ public class NodeServiceTests
     [Test]
     public async Task ListPaged_SortByNodeName_TwoPart_ThrowsKeyNotFound()
     {
-        // NodeService.ListPaged routes sorting through the mapper-based ApplyFilter overload,
-        // which does a strict dictionary lookup. NodeMapper registers "id", "type", "name",
-        // "status" — two-part keys like "node.name" are not registered and throw KeyNotFoundException.
-        // This is intentional: callers sort by the fields the mapper exposes, not by join aliases.
         using DatabaseFixture fixture = new();
         NodeService svc = MakeService(fixture);
         await Create(svc, name: "A");
@@ -878,6 +878,18 @@ public class NodeServiceTests
         NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/status", Value = "closed" }], callerId: 0, isAdmin: true, CancellationToken.None);
 
         Assert.That(result.Status, Is.EqualTo("closed"));
+    }
+
+    [Test]
+    public async Task Patch_ReplaceRefinement_UpdatesField()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await Create(svc);
+        NodeDetails result = await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/refinement", Value = "alpha" }], callerId: 0, isAdmin: true, CancellationToken.None);
+
+        Assert.That(result.Refinement, Is.EqualTo("alpha"));
     }
 
     // -----------------------------------------------------------------------
@@ -1510,6 +1522,208 @@ public class NodeServiceTests
         Assert.Multiple(() => {
             Assert.That(ids, Does.Contain(sev5.Id));
             Assert.That(ids, Does.Not.Contain(sev3.Id));
+        });
+    }
+
+    [Test]
+    public async Task ListPaged_FilterByRefinement_SingleValue_ReturnsMatchingNodes()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        await CreateWithRefinement(svc, "alpha", name: "Alpha1");
+        await CreateWithRefinement(svc, "alpha", name: "Alpha2");
+        await CreateWithRefinement(svc, "beta", name: "Beta1");
+        await Create(svc, name: "NoRefinement");
+
+        long count = await GetPageCount(svc, new NodeFilter { Refinement = ["alpha"], Count = 100 });
+        Assert.That(count, Is.EqualTo(2));
+    }
+
+    [Test]
+    public async Task ListPaged_FilterByRefinement_MultiValue_InStyle()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        await CreateWithRefinement(svc, "alpha", name: "Alpha1");
+        await CreateWithRefinement(svc, "beta", name: "Beta1");
+        await CreateWithRefinement(svc, "gamma", name: "Gamma1");
+        await Create(svc, name: "NoRefinement");
+
+        long count = await GetPageCount(svc, new NodeFilter { Refinement = ["alpha", "beta"], Count = 100 });
+        Assert.That(count, Is.EqualTo(2));
+    }
+
+    [Test]
+    public async Task ListPaged_FilterByRefinement_Wildcard_UsesLike()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        await CreateWithRefinement(svc, "alpha-one", name: "AlphaOne");
+        await CreateWithRefinement(svc, "alpha-two", name: "AlphaTwo");
+        await CreateWithRefinement(svc, "beta", name: "Beta1");
+
+        long count = await GetPageCount(svc, new NodeFilter { Refinement = ["alpha-%"], Count = 100 });
+        Assert.That(count, Is.EqualTo(2));
+    }
+
+    [Test]
+    public async Task ListPaged_FilterByRefinement_ComposesWithTypeAndStatus()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        await CreateWithRefinement(svc, "alpha", type: "task", status: "open", name: "PickupCandidate");
+        await CreateWithRefinement(svc, "alpha", type: "bug", status: "open", name: "WrongType");
+        await CreateWithRefinement(svc, "beta", type: "task", status: "open", name: "WrongRefinement");
+        await CreateWithRefinement(svc, "alpha", type: "task", status: "closed", name: "WrongStatus");
+
+        long count = await GetPageCount(svc, new NodeFilter { Type = ["task"], Status = ["open"], Refinement = ["alpha"], Count = 100 });
+        Assert.That(count, Is.EqualTo(1));
+    }
+
+    [Test]
+    [Description("pins the §6 consumer rule: a plain refinement filter excludes unclassified (null-refinement) nodes, matching the Status precedent")]
+    public async Task ListPaged_RefinementOnly_ExcludesNullRefinementNodes()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails classified = await CreateWithRefinement(svc, "alpha", name: "ClassifiedNode");
+        NodeDetails nullRefinement = await Create(svc, name: "NullRefinementNode");
+
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { Refinement = ["alpha"], Count = 100 }, callerId: 0, isAdmin: true);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(classified.Id), "classified node must be included");
+            Assert.That(ids, Does.Not.Contain(nullRefinement.Id), "null-refinement node must be excluded when only refinement filter is set");
+        });
+    }
+
+    [Test]
+    public async Task ListPaged_NoRefinementFilter_ReturnsOnlyUnclassifiedNodes()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails nullRefinement = await Create(svc, name: "NullRefinementNode");
+        NodeDetails classified = await CreateWithRefinement(svc, "alpha", name: "ClassifiedNode");
+
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { NoRefinement = true, Count = 100 }, callerId: 0, isAdmin: true);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(nullRefinement.Id), "unclassified node must be included");
+            Assert.That(ids, Does.Not.Contain(classified.Id), "classified node must be excluded when only norefinement filter is set");
+        });
+    }
+
+    [Test]
+    [Description("norefinement must follow the Status precedent (NULL OR ''), not the Severity precedent (NULL only) — DiVoid #14806 §8")]
+    public async Task ListPaged_NoRefinementFilter_TreatsEmptyStringRefinementAsUnclassified()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails emptyRefinement = await CreateWithRefinement(svc, "", name: "EmptyRefinementNode");
+        NodeDetails classified = await CreateWithRefinement(svc, "alpha", name: "ClassifiedNode");
+
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { NoRefinement = true, Count = 100 }, callerId: 0, isAdmin: true);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(emptyRefinement.Id), "empty-string refinement must be treated as unclassified");
+            Assert.That(ids, Does.Not.Contain(classified.Id), "classified node must be excluded");
+        });
+    }
+
+    [Test]
+    public async Task ListPaged_RefinementAndNoRefinement_UsesOrSemantics()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails alpha = await CreateWithRefinement(svc, "alpha", name: "AlphaNode");
+        NodeDetails beta = await CreateWithRefinement(svc, "beta", name: "BetaNode");
+        NodeDetails nullRefinement = await Create(svc, name: "NullRefinementNode");
+
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { Refinement = ["alpha"], NoRefinement = true, Count = 100 }, callerId: 0, isAdmin: true);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(alpha.Id), "alpha node must be included (matches Refinement list)");
+            Assert.That(ids, Does.Contain(nullRefinement.Id), "null-refinement node must be included (matches NoRefinement)");
+            Assert.That(ids, Does.Not.Contain(beta.Id), "beta node must be excluded");
+        });
+    }
+
+    [Test]
+    public async Task ListPaged_RefinementAppearsInDefaultFields()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await Create(svc, name: "CheckRefinementFields");
+        await svc.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/refinement", Value = "alpha" }], callerId: 0, isAdmin: true, CancellationToken.None);
+
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPaged(new NodeFilter { Id = [node.Id], Count = 100 }, callerId: 0, isAdmin: true);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        Assert.That(results.Single().Refinement, Is.EqualTo("alpha"));
+    }
+
+    [Test]
+    public async Task PathQuery_RefinementHop_ReturnsOnlyMatchingRefinement()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails hub = await Create(svc, type: "project", name: "RefinementHub");
+        NodeDetails alpha = await CreateWithRefinement(svc, "alpha", type: "task", name: "HopAlpha");
+        NodeDetails beta = await CreateWithRefinement(svc, "beta", type: "task", name: "HopBeta");
+        await svc.LinkNodes(hub.Id, alpha.Id, callerId: 0, isAdmin: true);
+        await svc.LinkNodes(hub.Id, beta.Id, callerId: 0, isAdmin: true);
+
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPagedByPath(
+            new NodePathFilter { Path = $"[type:project,name:RefinementHub]/[type:task,refinement:alpha]", Count = 100 },
+            callerId: 0, isAdmin: true, CancellationToken.None);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(alpha.Id));
+            Assert.That(ids, Does.Not.Contain(beta.Id));
+        });
+    }
+
+    [Test]
+    public async Task PathQuery_RefinementHopWildcard_UsesLike()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails hub = await Create(svc, type: "project", name: "RefinementWildcardHub");
+        NodeDetails alphaOne = await CreateWithRefinement(svc, "alpha-one", type: "task", name: "HopAlphaOne");
+        NodeDetails beta = await CreateWithRefinement(svc, "beta", type: "task", name: "HopBeta");
+        await svc.LinkNodes(hub.Id, alphaOne.Id, callerId: 0, isAdmin: true);
+        await svc.LinkNodes(hub.Id, beta.Id, callerId: 0, isAdmin: true);
+
+        AsyncPageResponseWriter<NodeDetails> writer = await svc.ListPagedByPath(
+            new NodePathFilter { Path = $"[type:project,name:RefinementWildcardHub]/[type:task,refinement:alpha-%]", Count = 100 },
+            callerId: 0, isAdmin: true, CancellationToken.None);
+        List<NodeDetails> results = await CollectPage(writer);
+
+        long[] ids = results.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(alphaOne.Id));
+            Assert.That(ids, Does.Not.Contain(beta.Id));
         });
     }
 

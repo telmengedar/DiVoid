@@ -144,6 +144,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         extra_links: list[int] | None = None,
         access: int | str | None = None,
         severity: int | None = None,
+        refinement: str | None = None,
         root_node_id: int | None = None,
         substance: str | None = None,
     ) -> dict[str, Any]:
@@ -190,6 +191,14 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             severity: Optional integer severity for this task. Application scope
                       fills in meaning (e.g. priority). When absent the server
                       defaults to NULL (no severity set).
+            refinement: Optional string answering "how settled is what this task's
+                        content says?" — independent of status (which answers "where
+                        is this task in a workflow?"). Open vocabulary, passed through
+                        verbatim with no validation and no default (e.g. 'ready',
+                        'needs-input', 'needs-investigation' are illustrative, not an
+                        enforced list). Unset means unclassified — a pickup consumer
+                        querying refinement='ready' excludes it, which is deliberate:
+                        an unclassified task is never an automatic pickup.
             root_node_id: The task's structural home (DiVoid #6857 v1.2) — the scalar
                           that answers "list(type=task, root_node_id=P)" queries, distinct
                           from the Tasks-group LINK above (both are set; they are not the
@@ -242,6 +251,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         node_body: dict[str, Any] = {"name": name, "type": "task", "status": status}
         if severity is not None:
             node_body["severity"] = severity
+        if refinement is not None:
+            node_body["refinement"] = refinement
         if resolved_root_node_id is not None:
             node_body["rootNodeId"] = resolved_root_node_id
         if access is not None:

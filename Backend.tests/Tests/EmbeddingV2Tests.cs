@@ -147,6 +147,29 @@ public class EmbeddingV2Tests
     }
 
     [Test]
+    public async Task Patch_PatchListContainsRefinement_DoesNotTriggerEmbeddingRegeneration()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture);
+
+        NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "task", Name = "RefinementPatch" }, callerId: 0);
+
+        NodeDetails patched = await svc.Patch(node.Id,
+            [new PatchOperation { Op = "replace", Path = "/refinement", Value = "alpha" }],
+            callerId: 0, isAdmin: true, CancellationToken.None);
+
+        Node raw = await fixture.EntityManager.Load<Node>()
+                                              .Where(n => n.Id == node.Id)
+                                              .ExecuteEntityAsync();
+
+        Assert.Multiple(() => {
+            Assert.That(patched.Refinement, Is.EqualTo("alpha"), "refinement must be updated");
+            Assert.That(raw.Embedding, Is.Null,
+                "refinement is metadata, not name/content — it must not route through the embedding-regeneration path");
+        });
+    }
+
+    [Test]
     public async Task Patch_NonExistentNode_ThrowsNotFoundException()
     {
         using DatabaseFixture fixture = new();
