@@ -1,10 +1,4 @@
-"""
-divoid-mcp — MCP server wrapping the DiVoid graph API.
-
-Usage:
-    divoid-mcp              # via console script (pip install -e .)
-    python -m divoid_mcp   # via module entry point
-"""
+"""divoid-mcp — MCP server wrapping the DiVoid graph API."""
 
 from .version import __version__
 

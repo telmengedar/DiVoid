@@ -36,9 +36,13 @@ Pinned group ids for smoke-test target (DiVoid project #3):
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import traceback
+from pathlib import Path
 from typing import Any
 
 from divoid_mcp.config import load_secret
@@ -3383,6 +3387,86 @@ async def smoke_server_bootstrap(config: Any) -> None:
     )
 
 
+async def smoke_console_script_bootstrap(config: Any) -> None:
+    """Spawn the `divoid-mcp` console script by absolute path from a throwaway venv
+    and verify clean startup."""
+    print("\n--- console-script bootstrap (absolute-path spawn from a throwaway venv) ---")
+
+    repo_root = Path(__file__).resolve().parents[2]
+    venv_dir = Path(tempfile.mkdtemp(prefix="divoid-mcp-smoke-venv-"))
+    is_windows = os.name == "nt"
+    venv_python = venv_dir / ("Scripts/python.exe" if is_windows else "bin/python")
+    script_path = venv_dir / ("Scripts/divoid-mcp.exe" if is_windows else "bin/divoid-mcp")
+
+    try:
+        create = subprocess.run(
+            [sys.executable, "-m", "venv", "--system-site-packages", str(venv_dir)],
+            capture_output=True,
+            timeout=60,
+        )
+        _assert(
+            "throwaway venv creation succeeds",
+            create.returncode == 0,
+            create.stderr.decode("utf-8", errors="replace")[:300] if create.returncode else "",
+        )
+        if create.returncode != 0:
+            return
+
+        install = subprocess.run(
+            [str(venv_python), "-m", "pip", "install", "--no-deps", "-q", str(repo_root)],
+            capture_output=True,
+            timeout=120,
+        )
+        _assert(
+            "package installs into the throwaway venv",
+            install.returncode == 0,
+            install.stderr.decode("utf-8", errors="replace")[:300] if install.returncode else "",
+        )
+        if install.returncode != 0:
+            return
+
+        _assert("console script exists at the expected absolute path", script_path.exists(), str(script_path))
+        if not script_path.exists():
+            return
+
+        proc = subprocess.Popen(
+            [str(script_path)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            stdout_bytes, stderr_bytes = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout_bytes, stderr_bytes = proc.communicate()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+
+        stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+        _assert(
+            "console script produces no stdout before shutdown",
+            stdout_bytes == b"",
+            f"stdout_bytes={stdout_bytes[:100]!r}",
+        )
+        console_script_ran = "divoid-mcp ready" in stderr_text or "No DiVoid credentials found" in stderr_text
+        _assert(
+            "console script ran (reached 'ready' or the fail-closed credential diagnostic)",
+            console_script_ran,
+            f"stderr_snippet={stderr_text[:300]!r}",
+        )
+        has_traceback = "Traceback (most recent call last)" in stderr_text
+        _assert(
+            "stderr contains no Python traceback",
+            not has_traceback,
+            f"traceback found — stderr_snippet={stderr_text[:500]!r}" if has_traceback else "",
+        )
+    finally:
+        shutil.rmtree(venv_dir, ignore_errors=True)
+
+
 ### -----------------------------------------------------------------------
 # divoid_edit_content (DiVoid #6285 / PR #159 dependency)
 # ---------------------------------------------------------------------------
@@ -4451,6 +4535,7 @@ async def _run_all(config: Any) -> None:
         smoke_create_node_empty_substance_is_written,
         # Bootstrap: subprocess spawn verifies FastMCP API compat at startup
         smoke_server_bootstrap,
+        smoke_console_script_bootstrap,
     ]
 
     for test_fn in tests:
