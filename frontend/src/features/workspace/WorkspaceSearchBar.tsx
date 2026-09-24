@@ -17,7 +17,7 @@
  * ESC clears the input and dismisses any open dropdown.
  * Outside-click dismisses the dropdown (standard popover UX).
  *
- * Design: docs/architecture/open-by-id.md §5.3 / §6.2 / §6.3 / §8.2 / §8.3
+ * Design: DiVoid #14844 §5.3 / §6.2 / §6.3 / §8.2 / §8.3
  * Task: DiVoid #1607
  * Render-stability constraint: DiVoid #271
  * See also: usePeekState.ts, WorkspaceNodePeekModal.tsx

@@ -22,7 +22,7 @@
  * `data` by `joinLinkMetadata`, renders as a midpoint label via
  * <EdgeLabelRenderer> when present.
  *
- * Design: docs/architecture/workspace-mode.md §5.7; DiVoid #7143 §3
+ * Design: DiVoid #283 §5.7; DiVoid #7143 §3
  * Task: DiVoid node #352 / #7142
  */
 

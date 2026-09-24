@@ -15,7 +15,7 @@
  * Where this constant is consumed: WorkspaceCanvas.tsx, computePaddedBounds().
  *
  * DiVoid Rule 3 documentation node: filed as DiVoid node #<bounds-padding-doc>.
- * See: docs/architecture/workspace-mode.md §bounds-padding.
+ * See: DiVoid #283 §bounds-padding.
  */
 
 /** Pixel padding added to all four sides of the viewport before querying bounds. */

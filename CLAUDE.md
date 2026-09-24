@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `Backend.tests/` — NUnit tests for the backend.
 - `divoid-mcp/` — Python MCP server that wraps the DiVoid REST API (the `mcp__divoid__*` tools). Has its own `CLAUDE.md` (`divoid-mcp/CLAUDE.md`) — read it before touching MCP code.
 - `frontend/` — the web frontend.
-- `docs/` — architecture and design documents (deliverables committed here).
+- `docs/` — holds a residue of six architecture documents pending reconciliation with their DiVoid mirrors (ruling 2026-09-23, DiVoid task **#14833**); new design documents are DiVoid nodes, not files committed here.
 
 `DiVoid.sln` is only the .NET half (Backend + Backend.tests); the MCP and frontend are separate toolchains (Python / Node) rooted in their own subdirectories. When a report says "the MCP does X" or "the frontend does Y", the code is in `divoid-mcp/` or `frontend/` respectively — start there, don't assume it lives elsewhere.
 
