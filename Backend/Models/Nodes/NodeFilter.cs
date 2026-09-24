@@ -64,6 +64,16 @@ public class NodeFilter : ListFilter
     public bool NoSeverity { get; set; }
 
     /// <summary>
+    /// refinement values to filter for; matches nodes whose refinement is in this list
+    /// </summary>
+    public string[] Refinement { get; set; }
+
+    /// <summary>
+    /// when true, only return nodes with no refinement set (null or empty string)
+    /// </summary>
+    public bool NoRefinement { get; set; }
+
+    /// <summary>
     /// root-node ids to filter for; returns only nodes grouped under one of the listed root nodes.
     /// OR-composed with <see cref="NoRootNodeId"/> when both are present.
     /// </summary>

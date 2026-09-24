@@ -33,6 +33,11 @@ public class NodeDetails
     public int? Severity { get; set; }
 
     /// <summary>
+    /// open-vocabulary content-maturity signal; null (or omitted on POST) means unclassified.
+    /// </summary>
+    public string Refinement { get; set; }
+
+    /// <summary>
     /// id of the root node under which this node is grouped; null means ungrouped.
     /// set on create, patchable via <c>PATCH replace /RootNodeId</c>.
     /// soft pointer — the referenced node's existence is not validated.

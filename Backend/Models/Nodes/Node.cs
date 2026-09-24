@@ -22,6 +22,7 @@ public class Node
     [Index("node")]
     [Index("nodestatus")]
     [Index("typeseverity")]
+    [Index("typerefinement")]
     public long TypeId { get; set; }
 
     /// <summary>
@@ -68,6 +69,14 @@ public class Node
     [Index("severity")]
     [Index("typeseverity")]
     public int? Severity { get; set; }
+
+    /// <summary>
+    /// open-vocabulary content-maturity signal interpreted per node type by application clients; null means unclassified.
+    /// </summary>
+    [AllowPatch]
+    [Index("refinement")]
+    [Index("typerefinement")]
+    public string Refinement { get; set; }
 
     /// <summary>
     /// X position of the node in the shared workspace canvas (world units).

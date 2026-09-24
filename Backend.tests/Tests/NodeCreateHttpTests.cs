@@ -115,4 +115,27 @@ public class NodeCreateHttpTests
         Assert.That(fetched.Severity, Is.Null,
             "nodes created without a severity must have null severity after GET (no server-side default)");
     }
+
+    [Test]
+    public async Task CreateNode_WithRefinement_RefinementPersistedToDatabase()
+    {
+        NodeDetails created = await PostNodeAsync(new NodeDetails { Type = "task", Name = "RefinementRoundTrip", Refinement = "alpha" });
+        Assert.That(created.Id, Is.GreaterThan(0), "POST must return a valid id");
+
+        NodeDetails fetched = await GetNodeAsync(created.Id);
+
+        Assert.That(fetched.Refinement, Is.EqualTo("alpha"),
+            "refinement set on POST /api/nodes must survive a subsequent GET (bug #157)");
+    }
+
+    [Test]
+    public async Task CreateNode_WithoutRefinement_RefinementIsNullAfterGet()
+    {
+        NodeDetails created = await PostNodeAsync(new NodeDetails { Type = "task", Name = "NoRefinementNode" });
+
+        NodeDetails fetched = await GetNodeAsync(created.Id);
+
+        Assert.That(fetched.Refinement, Is.Null,
+            "nodes created without a refinement must have null refinement after GET (no server-side default)");
+    }
 }

@@ -52,6 +52,14 @@ public class PathQueryParserTests
     }
 
     [Test]
+    public void Parse_RefinementKey_IsAccepted()
+    {
+        PathQuery q = PathQueryParser.Parse("[type:task,refinement:alpha]");
+        Assert.That(q.Hops[0].Predicates[1].Key, Is.EqualTo("refinement"));
+        Assert.That(q.Hops[0].Predicates[1].Values, Is.EqualTo(new[] { "alpha" }));
+    }
+
+    [Test]
     public void Parse_IdSegment_ParsesNumericValue()
     {
         PathQuery q = PathQueryParser.Parse("[id:42]");
