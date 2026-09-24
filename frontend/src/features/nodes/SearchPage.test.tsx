@@ -148,6 +148,33 @@ describe('SearchPage', () => {
     });
   });
 
+  it('T3: linked-tab browse sends the refinement filter (DiVoid #14811, LinkedPanel parity)', async () => {
+    let capturedUrl: URL | null = null;
+    server.use(
+      http.get(`${BASE_URL}/nodes`, ({ request }) => {
+        capturedUrl = new URL(request.url);
+        return HttpResponse.json(samplePage);
+      }),
+    );
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole('tab', { name: /linked/i }));
+    await user.type(screen.getByRole('textbox', { name: /filter by refinement/i }), 'ready');
+    const input = screen.getByRole('spinbutton', { name: /anchor node id/i });
+    await user.type(input, '3');
+    await user.click(screen.getByRole('button', { name: /browse/i }));
+
+    await waitFor(() => {
+      expect(capturedUrl).not.toBeNull();
+    });
+
+    // Load-bearing: revert the `refinement:` line in LinkedPanel's filter object
+    // and this param disappears from the outgoing request.
+    expect(capturedUrl!.searchParams.get('refinement')).toBe('ready');
+  });
+
   it('ST1: switching to By ID tab renders the input and a disabled Open button', async () => {
     const user = userEvent.setup();
     renderPage();
@@ -192,6 +219,62 @@ describe('SearchPage', () => {
     await user.click(screen.getByRole('tab', { name: /by id/i }));
     expect(screen.getByRole('button', { name: /open/i })).toBeDisabled();
     expect(navigateSpy).not.toHaveBeenCalledWith(expect.stringMatching(/^\/nodes\//));
+  });
+
+  it('T1: semantic search sends the refinement filter and wildcard verbatim (DiVoid #14811)', async () => {
+    let capturedUrl: URL | null = null;
+    server.use(
+      http.get(`${BASE_URL}/nodes`, ({ request }) => {
+        capturedUrl = new URL(request.url);
+        return HttpResponse.json(semanticPage);
+      }),
+    );
+
+    const user = userEvent.setup();
+    renderPage();
+
+    const input = screen.getByRole('searchbox', { name: /semantic search query/i });
+    await user.type(input, 'auth token');
+    await user.type(screen.getByRole('textbox', { name: /filter by refinement/i }), 'needs-%');
+    await user.click(screen.getByRole('button', { name: /search/i }));
+
+    await waitFor(() => {
+      expect(capturedUrl).not.toBeNull();
+    });
+
+    // Load-bearing: revert the `refinement:` line in SemanticPanel's filter object
+    // and this param disappears from the outgoing request.
+    expect(capturedUrl!.searchParams.get('refinement')).toBe('needs-%');
+    expect(capturedUrl!.searchParams.has('norefinement')).toBe(false);
+  });
+
+  it('T2: "Unclassified only" sends norefinement=true and disables the refinement input', async () => {
+    let capturedUrl: URL | null = null;
+    server.use(
+      http.get(`${BASE_URL}/nodes`, ({ request }) => {
+        capturedUrl = new URL(request.url);
+        return HttpResponse.json(semanticPage);
+      }),
+    );
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole('checkbox', { name: /unclassified only/i }));
+    expect(screen.getByRole('textbox', { name: /filter by refinement/i })).toBeDisabled();
+
+    const input = screen.getByRole('searchbox', { name: /semantic search query/i });
+    await user.type(input, 'auth token');
+    await user.click(screen.getByRole('button', { name: /search/i }));
+
+    await waitFor(() => {
+      expect(capturedUrl).not.toBeNull();
+    });
+
+    // Load-bearing: revert the `norefinement:` line in SemanticPanel's filter object
+    // and this param disappears from the outgoing request.
+    expect(capturedUrl!.searchParams.get('norefinement')).toBe('true');
+    expect(capturedUrl!.searchParams.has('refinement')).toBe(false);
   });
 
   it('path tab shows column-pointing error message on 400', async () => {

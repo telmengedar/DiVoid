@@ -220,3 +220,108 @@ describe('EditNodeDialog — Access field', () => {
     expect(screen.queryByLabelText('Access')).toBeNull();
   });
 });
+
+/**
+ * Refinement field tests (DiVoid #14811) — load-bearing per contract §13.1.
+ *
+ * Substitution proof:
+ *
+ *  T4 (free-text edit produces a PATCH op): revert the `newRefinement !== ...`
+ *     block inside `onSubmit`. The PATCH body carries no `/refinement` op →
+ *     `capturedBody` assertion fails with a concrete mismatch.
+ *
+ *  T5 (shown for a type with no status vocabulary): revert the JSX so the
+ *     Refinement input is wrapped in `{statusOptions && (...)}` alongside
+ *     Status. For a `documentation`-typed node (no status dropdown), the
+ *     input would disappear → `getByLabelText('Refinement')` throws. This is
+ *     the concrete pin for "refinement is not type-gated like status" (#14810).
+ *
+ *  T6 (open vocabulary — no allow-list): typing a value the schema/UI has
+ *     never seen still reaches the PATCH body verbatim. There is no enum in
+ *     `editNodeSchema.refinement` to violate, so this is the regression
+ *     trip-wire for anyone later adding one.
+ */
+describe('EditNodeDialog — Refinement field (DiVoid #14811)', () => {
+  it('T5: Refinement input is shown for a type with no status vocabulary (not type-gated)', async () => {
+    const documentationNode: NodeDetails = {
+      id: 42,
+      type: 'documentation',
+      name: 'Test Document',
+      status: null,
+      ownerId: 1,
+    };
+    server.use(http.get(`${BASE_URL}/nodes/42`, () => HttpResponse.json(documentationNode)));
+
+    renderDialog(documentationNode);
+
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: /name/i })).toBeInTheDocument();
+    });
+
+    // documentation carries no status dropdown (statusOptionsForType returns null) —
+    // Refinement must still be present, proving it is not gated the way Status is.
+    expect(screen.queryByLabelText('Status')).toBeNull();
+    expect(screen.getByLabelText('Refinement')).toBeInTheDocument();
+  });
+
+  it('T4/T6: submitting a novel free-text refinement value PATCHes /refinement verbatim', async () => {
+    const user = userEvent.setup();
+
+    let capturedBody: PatchOperation[] | null = null;
+    server.use(
+      http.get(`${BASE_URL}/users/me`, () => HttpResponse.json(ownerUser)),
+      http.patch(`${BASE_URL}/nodes/42`, async ({ request }) => {
+        capturedBody = await request.json() as PatchOperation[];
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+
+    renderDialog(ownerNode);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Refinement')).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByLabelText('Refinement'), 'a-value-nobody-coined-yet');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(capturedBody).not.toBeNull();
+    });
+
+    expect(capturedBody).toContainEqual({
+      op: 'replace',
+      path: '/refinement',
+      value: 'a-value-nobody-coined-yet',
+    });
+  });
+
+  it('clearing an existing refinement PATCHes /refinement with null (unclassified)', async () => {
+    const user = userEvent.setup();
+    const refinedNode: NodeDetails = { ...ownerNode, refinement: 'ready' };
+
+    let capturedBody: PatchOperation[] | null = null;
+    server.use(
+      http.get(`${BASE_URL}/nodes/42`, () => HttpResponse.json(refinedNode)),
+      http.patch(`${BASE_URL}/nodes/42`, async ({ request }) => {
+        capturedBody = await request.json() as PatchOperation[];
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+
+    renderDialog(refinedNode);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Refinement')).toHaveValue('ready');
+    });
+
+    await user.clear(screen.getByLabelText('Refinement'));
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(capturedBody).not.toBeNull();
+    });
+
+    expect(capturedBody).toContainEqual({ op: 'replace', path: '/refinement', value: null });
+  });
+});

@@ -43,6 +43,14 @@ export interface NodeDetails {
    * is null. Present in DefaultListFields (backend NodeMapper).
    */
   severity?: number | null;
+  /**
+   * How settled this node's own content is — independent of `status`, which
+   * tracks workflow position (DiVoid #14810). Open vocabulary: there is no
+   * enum or allow-list on the backend, so any string (or null) is valid.
+   * Optional in the type to remain forward-compatible with field selectors
+   * that omit it; the backend always populates it on `GET /api/nodes/:id`.
+   */
+  refinement?: string | null;
 }
 
 /** Paginated response envelope from GET /api/nodes (including path-query via ?path=). */
@@ -107,10 +115,18 @@ export interface NodeFilter {
   status?: string[];
   linkedto?: number[];
   nostatus?: boolean;
+  /**
+   * Multi-value, wildcard-capable filter on `refinement` (DiVoid #14810/#14811).
+   * `%`/`_` wildcards are resolved server-side — e.g. `['needs-%']` matches the
+   * whole `needs-*` family without the caller enumerating members.
+   */
+  refinement?: string[];
+  /** Matches nodes whose `refinement` is unset (`IS NULL OR = ''`, mirroring `nostatus`). */
+  norefinement?: boolean;
   nototal?: boolean;
   count?: number;
   continue?: number;
-  sort?: 'id' | 'type' | 'name' | 'status';
+  sort?: 'id' | 'type' | 'name' | 'status' | 'refinement';
   descending?: boolean;
   fields?: string[];
   /** Semantic search query. Triggers vector similarity ranking. */

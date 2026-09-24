@@ -1,8 +1,8 @@
 /**
  * NodeResultTable — read-only table for displaying a page of NodeDetails.
  *
- * Columns: id, type, name, status, similarity (only when any result has it).
- * Each row's name cell is a link to /nodes/:id.
+ * Columns: id, type, name, status, refinement, similarity (only when any
+ * result has it). Each row's name cell is a link to /nodes/:id.
  *
  * Pure presentation: no data fetching, no logic beyond what is needed to render.
  */
@@ -11,6 +11,7 @@ import { Link } from 'react-router-dom';
 import type { NodeDetails } from '@/types/divoid';
 import { ROUTES } from '@/lib/constants';
 import { cn } from '@/lib/cn';
+import { RefinementBadge } from './RefinementBadge';
 
 interface NodeResultTableProps {
   nodes: NodeDetails[];
@@ -53,7 +54,7 @@ function StatusBadge({ status }: { status: string | null }) {
 function SkeletonRow() {
   return (
     <tr aria-hidden="true">
-      {[...Array(4)].map((_, i) => (
+      {[...Array(5)].map((_, i) => (
         <td key={i} className="px-3 py-2">
           <div className="h-4 rounded bg-muted animate-pulse" style={{ width: `${60 + i * 10}%` }} />
         </td>
@@ -85,6 +86,9 @@ export function NodeResultTable({ nodes, loading = false, getRowHref }: NodeResu
             <th scope="col" className="px-3 py-2 text-left font-medium text-muted-foreground">
               Status
             </th>
+            <th scope="col" className="px-3 py-2 text-left font-medium text-muted-foreground">
+              Refinement
+            </th>
             {hasSimilarity && (
               <th
                 scope="col"
@@ -105,7 +109,7 @@ export function NodeResultTable({ nodes, loading = false, getRowHref }: NodeResu
           ) : nodes.length === 0 ? (
             <tr>
               <td
-                colSpan={hasSimilarity ? 5 : 4}
+                colSpan={hasSimilarity ? 6 : 5}
                 className="px-3 py-6 text-center text-muted-foreground"
               >
                 No results
@@ -133,6 +137,9 @@ export function NodeResultTable({ nodes, loading = false, getRowHref }: NodeResu
                 </td>
                 <td className="px-3 py-2">
                   <StatusBadge status={node.status} />
+                </td>
+                <td className="px-3 py-2">
+                  <RefinementBadge refinement={node.refinement} />
                 </td>
                 {hasSimilarity && (
                   <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">

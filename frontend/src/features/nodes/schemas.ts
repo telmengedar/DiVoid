@@ -77,6 +77,12 @@ export const editNodeSchema = z.object({
   /** Status is kept as a string (can be empty string to represent "no status"). */
   status: z.string().optional(),
   /**
+   * Free-text refinement value (can be empty string to represent "unclassified").
+   * No allow-list — `refinement` is an open vocabulary (DiVoid #14810); the form
+   * never validates it against a closed set.
+   */
+  refinement: z.string().optional(),
+  /**
    * Per-node access value. Only submitted when the caller is owner or admin
    * (the `canEditAccess` gate in EditNodeDialog prevents the field rendering otherwise).
    * Backend rejects the PATCH with 403 if the caller lacks owner/admin permission.

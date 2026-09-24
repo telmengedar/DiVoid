@@ -71,16 +71,39 @@ function TabBar({ active, onChange }: TabBarProps) {
   );
 }
 
-// ─── Filter bar (type + status) ───────────────────────────────────────────────
+// ─── Filter bar (type + status + refinement) ──────────────────────────────────
 
 interface FilterBarProps {
   typeFilter: string;
   statusFilter: string;
+  refinementFilter: string;
+  noRefinement: boolean;
   onTypeChange: (v: string) => void;
   onStatusChange: (v: string) => void;
+  onRefinementChange: (v: string) => void;
+  onNoRefinementChange: (v: boolean) => void;
 }
 
-function FilterBar({ typeFilter, statusFilter, onTypeChange, onStatusChange }: FilterBarProps) {
+/**
+ * Type/status/refinement filter row shared by the Semantic and Linked panels.
+ *
+ * The refinement input is free text, not a dropdown — DiVoid #14810/#14811
+ * forbid a hard-coded member list, so unlike a closed vocabulary this can only
+ * ever be "whatever string the caller types", including `%`/`_` wildcards that
+ * the backend resolves (e.g. `needs-%` matches the whole `needs-*` family).
+ * "Unclassified only" sends `norefinement=true` and disables the text input,
+ * mirroring the mutually-exclusive shape of the backend's OR-composed filter.
+ */
+function FilterBar({
+  typeFilter,
+  statusFilter,
+  refinementFilter,
+  noRefinement,
+  onTypeChange,
+  onStatusChange,
+  onRefinementChange,
+  onNoRefinementChange,
+}: FilterBarProps) {
   return (
     <div className="flex flex-wrap gap-3 items-end">
       <div className="flex flex-col gap-1">
@@ -111,6 +134,30 @@ function FilterBar({ typeFilter, statusFilter, onTypeChange, onStatusChange }: F
           aria-label="Filter by status"
         />
       </div>
+      <div className="flex flex-col gap-1">
+        <label htmlFor="filter-refinement" className="text-xs font-medium text-muted-foreground">
+          Refinement
+        </label>
+        <input
+          id="filter-refinement"
+          type="text"
+          placeholder="ready, needs-%…"
+          value={refinementFilter}
+          disabled={noRefinement}
+          onChange={(e) => onRefinementChange(e.target.value)}
+          className="h-8 rounded-md border border-border bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 w-40"
+          aria-label="Filter by refinement"
+        />
+      </div>
+      <label className="flex items-center gap-1.5 h-8 text-xs font-medium text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={noRefinement}
+          onChange={(e) => onNoRefinementChange(e.target.checked)}
+          className="rounded border-border"
+        />
+        Unclassified only
+      </label>
     </div>
   );
 }
@@ -122,10 +169,16 @@ function SemanticPanel() {
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [refinementFilter, setRefinementFilter] = useState('');
+  const [noRefinement, setNoRefinement] = useState(false);
 
   const filter = {
     type: typeFilter ? typeFilter.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
     status: statusFilter ? statusFilter.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+    refinement: !noRefinement && refinementFilter
+      ? refinementFilter.split(',').map((s) => s.trim()).filter(Boolean)
+      : undefined,
+    norefinement: noRefinement || undefined,
     count: 50,
   };
 
@@ -174,8 +227,12 @@ function SemanticPanel() {
       <FilterBar
         typeFilter={typeFilter}
         statusFilter={statusFilter}
+        refinementFilter={refinementFilter}
+        noRefinement={noRefinement}
         onTypeChange={setTypeFilter}
         onStatusChange={setStatusFilter}
+        onRefinementChange={setRefinementFilter}
+        onNoRefinementChange={setNoRefinement}
       />
 
       {error && !(error instanceof DivoidApiError) && (
@@ -202,10 +259,16 @@ function LinkedPanel() {
   const [anchorId, setAnchorId] = useState(0);
   const [typeFilter, setTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [refinementFilter, setRefinementFilter] = useState('');
+  const [noRefinement, setNoRefinement] = useState(false);
 
   const filter = {
     type: typeFilter ? typeFilter.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
     status: statusFilter ? statusFilter.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+    refinement: !noRefinement && refinementFilter
+      ? refinementFilter.split(',').map((s) => s.trim()).filter(Boolean)
+      : undefined,
+    norefinement: noRefinement || undefined,
     count: 100,
   };
 
@@ -258,8 +321,12 @@ function LinkedPanel() {
       <FilterBar
         typeFilter={typeFilter}
         statusFilter={statusFilter}
+        refinementFilter={refinementFilter}
+        noRefinement={noRefinement}
         onTypeChange={setTypeFilter}
         onStatusChange={setStatusFilter}
+        onRefinementChange={setRefinementFilter}
+        onNoRefinementChange={setNoRefinement}
       />
 
       {error && !(error instanceof DivoidApiError) && (

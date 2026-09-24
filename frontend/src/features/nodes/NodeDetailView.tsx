@@ -38,6 +38,7 @@ import { ContentUploadZone } from './ContentUploadZone';
 import { MarkdownEditorSurface, isTextShaped } from './MarkdownEditorSurface';
 import { NodeResultTable } from '@/components/common/NodeResultTable';
 import { StatusBadge } from '@/components/common/StatusBadge';
+import { RefinementBadge } from '@/components/common/RefinementBadge';
 import { DivoidApiError } from '@/types/divoid';
 import type { NodeDetails } from '@/types/divoid';
 import { ROUTES } from '@/lib/constants';
@@ -345,6 +346,7 @@ function NeighboursRegion({ nodeId, canWrite, onAddLink, onNeighbourClick }: Nei
                 <th scope="col" className="px-3 py-2 text-left font-medium text-muted-foreground">Type</th>
                 <th scope="col" className="px-3 py-2 text-left font-medium text-muted-foreground">Name</th>
                 <th scope="col" className="px-3 py-2 text-left font-medium text-muted-foreground">Status</th>
+                <th scope="col" className="px-3 py-2 text-left font-medium text-muted-foreground">Refinement</th>
                 {canWrite && (
                   <th scope="col" className="px-3 py-2 text-right font-medium text-muted-foreground w-20">
                     <span className="sr-only">Actions</span>
@@ -380,6 +382,9 @@ function NeighboursRegion({ nodeId, canWrite, onAddLink, onNeighbourClick }: Nei
                   </td>
                   <td className="px-3 py-2">
                     <StatusBadge status={n.status} />
+                  </td>
+                  <td className="px-3 py-2">
+                    <RefinementBadge refinement={n.refinement} />
                   </td>
                   {canWrite && (
                     <td className="px-3 py-2 text-right">
@@ -527,6 +532,10 @@ export function NodeDetailView({ nodeId, onClose, onNeighbourClick }: NodeDetail
             }
           />
           <MetadataRow label="Status" value={<StatusBadge status={node?.status ?? null} />} />
+          <MetadataRow
+            label="Refinement"
+            value={<RefinementBadge refinement={node?.refinement} />}
+          />
           <MetadataRow
             label="Content type"
             value={

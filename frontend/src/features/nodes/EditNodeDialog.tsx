@@ -1,9 +1,12 @@
 /**
  * EditNodeDialog — "Edit" dialog on the node detail page.
  *
- * Patches name and status via PATCH /api/nodes/{id}.
+ * Patches name, status, and refinement via PATCH /api/nodes/{id}.
  * Status dropdown is only shown when the node type carries a status
- * (task or bug). Admin-only fields (Permissions) are guarded via useWhoami.
+ * (task or bug). Refinement is a free-text input shown for every node type —
+ * unlike status it is not type-gated (DiVoid #14810 §"unset means unclassified":
+ * any node type may carry a refinement claim). Admin-only fields (Permissions)
+ * are guarded via useWhoami.
  *
  * On success: the node detail query is invalidated by the mutation hook;
  *             the dialog closes.
@@ -55,6 +58,7 @@ export function EditNodeDialog({ open, onOpenChange, node }: EditNodeDialogProps
     defaultValues: {
       name: node.name,
       status: node.status ?? '',
+      refinement: node.refinement ?? '',
       access: node.access,
     },
   });
@@ -66,10 +70,15 @@ export function EditNodeDialog({ open, onOpenChange, node }: EditNodeDialogProps
   // mutation.reset() is called in handleOpenChange instead.
   useEffect(() => {
     if (open) {
-      reset({ name: node.name, status: node.status ?? '', access: node.access });
+      reset({
+        name: node.name,
+        status: node.status ?? '',
+        refinement: node.refinement ?? '',
+        access: node.access,
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, node.name, node.status, node.access]);
+  }, [open, node.name, node.status, node.refinement, node.access]);
 
   // Reset mutation state on close (Pattern A: event not effect, avoids mutation
   // identity loop — see CreateNodeDialog for full comment).
@@ -91,6 +100,11 @@ export function EditNodeDialog({ open, onOpenChange, node }: EditNodeDialogProps
     const newStatus = values.status?.trim() || null;
     if (newStatus !== node.status) {
       ops.push({ op: 'replace' as const, path: '/status', value: newStatus });
+    }
+
+    const newRefinement = values.refinement?.trim() || null;
+    if (newRefinement !== (node.refinement ?? null)) {
+      ops.push({ op: 'replace' as const, path: '/refinement', value: newRefinement });
     }
 
     // Access: only appended when the user is owner/admin (canEditAccess) and the
@@ -135,7 +149,7 @@ export function EditNodeDialog({ open, onOpenChange, node }: EditNodeDialogProps
           </div>
 
           <p id="edit-node-description" className="sr-only">
-            Edit the name, status, and access of this node.
+            Edit the name, status, refinement, and access of this node.
           </p>
 
           <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
@@ -180,6 +194,20 @@ export function EditNodeDialog({ open, onOpenChange, node }: EditNodeDialogProps
                 </select>
               </div>
             )}
+
+            <div className="flex flex-col gap-1">
+              <label htmlFor="edit-refinement" className="text-sm font-medium">
+                Refinement
+              </label>
+              <input
+                id="edit-refinement"
+                type="text"
+                autoComplete="off"
+                placeholder="e.g. ready, needs-input, draft…"
+                className="h-9 rounded-md border border-border bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+                {...register('refinement')}
+              />
+            </div>
 
             {/* Access — owner/admin only; mirrors NodeAuthorization.BuildOwnerPredicate */}
             {canEditAccess && (
