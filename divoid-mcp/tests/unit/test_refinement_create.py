@@ -214,7 +214,7 @@ async def test_create_task_with_refinement_included_in_post_body() -> None:
 
 @pytest.mark.asyncio
 async def test_create_task_status_new_without_content_still_works_with_refinement() -> None:
-    """status='new' quick-capture path is untouched by refinement (no _ALLOWED_STATUSES change)."""
+    """status='new' quick-capture path, which waives the content requirement, is untouched by refinement."""
     server = _make_server(register_create_task)
     captured: list[httpx.Request] = []
 
