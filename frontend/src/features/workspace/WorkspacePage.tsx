@@ -10,14 +10,14 @@
  * load-bearing structural decision: the bar's local input state, debounce
  * timer, and semantic-query result never cross the canvas prop boundary, so
  * typing into the search bar does not cause WorkspaceCanvas to re-render.
- * See design docs/architecture/open-by-id.md §5.3 / §9.1.
+ * See design DiVoid #14844 §5.3 / §9.1.
  *
  * The WorkspaceCanvas import is lazy at the route level (see routes.tsx). This
  * file is also lazy-loaded, so the @xyflow/react bundle is split from the main
  * chunk.
  *
  * Design: docs/architecture/workspace-modal-preview.md §5.4
- *         docs/architecture/open-by-id.md §5.4
+ *         DiVoid #14844 §5.4
  * Task: DiVoid node #230 / #1253 / #1607
  */
 

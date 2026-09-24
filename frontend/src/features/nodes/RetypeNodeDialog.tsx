@@ -11,7 +11,7 @@
  * lifecycle state (non-empty status OR non-null severity) AND the target
  * type is outside the lifecycle-bearing allowlist (task, bug). Advisory only.
  *
- * Design: docs/architecture/node-type-untyped-and-retype.md §9.1
+ * Design: DiVoid #14843 §9.1
  * Task: DiVoid node #2012
  * Backend PR: #149
  */

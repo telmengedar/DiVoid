@@ -34,7 +34,7 @@
  * at high zoom-out levels. When total > MAX_VIEWPORT_NODES the caller surfaces
  * a truncation badge so users know to zoom in.
  *
- * Design: docs/architecture/workspace-mode.md §5.8
+ * Design: DiVoid #283 §5.8
  * Task: DiVoid node #230 / #318 / #1976
  */
 

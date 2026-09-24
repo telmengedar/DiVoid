@@ -20,7 +20,7 @@
  * renders and adding the comparison would be unnecessary overhead. See design
  * §5.6 for the reasoning.
  *
- * Design: docs/architecture/workspace-mode.md §5.12 /
+ * Design: DiVoid #283 §5.12 /
  *         docs/architecture/workspace-modal-preview.md §5.6
  * Task: DiVoid node #230 / #1253
  */

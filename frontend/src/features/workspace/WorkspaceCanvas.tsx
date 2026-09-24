@@ -19,7 +19,7 @@
  *  - nodeTypes / edgeTypes objects are declared outside the component (stable refs).
  *  - The bounds debounce prevents thrashing the query on every pan tick.
  *
- * Design: docs/architecture/workspace-mode.md §5.7 /
+ * Design: DiVoid #283 §5.7 /
  *         docs/architecture/workspace-modal-preview.md §5.5 / §5.6
  * Task: DiVoid node #230 / #318 / #352 / #1253 / #1976
  */

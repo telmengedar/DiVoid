@@ -8,7 +8,7 @@
  * is invalidated by the mutation hook so the neighbours list updates.
  *
  * Design: docs/architecture/frontend-bootstrap.md §5.6, §6.6;
- *         docs/architecture/link-direction-context-frontend.md §16 PR 1
+ *         DiVoid #14838 §16 PR 1
  * Task: DiVoid node #229; DiVoid #7142/#7143
  */
 

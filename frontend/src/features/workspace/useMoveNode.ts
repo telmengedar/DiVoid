@@ -14,7 +14,7 @@
  * On error: sonner toast. The viewport query refetches and snaps the node
  * back to its server-side position on next poll.
  *
- * Design: docs/architecture/workspace-mode.md §5.10
+ * Design: DiVoid #283 §5.10
  * Task: DiVoid node #230, perf task #343
  */
 
