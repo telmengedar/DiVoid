@@ -101,9 +101,11 @@ export function useCreateNode() {
  * Patches an existing node by id.
  *
  * Accepts a JSON-Patch array (PatchOperation[]). Supported backend paths:
- *   /name      — replace with a new string
- *   /status    — replace with a status string or null
- *   /type      — replace with a type name; empty string = untyped (PR #149)
+ *   /name        — replace with a new string
+ *   /status      — replace with a status string or null
+ *   /refinement  — replace with a refinement string or null; open vocabulary,
+ *                  no allow-list on either side (DiVoid #14810/#14811)
+ *   /type        — replace with a type name; empty string = untyped (PR #149)
  *
  * On success: the node detail query and any linked-to queries are invalidated.
  * On error: a sonner toast shows the backend error.

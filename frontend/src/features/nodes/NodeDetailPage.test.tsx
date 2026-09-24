@@ -45,17 +45,31 @@ const emptyNode: NodeDetails = {
   // contentType intentionally absent — mirrors a node created with no content blob.
 };
 
+/**
+ * Fixture: a node carrying a refinement value (DiVoid #14811). Node id 56 avoids
+ * collision with sampleNode (42) and emptyNode (55).
+ */
+const nodeWithRefinement: NodeDetails = {
+  id: 56,
+  type: 'task',
+  name: 'Classified task',
+  status: 'open',
+  contentType: 'text/markdown; charset=utf-8',
+  refinement: 'needs-input',
+};
+
 const server = setupServer(
   http.get(`${BASE_URL}/users/me`, () => HttpResponse.json(writeUser)),
   http.get(`${BASE_URL}/nodes/:id`, ({ params }) => {
     const id = parseInt(params.id as string, 10);
     if (id === 42) return HttpResponse.json(sampleNode);
     if (id === 55) return HttpResponse.json(emptyNode);
+    if (id === 56) return HttpResponse.json(nodeWithRefinement);
     return HttpResponse.json({ code: 'notfound', text: `Node ${id} not found` }, { status: 404 });
   }),
   http.get(`${BASE_URL}/nodes/:id/content`, ({ params }) => {
     const id = parseInt(params.id as string, 10);
-    if (id === 42) {
+    if (id === 42 || id === 56) {
       return new HttpResponse('# Hello\n\nThis is **markdown** content.', {
         headers: { 'Content-Type': 'text/markdown' },
       });
@@ -226,6 +240,28 @@ describe('NodeDetailPage — read regions', () => {
 
     // Load-bearing: revert the Access MetadataRow from NodeDetailView.tsx and this fails.
     expect(screen.getByText('Read, Write')).toBeInTheDocument();
+  });
+
+  it('renders Refinement metadata row as an em-dash when unset (DiVoid #14811)', async () => {
+    renderAtId(42);
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Document')).toBeInTheDocument();
+    });
+
+    const label = screen.getAllByText('Refinement').find((el) => el.tagName === 'SPAN');
+    expect(label).toBeDefined();
+    expect(label!.closest('div')?.textContent).toContain('—');
+  });
+
+  it('T1: renders Refinement metadata row with the node\'s value (DiVoid #14811)', async () => {
+    renderAtId(56);
+
+    await waitFor(() => {
+      expect(screen.getByText('Classified task')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('needs-input')).toBeInTheDocument();
   });
 
   it('renders markdown content (not raw source)', async () => {
