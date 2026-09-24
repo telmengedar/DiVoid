@@ -15,7 +15,7 @@ namespace Backend.tests.Tests;
 /// HTTP-layer tests driving the <c>refinement</c>/<c>norefinement</c>, <c>status</c>/<c>nostatus</c>
 /// and <c>severity</c>/<c>noseverity</c> query-string flags through <c>GET /api/nodes</c>.
 /// </summary>
-[TestFixture]
+[TestFixture, Parallelizable]
 public class NodeFilterFlagsHttpTests
 {
     WebApplicationFactory<Program> factory = null!;
@@ -55,7 +55,7 @@ public class NodeFilterFlagsHttpTests
         return page.Result?.Select(n => n.Id).ToArray() ?? [];
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task RefinementSingleValue_ReturnsOnlyMatchingNode()
     {
         string tag = NewTag();
@@ -70,7 +70,7 @@ public class NodeFilterFlagsHttpTests
         });
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task RefinementCommaSeparated_ReturnsNodesMatchingAnyListedValue()
     {
         string tag = NewTag();
@@ -87,7 +87,7 @@ public class NodeFilterFlagsHttpTests
         });
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task RefinementRepeatedKey_ReturnsNodesMatchingAnyListedValue()
     {
         string tag = NewTag();
@@ -104,7 +104,7 @@ public class NodeFilterFlagsHttpTests
         });
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task RefinementWildcard_ReturnsNodesMatchingPattern()
     {
         string tag = NewTag();
@@ -121,7 +121,7 @@ public class NodeFilterFlagsHttpTests
         });
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task NoRefinementTrue_ReturnsOnlyNodesWithNoRefinement()
     {
         string tag = NewTag();
@@ -136,7 +136,7 @@ public class NodeFilterFlagsHttpTests
         });
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task RefinementValueAndNoRefinement_UsesOrComposition()
     {
         string tag = NewTag();
@@ -153,7 +153,7 @@ public class NodeFilterFlagsHttpTests
         });
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task StatusSingleValue_ReturnsOnlyMatchingNode()
     {
         string tag = NewTag();
@@ -168,7 +168,7 @@ public class NodeFilterFlagsHttpTests
         });
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task NoStatusTrue_ReturnsOnlyNodesWithNoStatus()
     {
         string tag = NewTag();
@@ -183,7 +183,7 @@ public class NodeFilterFlagsHttpTests
         });
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task StatusValueAndNoStatus_UsesOrComposition()
     {
         string tag = NewTag();
@@ -200,7 +200,7 @@ public class NodeFilterFlagsHttpTests
         });
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task SeveritySingleValue_ReturnsOnlyMatchingNode()
     {
         string tag = NewTag();
@@ -215,7 +215,7 @@ public class NodeFilterFlagsHttpTests
         });
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task NoSeverityTrue_ReturnsOnlyNodesWithNoSeverity()
     {
         string tag = NewTag();
@@ -230,7 +230,7 @@ public class NodeFilterFlagsHttpTests
         });
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task SeverityValueAndNoSeverity_UsesOrComposition()
     {
         string tag = NewTag();
