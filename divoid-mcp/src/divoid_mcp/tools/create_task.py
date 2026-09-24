@@ -19,7 +19,13 @@ Invariant guards (before any HTTP call):
   - Both content and path given → content_path_conflict
   - Both project_id and tasks_group_id provided → mutually_exclusive_link_target
   - Neither provided → no_link_target
-  - status not in allowed lifecycle values → task_status_not_in_lifecycle
+
+status itself is NOT validated against a fixed lifecycle here (invariant 6,
+divoid-mcp/CLAUDE.md): the backend's Status column is a free-form string with
+no server-side vocabulary check (Node.Status carries no allow-list attribute
+and NodeService.CreateNode inserts it verbatim), so any value the caller
+passes is forwarded as-is. "open" remains the tool's own default because it
+is a useful starting point, not because other values are rejected.
 
 FastMCP exposes all parameters as plain JSON Schema types ({"type": "string"}, etc.)
 without minLength, oneOf, or enum constraints. The invariant guard is the sole
@@ -44,8 +50,6 @@ from ._substance import write_substance
 from .patch_node import _canonicalize_access
 
 logger = logging.getLogger(__name__)
-
-_ALLOWED_STATUSES = {"new", "open", "in-progress", "closed"}
 
 _TOOL_DESCRIPTION = """\
 Create a task node atomically: creates the node, sets its content, links it to the \
@@ -100,14 +104,11 @@ def _check_invariants(
             "or provide tasks_group_id directly (e.g. DiVoid Tasks = 314).",
         )
 
-    if status not in _ALLOWED_STATUSES:
-        raise InvariantViolation(
-            "task_status_not_in_lifecycle",
-            f"Status '{status}' is not a valid task status. "
-            f"Allowed values: {', '.join(sorted(_ALLOWED_STATUSES))}. "
-            "See DiVoid #493 §5 for the task lifecycle.",
-        )
-
+    # status is deliberately NOT checked against a fixed set here (invariant 6 --
+    # the backend's Status column has no server-side vocabulary check, see the
+    # module docstring). What would falsify this: a NodeService.CreateNode path
+    # that rejects an unrecognised status value, or an [AllowedValues]-style
+    # attribute on Node.Status -- neither exists in Backend/ as of this change.
     guard_exclusive(content, path)
     if status != "new" and path is None and (not content or not content.strip()):
         raise InvariantViolation(
@@ -178,9 +179,12 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                   this path. A zero-byte file is refused (file_empty); a
                   whitespace-only file is uploaded as-is, unlike whitespace-only
                   `content`.
-            status: Task lifecycle status ('new', 'open', 'in-progress', 'closed').
-                    Defaults to 'open'. Use 'new' only for content-not-yet-written
-                    captures.
+            status: Task status. Open vocabulary, passed through verbatim with no
+                    validation and no fixed lifecycle -- the backend accepts any
+                    string. 'new' is the one value this tool treats specially:
+                    it is the quick-capture stage that waives the content
+                    requirement below. Defaults to 'open', a useful starting
+                    point, not a constraint on what else is allowed.
             extra_links: Additional node ids to link the new task to (e.g. parent
                          task, related documentation). The Tasks group link is always
                          added automatically.

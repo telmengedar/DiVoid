@@ -16,9 +16,11 @@ would silently break:
     unconditional 'refinement': n.get('refinement') row projection.
 
 Also covers: refinement/norefinement forwarded as query params, sort='refinement'
-accepted by the invariant guard, and -- explicitly -- that refinement +
-norefinement together do NOT raise a mutual-exclusion error (unlike
-status/nostatus), because the backend OR-composes that combination.
+forwarded rather than rejected, and -- explicitly -- that refinement +
+norefinement together do NOT raise a mutual-exclusion error, because the
+backend OR-composes that combination (the same is now true of status/nostatus,
+severity/no_severity, and root_node_id/no_root_node_id -- see
+test_list_guard_removal.py).
 
 Fixture values ('ready', 'needs-input') are synthetic placeholders illustrating
 an open vocabulary, not an enforced list.
@@ -168,12 +170,13 @@ async def test_list_norefinement_forwarded() -> None:
 @pytest.mark.asyncio
 async def test_list_refinement_and_norefinement_together_not_rejected() -> None:
     """refinement=[...] AND norefinement=True together must NOT raise a
-    mutual-exclusion invariant error -- unlike status/nostatus, the backend
-    OR-composes this combination as a meaningful query.
+    mutual-exclusion invariant error -- the backend OR-composes this
+    combination as a meaningful query, the same as status/nostatus,
+    severity/no_severity, and root_node_id/no_root_node_id.
 
     Substitution probe: add a mutual-exclusion guard for refinement/norefinement
-    (mirroring the nostatus/status one) -- this test starts failing with
-    isError=True, which is exactly the regression this test exists to catch.
+    -- this test starts failing with isError=True, which is exactly the
+    regression this test exists to catch.
     """
     server = _make_server(register_list_nodes, "divoid-mcp-refinement-list-both")
     payload = {"result": [], "total": 0, "continue": None}
@@ -194,10 +197,9 @@ async def test_list_refinement_and_norefinement_together_not_rejected() -> None:
 
 @pytest.mark.asyncio
 async def test_list_sort_by_refinement_accepted() -> None:
-    """sort='refinement' must pass the invariant guard and be forwarded.
-
-    Substitution probe: remove 'refinement' from _VALID_SORT_FIELDS -- this call
-    raises sort_invalid_field and the isError assertion fails.
+    """sort='refinement' is forwarded to the backend rather than rejected
+    client-side (there is no client-side sort-key allow-list at all -- see
+    test_list_guard_removal.py for the general regression coverage of that).
     """
     server = _make_server(register_list_nodes, "divoid-mcp-refinement-list-sort")
     payload = {"result": [], "total": 0, "continue": None}

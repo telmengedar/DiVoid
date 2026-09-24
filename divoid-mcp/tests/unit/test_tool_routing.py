@@ -1714,22 +1714,6 @@ async def test_list_sort_severity_forwarded(server: FastMCP) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_no_severity_and_severity_mutually_exclusive(server: FastMCP) -> None:
-    """no_severity=True and severity=[5] → invariant guard returns isError before HTTP call."""
-    with respx.mock(assert_all_called=False) as mock:
-        mock.get(_NODES_URL).mock(return_value=httpx.Response(200, json={"result": [], "total": 0}))
-        result = await _call(server, "divoid_list", {"no_severity": True, "severity": [5]})
-
-    assert result.get("isError") is True, (
-        f"Expected isError=True for no_severity+severity conflict, got: {result}"
-    )
-    content_text: str = result["content"][0]["text"]
-    assert "mutually_exclusive_noseverity_severity" in content_text, (
-        f"Expected mutually_exclusive_noseverity_severity error code, got: {content_text!r}"
-    )
-
-
-@pytest.mark.asyncio
 async def test_patch_node_severity_value_appends_op(server: FastMCP) -> None:
     """severity=5 → JSON-Patch body contains replace /severity op with value 5.
 
@@ -2201,26 +2185,6 @@ async def test_list_no_root_node_id_forwarded(server: FastMCP) -> None:
     assert "noRootNodeId=true" in url, (
         f"Expected 'noRootNodeId=true' in URL, got: {url!r}. "
         "Substitution probe: removing the noRootNodeId forwarding block in _execute causes this failure."
-    )
-
-
-@pytest.mark.asyncio
-async def test_list_no_root_node_id_and_root_node_id_mutually_exclusive(server: FastMCP) -> None:
-    """no_root_node_id=True and root_node_id=[5] → invariant guard returns isError before HTTP call.
-
-    Substitution probe: remove the no_root_node_id/root_node_id mutual-exclusion check from
-    _check_invariants — the guard no longer fires and this test fails on isError assertion.
-    """
-    with respx.mock(assert_all_called=False) as mock:
-        mock.get(_NODES_URL).mock(return_value=httpx.Response(200, json={"result": [], "total": 0}))
-        result = await _call(server, "divoid_list", {"no_root_node_id": True, "root_node_id": [5]})
-
-    assert result.get("isError") is True, (
-        f"Expected isError=True for no_root_node_id+root_node_id conflict, got: {result}"
-    )
-    content_text: str = result["content"][0]["text"]
-    assert "mutually_exclusive_norootnodeid_rootnodeid" in content_text, (
-        f"Expected mutually_exclusive_norootnodeid_rootnodeid error code, got: {content_text!r}"
     )
 
 
