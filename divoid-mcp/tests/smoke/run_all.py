@@ -1794,12 +1794,16 @@ async def smoke_list_path_empty_result(config: Any) -> None:
     _assert("total is 0", total == 0, f"total={total}")
 
 
-async def smoke_list_path_and_linkedto_invariant(config: Any) -> None:
-    """divoid_list: path + linkedto together -> mutually_exclusive_path_linkedto invariant."""
-    print("\n--- divoid_list (invariant: path + linkedto mutually exclusive) ---")
+async def smoke_list_path_and_linkedto_not_rejected(config: Any) -> None:
+    """
+    divoid_list: path=... + linkedto=[N] together must NOT raise -- the backend
+    composes them (NodeService.ComposeHops ANDs linkedto into the path-resolved
+    terminal set), so they are not alternatives. A client-side mutual-exclusion
+    guard used to reject this; it has been removed (DiVoid #14829).
+    """
+    print("\n--- divoid_list (path + linkedto together, composed, not rejected) ---")
 
     raised = False
-    violation_code = None
     try:
         _check_list_invariants(
             path="[type:project,name:DiVoid]",
@@ -1810,16 +1814,10 @@ async def smoke_list_path_and_linkedto_invariant(config: Any) -> None:
             sort=None,
             fields=None,
         )
-    except InvariantViolation as exc:
+    except InvariantViolation:
         raised = True
-        violation_code = exc.code
 
-    _assert("path+linkedto raises InvariantViolation", raised)
-    _assert(
-        "violation code is 'mutually_exclusive_path_linkedto'",
-        violation_code == "mutually_exclusive_path_linkedto",
-        f"code={violation_code!r}",
-    )
+    _assert("path+linkedto together does NOT raise InvariantViolation", not raised)
 
 
 async def smoke_list_nostatus_and_status_not_rejected(config: Any) -> None:
@@ -4473,7 +4471,7 @@ async def _run_all(config: Any) -> None:
         smoke_list_path_multi_hop,
         smoke_list_path_wildcard,
         smoke_list_path_empty_result,
-        smoke_list_path_and_linkedto_invariant,
+        smoke_list_path_and_linkedto_not_rejected,
         smoke_list_nostatus_and_status_not_rejected,
         smoke_list_bounds_invalid_length,
         smoke_list_bounds_valid,

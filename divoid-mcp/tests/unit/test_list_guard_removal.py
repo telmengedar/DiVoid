@@ -16,6 +16,13 @@ this endpoint registers far more sort keys than the tool used to accept, so the
 allow-list is gone and a previously-rejected value now reaches the backend, which
 is the only party that actually knows the current key set.
 
+Also pins the removal of the path/linkedto mutual-exclusion guard (DiVoid #14829,
+the sixth member of this guard class -- the first five were addressed by PR #194).
+NodeService.ComposeHops composes path and linkedto rather than treating them as
+alternatives: linkedto ANDs into the path-resolved terminal set the same way the
+other standard filters do (NodeService.cs:595-609). A guard here used to reject
+the combination outright.
+
 No network calls beyond a respx mock and no live credentials are required.
 """
 
@@ -139,6 +146,73 @@ async def test_no_root_node_id_and_root_node_id_together_not_rejected(server: Fa
     )
     assert captured[0].url.params.get_list("rootNodeId") == ["5"]
     assert captured[0].url.params.get("noRootNodeId") == "true"
+
+
+# ---------------------------------------------------------------------------
+# The removed path/linkedto mutual-exclusion guard (DiVoid #14829)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_path_and_linkedto_together_not_rejected(server: FastMCP) -> None:
+    """path=... + linkedto=[N] together must NOT raise a mutual-exclusion error --
+    NodeService.ComposeHops composes them on the backend (linkedto narrows the
+    path-resolved terminal set), so they are not alternatives.
+
+    Substitution probe: re-add a path/linkedto mutual-exclusion check to
+    _check_invariants -- this call returns isError and the test fails.
+    """
+    payload = {"result": [], "total": 0, "continue": None}
+
+    with respx.mock(assert_all_called=True) as mock:
+        captured = _mock_response(mock, payload)
+        result = await _call(
+            server,
+            {"path": "[type:project,name:DiVoid]", "linkedto": [3]},
+        )
+
+    assert result.get("isError") is not True, (
+        f"path + linkedto together must be accepted (composed by the backend), "
+        f"got: {result}"
+    )
+    assert captured[0].url.params.get("path") == "[type:project,name:DiVoid]"
+    assert captured[0].url.params.get_list("linkedto") == ["3"]
+
+
+@pytest.mark.asyncio
+async def test_path_and_linkedto_together_reaches_backend_with_both_params(
+    server: FastMCP,
+) -> None:
+    """A path query narrowed by linkedto must reach the backend with BOTH
+    parameters present in the same request -- not just "no error raised".
+
+    This distinguishes a working compose from a silently-dropped parameter: if a
+    future change accidentally discarded linkedto whenever path was also set (or
+    vice versa), this test would still see isError=False but would fail here on
+    the missing query parameter.
+    """
+    payload = {"result": [], "total": 0, "continue": None}
+
+    with respx.mock(assert_all_called=True) as mock:
+        captured = _mock_response(mock, payload)
+        result = await _call(
+            server,
+            {
+                "path": "[id:3]/[name:Tasks]/[type:task,status:open]",
+                "linkedto": [42, 43],
+            },
+        )
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+
+    request_params = captured[0].url.params
+    assert request_params.get("path") == "[id:3]/[name:Tasks]/[type:task,status:open]", (
+        "path must reach the backend unchanged when linkedto is also supplied"
+    )
+    assert request_params.get_list("linkedto") == ["42", "43"], (
+        "linkedto must reach the backend unchanged when path is also supplied -- "
+        "neither parameter may be silently dropped in favor of the other"
+    )
 
 
 # ---------------------------------------------------------------------------
