@@ -7,9 +7,15 @@ topology (type, status, linkedto, path). Use divoid_search for semantic /
 "is there anything about X" lookups.
 
 Invariants enforced at runtime (not expressible in JSON Schema / FastMCP):
-  - path and linkedto are mutually exclusive (path subsumes linkedto per #8).
   - bounds must have exactly 4 elements if provided.
   - count is clamped silently to [1, 500].
+
+path and linkedto are NOT mutually exclusive: NodeService.ComposeHops composes
+them on the backend, ANDing the linkedto filter into the path-resolved terminal
+set (NodeService.cs:595-609) — linkedto narrows the terminal hop of a path
+query exactly like the other standard filters it composes with. A guard
+rejecting the combination used to exist here and was removed (DiVoid #14829)
+because it refused a request the backend deliberately supports.
 
 status/nostatus, severity/no_severity, and root_node_id/no_root_node_id are
 each NOT mutually exclusive: the backend OR-composes every one of those pairs
@@ -58,13 +64,15 @@ WHEN TO USE path= vs linkedto=:
     when you need to cross more than one link boundary, e.g. reaching open tasks two
     hops from an org root:
       [type:organization,name:Pooshit]/[type:project,name:DiVoid]/[type:task,status:open]
-    path and linkedto are mutually exclusive — reject if both provided.
+  - path and linkedto MAY be combined: linkedto narrows the path's terminal hop to
+    nodes also directly linked to the given id(s), e.g. a path landing on tasks
+    across an org, further restricted to ones touching a specific node.
 
 PATH GRAMMAR (v1, ref DiVoid #8):
   path = segment ("/" segment)*
   segment = "[" predicate ("," predicate)* "]"   -- comma = AND between predicates
   predicate = key ":" valueList
-  key = id | type | name | status
+  key = id | type | name | status | severity | refinement
   valueList = value ("|" value)*                  -- pipe = OR within a key
   Examples:
     [type:project,name:DiVoid]               -- project named DiVoid
@@ -178,13 +186,18 @@ def _check_invariants(
     """
     Enforce runtime invariants before making any HTTP call.
 
-    No mutual-exclusion check is raised for status/nostatus, severity/no_severity,
-    root_node_id/no_root_node_id, or refinement/norefinement: the backend
-    OR-composes every one of those pairs ("matches the list, or has none set" --
-    see NodeService.GenerateFilter), so a client-side guard here would reject a
-    request the backend intentionally supports. This was previously enforced for
-    the first three pairs; the guards were removed because nothing distinguished
-    them from refinement/norefinement, which never had one.
+    No mutual-exclusion check is raised for path/linkedto, status/nostatus,
+    severity/no_severity, root_node_id/no_root_node_id, or refinement/norefinement:
+    the backend composes every one of those pairs rather than treating them as
+    alternatives. path/linkedto compose via NodeService.ComposeHops, which ANDs
+    the linkedto filter into the path-resolved terminal set (NodeService.cs:595-609);
+    the other four OR-compose ("matches the list, or has none set" -- see
+    NodeService.GenerateFilter). A client-side guard here would reject a request
+    the backend intentionally supports. path/linkedto's guard was removed per
+    DiVoid #14829, the sixth member of the guard class PR #194 first addressed;
+    status/nostatus, severity/no_severity and root_node_id/no_root_node_id were
+    removed earlier because nothing distinguished them from refinement/norefinement,
+    which never had one.
 
     sort is also not checked against a fixed key list here, for the same reason
     fields already isn't (see below): the backend's registered sort keys are a
@@ -198,13 +211,6 @@ def _check_invariants(
     Unknown field names in the fields parameter are NOT checked here — the API
     returns HTTP 400 for unrecognised field names, which surfaces via map_http_error.
     """
-    if path is not None and linkedto:
-        raise InvariantViolation(
-            "mutually_exclusive_path_linkedto",
-            "path and linkedto are mutually exclusive (path subsumes linkedto, per DiVoid #8). "
-            "Use path= for multi-hop topology walks; use linkedto= for single-hop neighbor lookups.",
-        )
-
     if bounds is not None and len(bounds) != 4:
         raise InvariantViolation(
             "bounds_invalid_length",
@@ -422,13 +428,16 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                     with nostatus — combining them OR-composes on the backend
                     ("status is in the list, or it is unset"), not rejected here.
             linkedto: Return nodes linked to any of these node ids (both link directions).
-                      Single-hop. Mutually exclusive with path (invariant guard).
+                      Single-hop. NOT mutually exclusive with path — the backend composes
+                      them, using linkedto to narrow the terminal hop of a path query
+                      (NodeService.ComposeHops), not rejected here.
             nostatus: If true, return only nodes with no status set. May be combined
                       with status[] (OR-composed on the backend, not rejected here).
             path: Path-query expression for multi-hop traversal. Raw string, passed as-is
                   to the API. Example: '[type:project,name:DiVoid]/[type:task,status:open]'.
                   See tool description for grammar. The first segment must have at least one
-                  predicate ([] first segment = HTTP 400). Mutually exclusive with linkedto.
+                  predicate ([] first segment = HTTP 400). NOT mutually exclusive with
+                  linkedto — combine them to narrow the path's terminal hop.
             bounds: Viewport bounding rectangle [xMin, yMin, xMax, yMax] — returns only
                     nodes whose canvas X/Y falls inside. Must be exactly 4 values if provided
                     (invariant guard). Applies to terminal hop when combined with path.
