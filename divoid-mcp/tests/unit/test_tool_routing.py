@@ -1686,10 +1686,11 @@ async def test_delete_node_forbidden(server: FastMCP) -> None:
 
 @pytest.mark.asyncio
 async def test_list_sort_severity_forwarded(server: FastMCP) -> None:
-    """sort='severity' → ?sort=severity in backend URL; invariant guard accepts it.
+    """sort='severity' → ?sort=severity in the backend URL, forwarded without validation.
 
-    Substitution probe: remove 'severity' from _VALID_SORT_FIELDS — the invariant
-    guard rejects it before any HTTP call and this test fails on isError.
+    Substitution probe: drop the sort forwarding in _execute so params never carries
+    'sort' — the captured URL loses sort=severity and this test fails. There is no
+    client-side sort allow-list to probe; an unknown key is the backend's 400 to raise.
     """
     api_response = {"result": [], "total": 0}
     captured_request: list[httpx.Request] = []
@@ -1704,7 +1705,7 @@ async def test_list_sort_severity_forwarded(server: FastMCP) -> None:
 
     assert result.get("isError") is not True, (
         f"Expected success for sort='severity', got error: {result}. "
-        "Substitution probe: removing 'severity' from _VALID_SORT_FIELDS causes invariant rejection."
+        "sort is forwarded without client-side validation; an unknown key is the backend's 400."
     )
     assert len(captured_request) == 1
     url = str(captured_request[0].url)
