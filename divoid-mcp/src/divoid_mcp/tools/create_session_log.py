@@ -119,6 +119,7 @@ async def _execute(
     extra_links: list[int] | None = None,
     access: int | str | None = None,
     severity: int | None = None,
+    refinement: str | None = None,
     root_node_id: int | None = None,
     substance: str | None = None,
 ) -> dict[str, Any]:
@@ -159,6 +160,8 @@ async def _execute(
     node_body: dict[str, Any] = {"name": name, "type": "session-log"}
     if severity is not None:
         node_body["severity"] = severity
+    if refinement is not None:
+        node_body["refinement"] = refinement
     if resolved_root_node_id is not None:
         node_body["rootNodeId"] = resolved_root_node_id
     if access is not None:
@@ -323,6 +326,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         extra_links: list[int] | None = None,
         access: int | str | None = None,
         severity: int | None = None,
+        refinement: str | None = None,
         root_node_id: int | None = None,
         substance: str | None = None,
     ) -> dict[str, Any]:
@@ -369,6 +373,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                     private node visible only to owner/admin.
             severity: Optional integer severity for this node. When absent the server
                       defaults to NULL (no severity set).
+            refinement: Optional string answering "how settled is this session-log's
+                        own content?". Open vocabulary, passed through verbatim with no
+                        validation and no default. Most session-logs are finished when
+                        filed and will leave this unset, which is correct for them.
             root_node_id: The session-log's structural home (DiVoid #6857 v1.2) — the
                           scalar that answers "list(type=session-log, root_node_id=P)"
                           queries, distinct from the Docs-group LINK above (both are
@@ -413,6 +421,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             extra_links=extra_links,
             access=access,
             severity=severity,
+            refinement=refinement,
             root_node_id=root_node_id,
             substance=substance,
         )

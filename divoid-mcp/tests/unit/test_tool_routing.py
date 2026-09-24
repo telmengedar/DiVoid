@@ -1427,6 +1427,84 @@ async def test_get_node_severity_null(server: FastMCP) -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_node_refinement_set(server: FastMCP) -> None:
+    """get_node returns refinement string when the server sends it.
+
+    Substitution probe: remove the 'refinement' key from get_node.py's return dict —
+    the key is absent from the result and the assertion fails.
+    """
+    node_id = 43
+    server_response = {
+        "id": node_id,
+        "type": "task",
+        "name": "Refined task",
+        "status": "open",
+        "refinement": "ready",
+        "contentType": None,
+        "x": 0.0,
+        "y": 0.0,
+        "access": "Read, Write",
+        "ownerId": 1,
+        "created": "2026-06-01T10:00:00Z",
+        "lastUpdate": "2026-06-01T10:00:00Z",
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODE_URL.format(id=node_id)).mock(
+            return_value=httpx.Response(200, json=server_response)
+        )
+        result = await _call(server, "divoid_get_node", {"id": node_id})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert "refinement" in result, (
+        f"Expected 'refinement' key in result, got: {list(result.keys())!r}. "
+        "Substitution probe: removing 'refinement' from get_node return dict causes this failure."
+    )
+    assert result.get("refinement") == "ready", (
+        f"Expected refinement='ready', got: {result.get('refinement')!r}. "
+        "Substitution probe: removing the refinement key from the return dict causes this failure."
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_node_refinement_null(server: FastMCP) -> None:
+    """get_node returns refinement=None when the server omits it.
+
+    Substitution probe: remove the 'refinement' key from get_node.py's return dict —
+    the key is absent and the wire-shape regression assertion fails.
+    """
+    node_id = 98
+    server_response = {
+        "id": node_id,
+        "type": "documentation",
+        "name": "Design doc",
+        "status": None,
+        "contentType": "text/markdown",
+        "x": 0.0,
+        "y": 0.0,
+        "access": "Read, Write",
+        "ownerId": 2,
+        "created": "2026-06-01T00:00:00Z",
+        "lastUpdate": "2026-06-01T00:00:00Z",
+    }
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_NODE_URL.format(id=node_id)).mock(
+            return_value=httpx.Response(200, json=server_response)
+        )
+        result = await _call(server, "divoid_get_node", {"id": node_id})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert "refinement" in result, (
+        f"Expected 'refinement' key present even when null, got keys: {list(result.keys())!r}. "
+        "The key must always be present so callers can distinguish absent from cleared."
+    )
+    assert result.get("refinement") is None, (
+        f"Expected refinement=None for node without refinement, got: {result.get('refinement')!r}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_list_severity_exact_filter_forwarded(server: FastMCP) -> None:
     """severity=[5] → ?severity=5 appears in the backend URL.
 

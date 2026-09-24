@@ -48,7 +48,9 @@ architectural notes, gotchas, tutorials, anti-patterns, closure notes — anythi
 is reusable knowledge per DiVoid #190 Rule 2. A body is always required, from either \
 `content` or `path` (there is no 'new' escape for documentation per #493 §4 — do not \
 create a documentation node until you have the document). """ + PATH_DESCRIPTION_CLAUSE + """ \
-Documentation nodes have no status field. The Docs group is \
+Documentation nodes have no status field, but DO carry refinement — e.g. 'draft' or \
+'proposal' to mark a document's own maturity, independent of any workflow position. \
+The Docs group is \
 resolved from project_id by walking the graph; alternatively supply docs_group_id \
 directly if you already know it (e.g. DiVoid Docs = 7). When project_id is given and \
 root_node_id is omitted, root_node_id defaults to project_id (DiVoid #6857 v1.2 — the \
@@ -125,6 +127,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         extra_links: list[int] | None = None,
         access: int | str | None = None,
         severity: int | None = None,
+        refinement: str | None = None,
         root_node_id: int | None = None,
         substance: str | None = None,
     ) -> dict[str, Any]:
@@ -166,6 +169,11 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                     private node visible only to owner/admin.
             severity: Optional integer severity for this node. When absent the server
                       defaults to NULL (no severity set).
+            refinement: Optional string answering "how settled is this document's own
+                        content?" — e.g. 'draft' while still being written, 'proposal'
+                        once ready for review. Open vocabulary, passed through verbatim
+                        with no validation and no default. Unset means unclassified,
+                        not any particular maturity level.
             root_node_id: The documentation node's structural home (DiVoid #6857 v1.2) —
                           the scalar that answers "list(type=documentation, root_node_id=P)"
                           / scoped-search queries, distinct from the Docs-group LINK above
@@ -220,6 +228,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         node_body: dict[str, Any] = {"name": name, "type": "documentation"}
         if severity is not None:
             node_body["severity"] = severity
+        if refinement is not None:
+            node_body["refinement"] = refinement
         if resolved_root_node_id is not None:
             node_body["rootNodeId"] = resolved_root_node_id
         if access is not None:
