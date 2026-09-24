@@ -72,7 +72,7 @@ PATH GRAMMAR (v1, ref DiVoid #8):
   path = segment ("/" segment)*
   segment = "[" predicate ("," predicate)* "]"   -- comma = AND between predicates
   predicate = key ":" valueList
-  key = id | type | name | status
+  key = id | type | name | status | severity | refinement
   valueList = value ("|" value)*                  -- pipe = OR within a key
   Examples:
     [type:project,name:DiVoid]               -- project named DiVoid
