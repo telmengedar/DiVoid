@@ -16,6 +16,8 @@ Supported paths per DiVoid #8:
                  Owner-or-admin gated on the server.
   /ownerId    -- transfer ownership (admin-only on the server; 404 if unauthorized).
   /severity   -- node severity (positive integer); use clear_severity=True to set NULL.
+  /refinement -- open-vocabulary maturity string (e.g. 'ready', 'draft'); no validation,
+                 no allow-list; use clear_refinement=True to set NULL (unclassified).
   /rootNodeId -- structural group pointer (positive integer); use clear_root_node_id=True
                  to ungroup (set NULL).
   /substance  -- client-written condensed form of the content (string); use
@@ -57,6 +59,11 @@ validation. access accepts int 0-3 or the string representation ("None", "Read",
 transfer is admin-only on the server (returns 404 if unauthorized — the MCP does \
 not gate it). severity accepts a positive integer; to clear severity, pass \
 clear_severity=True — the tool composes a replace /severity null op internally. \
+refinement accepts an open-vocabulary string answering "how settled is what this \
+node's content says?" (independent of status) — passed through verbatim with no \
+validation, no allow-list, and no default (e.g. 'ready', 'needs-input', 'draft' are \
+illustrative, not an enforced list); to clear it, pass clear_refinement=True — the \
+tool composes a replace /refinement null op internally. \
 root_node_id assigns a structural group pointer (set/reassign group); to ungroup \
 (set to NULL), pass clear_root_node_id=True — the tool composes a replace \
 /rootNodeId null op internally. substance is the client-written condensed form of \
@@ -96,6 +103,8 @@ def _check_invariants(
     owner_id: int | None,
     severity: int | None = None,
     clear_severity: bool = False,
+    refinement: str | None = None,
+    clear_refinement: bool = False,
     root_node_id: int | None = None,
     clear_root_node_id: bool = False,
     substance: str | None = None,
@@ -110,15 +119,16 @@ def _check_invariants(
     cross-parameter constraints; enforcement is entirely here.
     """
     has_severity_op = severity is not None or clear_severity
+    has_refinement_op = refinement is not None or clear_refinement
     has_root_node_id_op = root_node_id is not None or clear_root_node_id
     has_substance_op = substance is not None or clear_substance
     if (name is None and status is None and x is None and y is None
             and access is None and owner_id is None and not has_severity_op
-            and not has_root_node_id_op and not has_substance_op):
+            and not has_refinement_op and not has_root_node_id_op and not has_substance_op):
         raise InvariantViolation(
             "no_fields_to_patch",
-            "At least one of name, status, severity, root_node_id, substance, x, y, access, "
-            "or owner_id must be provided. A PATCH with no fields is a no-op.",
+            "At least one of name, status, severity, refinement, root_node_id, substance, "
+            "x, y, access, or owner_id must be provided. A PATCH with no fields is a no-op.",
         )
     if access is not None:
         _canonicalize_access(access)
@@ -135,6 +145,8 @@ async def _execute(
     owner_id: int | None = None,
     severity: int | None = None,
     clear_severity: bool = False,
+    refinement: str | None = None,
+    clear_refinement: bool = False,
     root_node_id: int | None = None,
     clear_root_node_id: bool = False,
     substance: str | None = None,
@@ -166,6 +178,10 @@ async def _execute(
         ops.append({"op": "replace", "path": "/severity", "value": severity})
     elif clear_severity:
         ops.append({"op": "replace", "path": "/severity", "value": None})
+    if refinement is not None:
+        ops.append({"op": "replace", "path": "/refinement", "value": refinement})
+    elif clear_refinement:
+        ops.append({"op": "replace", "path": "/refinement", "value": None})
     if root_node_id is not None:
         ops.append({"op": "replace", "path": "/rootNodeId", "value": root_node_id})
     elif clear_root_node_id:
@@ -222,6 +238,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         owner_id: int | None = None,
         severity: int | None = None,
         clear_severity: bool = False,
+        refinement: str | None = None,
+        clear_refinement: bool = False,
         root_node_id: int | None = None,
         clear_root_node_id: bool = False,
         substance: str | None = None,
@@ -252,6 +270,16 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             clear_severity: If True, sets severity to NULL on the server. Mutually
                             implied exclusive with severity — if both are set, the
                             explicit severity value wins.
+            refinement: Open-vocabulary string answering "how settled is what this
+                        node's content says?" — independent of status, which answers
+                        "where is this node in a workflow?". Passed through verbatim
+                        with no validation and no allow-list (e.g. 'ready',
+                        'needs-input', 'draft', 'proposal' are illustrative, not an
+                        enforced list). To clear it (set to NULL, i.e. unclassified),
+                        pass clear_refinement=True instead.
+            clear_refinement: If True, sets refinement to NULL on the server. Mutually
+                              implied exclusive with refinement — if both are set, the
+                              explicit refinement value wins.
             root_node_id: Assign this node to a structural group by setting its
                           rootNodeId pointer (set/reassign group). Accepts a positive
                           integer (the id of the root/group node). Soft pointer — no
@@ -269,13 +297,14 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                              implied exclusive with substance — if both are set, the
                              explicit substance value wins.
 
-        At least one of name, status, severity, clear_severity, root_node_id,
-        clear_root_node_id, substance, clear_substance, x, y, access, or owner_id
-        must be provided (invariant guard: no_fields_to_patch).
+        At least one of name, status, severity, clear_severity, refinement,
+        clear_refinement, root_node_id, clear_root_node_id, substance, clear_substance,
+        x, y, access, or owner_id must be provided (invariant guard: no_fields_to_patch).
         """
         try:
             _check_invariants(
                 name, status, x, y, access, owner_id, severity, clear_severity,
+                refinement, clear_refinement,
                 root_node_id, clear_root_node_id, substance, clear_substance,
             )
         except InvariantViolation as exc:
@@ -293,6 +322,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             owner_id=owner_id,
             severity=severity,
             clear_severity=clear_severity,
+            refinement=refinement,
+            clear_refinement=clear_refinement,
             root_node_id=root_node_id,
             clear_root_node_id=clear_root_node_id,
             substance=substance,

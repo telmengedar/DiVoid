@@ -67,6 +67,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         type: list[str] | None = None,
         linkedto: list[int] | None = None,
         status: list[str] | None = None,
+        refinement: list[str] | None = None,
         count: int = 10,
         include_content: bool = False,
         include_links: bool = False,
@@ -90,6 +91,11 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                       of these node ids (both link directions).
             status: Optional filter: only return nodes with one of these
                     statuses (e.g. ['open', 'in-progress']).
+            refinement: Optional filter: only return nodes whose refinement is one
+                        of these values (open vocabulary, e.g. ['ready']; wildcards
+                        %/_ supported, matching the backend's LIKE semantics).
+                        Nodes with no refinement set never match a non-empty filter
+                        here — that is deliberate (unset means unclassified).
             count: Number of results to return. Minimum 1, maximum 50.
                    Default 10. Capped lower than the DiVoid API cap (500)
                    because semantic results past the top-50 are almost
@@ -152,8 +158,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             params["linkedto"] = linkedto
         if status:
             params["status"] = status
+        if refinement:
+            params["refinement"] = refinement
         if include_content or include_links or include_link_details:
-            base_fields = ["id", "type", "name", "status", "contentType", "similarity"]
+            base_fields = ["id", "type", "name", "status", "refinement", "contentType", "similarity"]
             if include_content:
                 base_fields.append("content")
             if include_links:
@@ -205,6 +213,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                 "name": n.get("name"),
                 "status": n.get("status"),
                 "severity": n.get("severity"),
+                "refinement": n.get("refinement"),
                 "similarity": n.get("similarity"),
                 "rootNodeId": n.get("rootNodeId"),
             }

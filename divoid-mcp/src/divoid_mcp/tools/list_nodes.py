@@ -11,7 +11,7 @@ Invariants enforced at runtime (not expressible in JSON Schema / FastMCP):
   - nostatus=True and a non-empty status[] are mutually exclusive.
   - no_severity=True and a non-empty severity[] are mutually exclusive.
   - bounds must have exactly 4 elements if provided.
-  - sort must be one of: id, type, name, status, severity.
+  - sort must be one of: id, type, name, status, severity, refinement.
   - count is clamped silently to [1, 500].
 
 Unknown field names in the fields parameter are passed through to the API,
@@ -40,7 +40,7 @@ from ._link_details import normalize_link_details
 
 logger = logging.getLogger(__name__)
 
-_VALID_SORT_FIELDS = frozenset({"id", "type", "name", "status", "severity"})
+_VALID_SORT_FIELDS = frozenset({"id", "type", "name", "status", "severity", "refinement"})
 
 _TOOL_DESCRIPTION = """\
 Structural listing of DiVoid nodes. Use this when you know the topology — type, \
@@ -114,7 +114,19 @@ ROOT NODE FILTERS:
     Use to enumerate all nodes grouped under a root — e.g. all docs belonging to a
     specific docs-group node. Mutually exclusive with no_root_node_id (invariant guard).
   - no_root_node_id=true: return only nodes with no rootNodeId set (ungrouped). Mutually
-    exclusive with root_node_id[] (invariant guard).\
+    exclusive with root_node_id[] (invariant guard).
+
+REFINEMENT FILTERS — open vocabulary, answers "how settled is this node's content?",
+independent of status ("where is this node in a workflow?"):
+  - refinement=["ready"]: exact match (multi-value = OR). Wildcards %/_ supported
+    (SQL LIKE), so refinement=["needs-%"] matches the whole needs-* family.
+  - norefinement=true: return only nodes with no refinement set (unset means
+    unclassified, not any particular value). Unlike nostatus/status, refinement and
+    norefinement are NOT mutually exclusive here — combining them OR-composes on the
+    backend ("refinement is in the list, or it is unset"), so both may be passed
+    together deliberately.
+  - sort="refinement": groups by value; the vocabulary carries no inherent order, so
+    this is grouping, not ranking.\
 """
 
 
@@ -132,9 +144,17 @@ def _check_invariants(
     severity_max: int | None = None,
     no_root_node_id: bool = False,
     root_node_id: list[int] | None = None,
+    refinement: list[str] | None = None,
+    norefinement: bool = False,
 ) -> None:
     """
     Enforce runtime invariants before making any HTTP call.
+
+    No mutual-exclusion check is raised for refinement + norefinement together
+    (unlike nostatus/status and no_severity/severity above): the backend OR-composes
+    that combination as a meaningful query ("refinement is in the list, or it is
+    unset"), so a client-side guard here would reject a request the backend
+    intentionally supports.
 
     Raises InvariantViolation with a stable code if any invariant is broken.
     Enforcement is entirely at runtime — FastMCP exposes parameters as plain
@@ -185,7 +205,7 @@ def _check_invariants(
         )
 
 
-_DEFAULT_FIELDS = ["id", "type", "name", "status", "contentType"]
+_DEFAULT_FIELDS = ["id", "type", "name", "status", "refinement", "contentType"]
 
 
 async def _execute(
@@ -216,6 +236,8 @@ async def _execute(
     no_severity: bool = False,
     root_node_id: list[int] | None = None,
     no_root_node_id: bool = False,
+    refinement: list[str] | None = None,
+    norefinement: bool = False,
 ) -> dict[str, Any]:
     """
     Core implementation of divoid_list.
@@ -284,6 +306,10 @@ async def _execute(
         params["rootNodeId"] = root_node_id
     if no_root_node_id:
         params["noRootNodeId"] = "true"
+    if refinement:
+        params["refinement"] = refinement
+    if norefinement:
+        params["norefinement"] = "true"
 
     logger.info(
         "divoid_list path=%r linkedto=%s type=%s status=%s count=%d",
@@ -362,6 +388,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         no_severity: bool = False,
         root_node_id: list[int] | None = None,
         no_root_node_id: bool = False,
+        refinement: list[str] | None = None,
+        norefinement: bool = False,
     ) -> dict[str, Any]:
         """
         List DiVoid nodes with structural filters, pagination, and optional path-query.
@@ -432,6 +460,14 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             no_root_node_id: If true, return only ungrouped nodes (rootNodeId IS NULL). Mutually
                              exclusive with root_node_id[] (invariant guard). Forwarded as
                              ?noRootNodeId=true.
+            refinement: Filter by refinement value(s) (open vocabulary, e.g. ['ready'];
+                        wildcards %/_ supported). Multiple values = OR. Forwarded as
+                        ?refinement=. Answers "how settled is this node's content?",
+                        independent of status. NOT mutually exclusive with norefinement —
+                        the backend OR-composes the two ("in the list, or unset").
+            norefinement: If true, return only nodes with no refinement set (unset means
+                          unclassified). Forwarded as ?norefinement=true. May be combined
+                          with refinement[] (OR-composed on the backend, not rejected here).
         """
         try:
             _check_invariants(
@@ -448,6 +484,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                 severity_max=severity_max,
                 no_root_node_id=no_root_node_id,
                 root_node_id=root_node_id,
+                refinement=refinement,
+                norefinement=norefinement,
             )
         except InvariantViolation as exc:
             logger.debug("divoid_list invariant violation: %s", exc.code)
@@ -481,4 +519,6 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             no_severity=no_severity,
             root_node_id=root_node_id,
             no_root_node_id=no_root_node_id,
+            refinement=refinement,
+            norefinement=norefinement,
         )

@@ -101,6 +101,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         path: str | None = None,
         status: str | None = None,
         severity: int | None = None,
+        refinement: str | None = None,
         access: int | str | None = None,
         extra_links: list[int] | None = None,
         root_node_id: int | None = None,
@@ -134,6 +135,12 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                     creators or divoid_set_status if you want lifecycle enforcement.
             severity: Optional integer severity. Application scope fills in meaning
                       (e.g. priority). When absent the server defaults to NULL.
+            refinement: Optional string answering "how settled is what this node's
+                        content says?" — independent of status, which answers "where is
+                        this node in a workflow?". Open vocabulary, passed through
+                        verbatim with no validation (e.g. 'ready', 'needs-input',
+                        'draft', 'proposal' are illustrative, not an enforced list).
+                        When absent the server defaults to NULL (unclassified).
             access: Visibility flags. Accepts int (0-3) or string ("None", "Read",
                     "Write", "Read, Write"). Canonicalized to int before the POST.
                     When absent the server defaults to Read|Write (3).
@@ -182,6 +189,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             node_body["status"] = status
         if severity is not None:
             node_body["severity"] = severity
+        if refinement is not None:
+            node_body["refinement"] = refinement
         if root_node_id is not None:
             node_body["rootNodeId"] = root_node_id
         if access is not None:
