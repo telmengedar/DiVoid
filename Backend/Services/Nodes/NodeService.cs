@@ -118,8 +118,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         double insertY = node.Y ?? 0.0;
         DateTime now = DateTime.UtcNow;
         long nodeId = await database.Insert<Node>()
-                              .Columns(n => n.TypeId, n => n.Name, n => n.Status, n => n.Severity, n => n.RootNodeId, n => n.Substance, n => n.X, n => n.Y, n => n.OwnerId, n => n.Access, n => n.Created, n => n.LastUpdate)
-                              .Values(typeId, node.Name, node.Status, node.Severity, node.RootNodeId, node.Substance, insertX, insertY, callerId, node.Access ?? (NodeAccess.Read | NodeAccess.Write), now, now)
+                              .Columns(n => n.TypeId, n => n.Name, n => n.Status, n => n.Severity, n => n.Refinement, n => n.RootNodeId, n => n.Substance, n => n.X, n => n.Y, n => n.OwnerId, n => n.Access, n => n.Created, n => n.LastUpdate)
+                              .Values(typeId, node.Name, node.Status, node.Severity, node.Refinement, node.RootNodeId, node.Substance, insertX, insertY, callerId, node.Access ?? (NodeAccess.Read | NodeAccess.Write), now, now)
                               .ReturnID()
                               .ExecuteAsync(transaction);
 
@@ -246,7 +246,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
     /// <summary>
     /// builds a predicate for a single hop segment.
-    /// Handles id, type, name, status — with wildcard LIKE semantics on name/status.
+    /// Handles id, type, name, status, severity, refinement — with wildcard LIKE semantics on name/status/refinement.
     /// </summary>
     Expression<Func<Node, bool>> GenerateHopFilter(HopSegment hop)
     {
@@ -301,6 +301,19 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                     predicate &= n => n.Severity.In(severityValues);
                     break;
                 }
+
+                case "refinement":
+                    if (p.Values.Any(v => v.ContainsWildcards()))
+                    {
+                        PredicateExpression<Node> refinementPredicate = null;
+                        foreach (string refinementFilter in p.Values)
+                            refinementPredicate |= n => n.Refinement.Like(refinementFilter);
+                        predicate &= refinementPredicate;
+                    } else
+                    {
+                        predicate &= n => n.Refinement.In(p.Values);
+                    }
+                    break;
             }
         }
 
@@ -397,6 +410,31 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         } else if (filter.NoSeverity)
         {
             predicate &= n => n.Severity == null;
+        }
+
+        if (filter.Refinement?.Length > 0)
+        {
+            PredicateExpression<Node> refinementValuePredicate;
+            if (filter.Refinement.Any(r => r.ContainsWildcards()))
+            {
+                refinementValuePredicate = null;
+                foreach (string refinementFilter in filter.Refinement)
+                    refinementValuePredicate |= n => n.Refinement.Like(refinementFilter);
+            } else
+            {
+                refinementValuePredicate = new PredicateExpression<Node>(n => n.Refinement.In(filter.Refinement));
+            }
+
+            if (filter.NoRefinement)
+            {
+                predicate &= refinementValuePredicate | new PredicateExpression<Node>(n => n.Refinement == null || n.Refinement == "");
+            } else
+            {
+                predicate &= refinementValuePredicate;
+            }
+        } else if (filter.NoRefinement)
+        {
+            predicate &= n => n.Refinement == null || n.Refinement == "";
         }
 
         if (filter.RootNodeId?.Length > 0)
