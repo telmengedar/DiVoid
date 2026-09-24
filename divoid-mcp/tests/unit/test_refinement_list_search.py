@@ -83,16 +83,16 @@ async def test_list_default_fields_chain_carries_refinement() -> None:
     """include_content=True with no explicit fields -> the composed fields list
     (built from _DEFAULT_FIELDS) includes 'refinement'.
 
-    This is the discriminating fixture named in the design: a plain default
-    divoid_list call sends NO 'fields' param at all (the backend's own default
-    projection already includes refinement), so it cannot pin this. Only the
-    include_content/include_links/include_link_details branch materializes
-    _DEFAULT_FIELDS into an explicit request -- that is the one place a dropped
-    entry is observable from the wire.
+    Note: since default-on labelled-edge enrichment (DiVoid #7217), a plain
+    flag-less divoid_list call ALSO materializes _DEFAULT_FIELDS into an
+    explicit 'fields' param (see test_list_default_call_carries_refinement_in_
+    forced_fields below) -- the discriminating claim above ("only include_*
+    branches send fields") predates that change and no longer holds, but this
+    test still independently pins the same _DEFAULT_FIELDS entry via the
+    include_content branch.
 
     Substitution probe: remove 'refinement' from _DEFAULT_FIELDS in
-    list_nodes.py -- this test goes red alone; no other test in this file or in
-    test_list_nodes.py exercises _DEFAULT_FIELDS' contents.
+    list_nodes.py -- this test goes red (as does the plain-call test below).
     """
     server = _make_server(register_list_nodes, "divoid-mcp-refinement-list-default-fields")
     payload = {
@@ -116,9 +116,20 @@ async def test_list_default_fields_chain_carries_refinement() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_default_call_sends_no_fields_param() -> None:
-    """Regression: a plain call (no include_* flags) still sends no 'fields' param at all --
-    adding 'refinement' to _DEFAULT_FIELDS must not change this branch's gating."""
+async def test_list_default_call_carries_refinement_in_forced_fields() -> None:
+    """A plain call (no include_* flags) DOES send a 'fields' param -- divoid_list's
+    default-on labelled-edge enrichment (DiVoid #7217) unconditionally appends
+    linkDetails/id to the projection regardless of flags, so 'fields' is never
+    omitted from the wire request. This supersedes the older assumption (true
+    before #7217 landed) that a flag-less call sent no 'fields' at all.
+
+    What this test pins for the refinement feature: 'refinement' rides along in
+    that forced fields list -- adding it to _DEFAULT_FIELDS must not require an
+    include_* flag to reach the wire.
+
+    Substitution probe: remove 'refinement' from _DEFAULT_FIELDS in
+    list_nodes.py -- this test goes red.
+    """
     server = _make_server(register_list_nodes, "divoid-mcp-refinement-list-plain")
     payload = {"result": [], "total": 0, "continue": None}
 
@@ -127,7 +138,10 @@ async def test_list_default_call_sends_no_fields_param() -> None:
         result = await _call(server, "divoid_list", {})
 
     assert result.get("isError") is not True, f"Expected success, got: {result}"
-    assert "fields" not in captured[0].url.params
+    sent_fields = captured[0].url.params.get_list("fields")
+    assert "refinement" in sent_fields, (
+        f"Expected 'refinement' in the default forced fields list, got: {sent_fields!r}"
+    )
 
 
 @pytest.mark.asyncio

@@ -336,9 +336,9 @@ async def test_list_default_no_content_in_fields(server: FastMCP) -> None:
 
     assert result.get("isError") is not True, f"Expected success, got: {result}"
     assert len(captured_request) == 1
-    url_params = str(captured_request[0].url)
-    assert "content" not in url_params, (
-        f"Default call must not include 'content' in fields, URL: {url_params!r}"
+    sent_fields = captured_request[0].url.params.get_list("fields")
+    assert "content" not in sent_fields, (
+        f"Default call must not include 'content' in fields, got: {sent_fields!r}"
     )
     rows = result.get("result", [])
     assert len(rows) == 1
