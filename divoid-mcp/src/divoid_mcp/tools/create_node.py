@@ -327,6 +327,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             "type": type,
             "name": name,
             "status": status,
+            "refinement": refinement,
             "rootNodeId": node_data.get("rootNodeId", root_node_id),
             "extra_links_attached": links_created,
             "content_length": content_length,

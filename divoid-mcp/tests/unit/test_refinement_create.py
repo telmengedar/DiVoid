@@ -130,6 +130,57 @@ async def test_create_node_without_refinement_key_absent_from_post_body() -> Non
     )
 
 
+@pytest.mark.asyncio
+async def test_create_node_echoes_refinement_in_result_summary() -> None:
+    """divoid_create_node's returned summary echoes refinement, mirroring status.
+
+    §9's create_node row calls this out specifically as a "summary echo" -- a
+    straight mirror of how `status` is already echoed in the same dict.
+
+    Substitution probe: remove the `"refinement": refinement` line from the
+    return dict in create_node.py -- this test fails because the key is absent.
+    """
+    server = _make_server(register_create_node)
+    captured: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        _mock_create_and_children(mock, captured)
+        result = await _call(server, "divoid_create_node", {
+            "name": "generic node",
+            "status": "open",
+            "refinement": "ready",
+        })
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert "refinement" in result, (
+        f"Expected 'refinement' key in result summary, got keys: {list(result.keys())!r}. "
+        "Substitution probe: removing 'refinement' from create_node's return dict causes this failure."
+    )
+    assert result.get("refinement") == "ready", (
+        f"Expected refinement='ready' echoed in result, got: {result.get('refinement')!r}"
+    )
+    assert result.get("status") == "open", "status echo must remain unaffected by the refinement echo"
+
+
+@pytest.mark.asyncio
+async def test_create_node_without_refinement_echoes_none_in_result_summary() -> None:
+    """Omitting refinement -> result summary carries refinement=None (key present, mirrors status)."""
+    server = _make_server(register_create_node)
+    captured: list[httpx.Request] = []
+
+    with respx.mock(assert_all_called=False) as mock:
+        _mock_create_and_children(mock, captured)
+        result = await _call(server, "divoid_create_node", {"name": "generic node"})
+
+    assert result.get("isError") is not True, f"Expected success, got: {result}"
+    assert "refinement" in result, (
+        f"Expected 'refinement' key present even when omitted, got keys: {list(result.keys())!r}"
+    )
+    assert result.get("refinement") is None, (
+        f"Expected refinement=None when omitted, got: {result.get('refinement')!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # divoid_create_task
 # ---------------------------------------------------------------------------

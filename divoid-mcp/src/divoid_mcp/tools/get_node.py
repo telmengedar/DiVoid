@@ -22,8 +22,8 @@ from ..errors import make_error_content, map_http_error, map_unreachable
 logger = logging.getLogger(__name__)
 
 _TOOL_DESCRIPTION = """\
-Fetch a single node's properties (id, type, name, status, severity, rootNodeId, \
-contentType, substance, position, access, ownerId, created, lastUpdate). Use this \
+Fetch a single node's properties (id, type, name, status, severity, refinement, \
+rootNodeId, contentType, substance, position, access, ownerId, created, lastUpdate). Use this \
 when you have a node id (from search results, a link, a memory pointer) and need \
 its metadata. For the content body, use divoid_get_content separately — properties \
 and content are intentionally split because content can be large and is not \
@@ -42,7 +42,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
 
         Args:
             id: The node id. Must be a positive integer. Returns id, type, name,
-                status, severity, rootNodeId, contentType, substance, x, y, access,
+                status, severity, refinement, rootNodeId, contentType, substance, x, y, access,
                 ownerId, created, lastUpdate. rootNodeId is null for ungrouped nodes.
                 substance is null when no client has written one.
         """
@@ -75,6 +75,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             "name": data.get("name"),
             "status": data.get("status"),
             "severity": data.get("severity"),
+            "refinement": data.get("refinement"),
             "rootNodeId": data.get("rootNodeId"),
             "contentType": data.get("contentType"),
             "substance": data.get("substance"),

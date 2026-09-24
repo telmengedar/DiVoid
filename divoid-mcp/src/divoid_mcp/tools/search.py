@@ -37,7 +37,7 @@ status filters to narrow scope when you already know the structural shape. \
 Always prefer this over divoid_list for question-shaped queries.
 
 Return shape: each result has id, name, similarity, rootNodeId, and optionally type, \
-status, and contentType. type is null for structural group nodes (Tasks, Docs \
+status, severity, refinement, and contentType. type is null for structural group nodes (Tasks, Docs \
 containers); status is null for nodes whose type does not carry a lifecycle \
 (most types other than task / bug); rootNodeId is null for ungrouped nodes. \
 Use n.get() rather than direct key access when consuming results. \
