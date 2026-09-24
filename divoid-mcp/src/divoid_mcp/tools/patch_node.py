@@ -26,9 +26,15 @@ Supported paths per DiVoid #8:
 At least one of the supported fields must be provided — the invariant guard fires
 before any HTTP call with code 'no_fields_to_patch'.
 
-Note: for status changes with lifecycle validation, use divoid_set_status
-instead. divoid_patch_node accepts any string for status without checking the
-type's lifecycle.
+Note: divoid_set_status is a lighter-weight convenience for status-only changes
+(one parameter instead of this tool's full signature) -- it is not a validation
+path. Neither tool checks a status value against the type's lifecycle: both
+issue the PATCH with whatever string is given, with no type fetch and no
+allow-list (checked set_status.py's _execute end to end -- one unconditional
+PATCH and nothing else). This holds only until one of the two gains a
+type-fetch/allow-list step ahead of the PATCH call. Per-type status
+vocabularies (e.g. type: task #32, type: bug #33) are documented on the
+relevant type node in the graph, not enforced by either tool.
 
 Architecture reference: DiVoid #695 §Tool 1 (patch_node primitive).
 API reference: DiVoid #8 (PATCH /api/nodes/{id}).
@@ -51,10 +57,12 @@ _TOOL_DESCRIPTION = """\
 Primitive JSON-Patch update for a DiVoid node. Accepts name, status, severity, \
 root_node_id, x, y, access, and owner_id as explicit parameters and composes the \
 PATCH /api/nodes/{id} call internally. At least one field must be provided \
-(invariant guard: no_fields_to_patch). Returns the updated node on success. For \
-status changes that should enforce the type's lifecycle (task/bug), use \
-divoid_set_status instead — this tool accepts any string for status without \
-validation. access accepts int 0-3 or the string representation ("None", "Read", \
+(invariant guard: no_fields_to_patch). Returns the updated node on success. \
+status accepts any string with no validation and no lifecycle check -- \
+divoid_set_status is a lighter-weight alternative for status-only changes \
+(same free-form PATCH under the hood, not a validation path); neither tool \
+checks a status value against the type's lifecycle. access accepts int 0-3 \
+or the string representation ("None", "Read", \
 "Write", "Read, Write") and is canonicalized to int before patching. owner_id \
 transfer is admin-only on the server (returns 404 if unauthorized — the MCP does \
 not gate it). severity accepts a positive integer; to clear severity, pass \
@@ -252,10 +260,15 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             id: The node id to patch (required).
             name: New name for the node. Optional.
             status: New status string. Optional. No lifecycle validation is
-                    performed here — use divoid_set_status if you want the type's
-                    lifecycle enforced (task: new/open/in-progress/closed;
-                    bug: new/open/in-progress/fixed). The invariant guard is the
-                    sole enforcement layer (FastMCP exposes status as plain string).
+                    performed here, and divoid_set_status enforces none either --
+                    it is a lighter-weight convenience for status-only changes,
+                    not a validation path (its _execute issues one unconditional
+                    PATCH: no type fetch, no allow-list). Per-type status
+                    vocabularies (e.g. task, bug) are documented on the graph's
+                    type nodes, not enforced by either tool. FastMCP exposes
+                    status as a plain string with no schema-level constraint;
+                    the invariant guard above covers only structural checks
+                    (e.g. no_fields_to_patch), not status content.
             x: New canvas X position (world units). Optional.
             y: New canvas Y position (world units). Optional.
             access: Visibility flags. Accepts int (0-3) or string ("None", "Read",
