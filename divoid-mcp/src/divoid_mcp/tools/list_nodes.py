@@ -8,15 +8,21 @@ topology (type, status, linkedto, path). Use divoid_search for semantic /
 
 Invariants enforced at runtime (not expressible in JSON Schema / FastMCP):
   - path and linkedto are mutually exclusive (path subsumes linkedto per #8).
-  - nostatus=True and a non-empty status[] are mutually exclusive.
-  - no_severity=True and a non-empty severity[] are mutually exclusive.
   - bounds must have exactly 4 elements if provided.
-  - sort must be one of: id, type, name, status, severity, refinement.
   - count is clamped silently to [1, 500].
 
-Unknown field names in the fields parameter are passed through to the API,
-which returns HTTP 400 for unrecognised values. The error is surfaced via
-map_http_error — no client-side guard is needed.
+status/nostatus, severity/no_severity, and root_node_id/no_root_node_id are
+each NOT mutually exclusive: the backend OR-composes every one of those pairs
+("matches the list, or has none set"), the same way it already OR-composes
+refinement/norefinement below. A guard rejecting the combination would refuse
+a request the backend deliberately supports, so none exists here.
+
+sort is likewise not validated against a fixed key list here. Unknown field
+names in either fields or sort are passed through to the API, which returns
+HTTP 400 naming the unrecognised value and the fields it does recognise. The
+error is surfaced via map_http_error — no client-side guard is needed, and a
+hard-coded copy of the mapper's registered keys would only drift out of sync
+with it, as the old sort allow-list had.
 
 Timestamp filters (created_from, created_to, updated_from, updated_to) accept
 ISO 8601 datetime strings and are forwarded as-is to the backend query params.
@@ -39,8 +45,6 @@ from ..errors import InvariantViolation, make_error_content, map_http_error, map
 from ._link_details import normalize_labelled_link_details, normalize_link_details
 
 logger = logging.getLogger(__name__)
-
-_VALID_SORT_FIELDS = frozenset({"id", "type", "name", "status", "severity", "refinement"})
 
 _TOOL_DESCRIPTION = """\
 Structural listing of DiVoid nodes. Use this when you know the topology — type, \
@@ -123,30 +127,32 @@ FIELDS: default projection is [id, type, name, status, refinement, contentType, 
 
 SEVERITY FILTERS:
   - severity=[3,5]: exact match — return only nodes whose severity is 3 or 5.
-    Mutually exclusive with no_severity (invariant guard).
+    NOT mutually exclusive with no_severity — combining them OR-composes on the
+    backend ("severity is in the list, or it is unset"), same as refinement below.
   - severity_min=2, severity_max=4: inclusive range filter — [2, 3, 4].
     Either bound may be omitted.
-  - no_severity=true: return only nodes with no severity set (NULL). Mutually
-    exclusive with severity[].
+  - no_severity=true: return only nodes with no severity set (NULL). May be
+    combined with severity[] (OR-composed on the backend, not rejected here).
   - sort="severity": order by severity ascending (combine with descending=true for DESC).
     Each result row always includes severity: int | null.
 
 ROOT NODE FILTERS:
   - root_node_id=[N]: return only nodes whose rootNodeId is N (or one of the listed ids).
     Use to enumerate all nodes grouped under a root — e.g. all docs belonging to a
-    specific docs-group node. Mutually exclusive with no_root_node_id (invariant guard).
-  - no_root_node_id=true: return only nodes with no rootNodeId set (ungrouped). Mutually
-    exclusive with root_node_id[] (invariant guard).
+    specific docs-group node. NOT mutually exclusive with no_root_node_id — the
+    backend OR-composes the combination, same as severity/no_severity above.
+  - no_root_node_id=true: return only nodes with no rootNodeId set (ungrouped). May
+    be combined with root_node_id[] (OR-composed on the backend, not rejected here).
 
 REFINEMENT FILTERS — open vocabulary, answers "how settled is this node's content?",
 independent of status ("where is this node in a workflow?"):
   - refinement=["ready"]: exact match (multi-value = OR). Wildcards %/_ supported
     (SQL LIKE), so refinement=["needs-%"] matches the whole needs-* family.
   - norefinement=true: return only nodes with no refinement set (unset means
-    unclassified, not any particular value). Unlike nostatus/status, refinement and
-    norefinement are NOT mutually exclusive here — combining them OR-composes on the
-    backend ("refinement is in the list, or it is unset"), so both may be passed
-    together deliberately.
+    unclassified, not any particular value). refinement and norefinement are NOT
+    mutually exclusive here — combining them OR-composes on the backend
+    ("refinement is in the list, or it is unset"), so both may be passed together
+    deliberately, the same as status/nostatus and severity/no_severity above.
   - sort="refinement": groups by value; the vocabulary carries no inherent order, so
     this is grouping, not ranking.\
 """
@@ -172,11 +178,18 @@ def _check_invariants(
     """
     Enforce runtime invariants before making any HTTP call.
 
-    No mutual-exclusion check is raised for refinement + norefinement together
-    (unlike nostatus/status and no_severity/severity above): the backend OR-composes
-    that combination as a meaningful query ("refinement is in the list, or it is
-    unset"), so a client-side guard here would reject a request the backend
-    intentionally supports.
+    No mutual-exclusion check is raised for status/nostatus, severity/no_severity,
+    root_node_id/no_root_node_id, or refinement/norefinement: the backend
+    OR-composes every one of those pairs ("matches the list, or has none set" --
+    see NodeService.GenerateFilter), so a client-side guard here would reject a
+    request the backend intentionally supports. This was previously enforced for
+    the first three pairs; the guards were removed because nothing distinguished
+    them from refinement/norefinement, which never had one.
+
+    sort is also not checked against a fixed key list here, for the same reason
+    fields already isn't (see below): the backend's registered sort keys are a
+    mapper implementation detail that changes independently of this file, and a
+    copied allow-list here only goes stale relative to it.
 
     Raises InvariantViolation with a stable code if any invariant is broken.
     Enforcement is entirely at runtime — FastMCP exposes parameters as plain
@@ -192,38 +205,11 @@ def _check_invariants(
             "Use path= for multi-hop topology walks; use linkedto= for single-hop neighbor lookups.",
         )
 
-    if nostatus and status:
-        raise InvariantViolation(
-            "mutually_exclusive_nostatus_status",
-            "nostatus=true returns nodes with no status set; providing status[] simultaneously "
-            "is contradictory. Provide one or the other.",
-        )
-
     if bounds is not None and len(bounds) != 4:
         raise InvariantViolation(
             "bounds_invalid_length",
             f"bounds must have exactly 4 elements [xMin, yMin, xMax, yMax], "
             f"got {len(bounds)}.",
-        )
-
-    if sort is not None and sort not in _VALID_SORT_FIELDS:
-        raise InvariantViolation(
-            "sort_invalid_field",
-            f"sort must be one of: {', '.join(sorted(_VALID_SORT_FIELDS))}. Got {sort!r}.",
-        )
-
-    if no_severity and severity:
-        raise InvariantViolation(
-            "mutually_exclusive_noseverity_severity",
-            "no_severity=true returns nodes with no severity set; providing severity[] "
-            "simultaneously is contradictory. Provide one or the other.",
-        )
-
-    if no_root_node_id and root_node_id:
-        raise InvariantViolation(
-            "mutually_exclusive_norootnodeid_rootnodeid",
-            "no_root_node_id=true returns ungrouped nodes (rootNodeId IS NULL); providing "
-            "root_node_id[] simultaneously is contradictory. Provide one or the other.",
         )
 
 
@@ -432,11 +418,13 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                   Use divoid_search for semantic lookups; type= here is exact match.
             name: Filter by name. Supports % and _ wildcards (SQL LIKE). OR within list.
             status: Filter by status (e.g. ['open', 'in-progress']). Wildcards supported.
-                    Mutually exclusive with nostatus (invariant guard, not JSON Schema).
+                    Open vocabulary, passed through verbatim. NOT mutually exclusive
+                    with nostatus — combining them OR-composes on the backend
+                    ("status is in the list, or it is unset"), not rejected here.
             linkedto: Return nodes linked to any of these node ids (both link directions).
                       Single-hop. Mutually exclusive with path (invariant guard).
-            nostatus: If true, return only nodes with no status set.
-                      Mutually exclusive with status[] (invariant guard).
+            nostatus: If true, return only nodes with no status set. May be combined
+                      with status[] (OR-composed on the backend, not rejected here).
             path: Path-query expression for multi-hop traversal. Raw string, passed as-is
                   to the API. Example: '[type:project,name:DiVoid]/[type:task,status:open]'.
                   See tool description for grammar. The first segment must have at least one
@@ -447,7 +435,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             count: Page size. Default 20, max 500. Silently clamped; no error on out-of-range.
             continue_cursor: Pagination cursor from a previous response's 'continue' field.
                              Null or absent = first page.
-            sort: Sort field: 'id', 'type', 'name', 'status', 'severity', or 'refinement'. Validated by invariant guard.
+            sort: Field to sort by (e.g. 'id', 'name', 'created', 'lastupdate' — any field
+                  the backend's node mapper registers). Not validated client-side; an
+                  unrecognised value is rejected by the backend with a 400 naming the
+                  fields it does recognise.
             descending: If true, sort descending. Default false (ascending).
             fields: Fields to include in each result node. Default: id, type, name, status,
                     refinement, contentType, severity, rootNodeId, ownerId. Also available:
@@ -485,20 +476,23 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                           after this timestamp (inclusive). Forwarded as-is to the backend.
             updated_to: ISO 8601 datetime string. Return only nodes last updated before this
                         timestamp (exclusive). Forwarded as-is to the backend.
-            severity: Filter by exact severity value(s). Multiple values = OR. Mutually
-                      exclusive with no_severity (invariant guard). Forwarded as ?severity=.
+            severity: Filter by exact severity value(s). Multiple values = OR. NOT mutually
+                      exclusive with no_severity — the backend OR-composes the combination
+                      ("in the list, or unset"), not rejected here. Forwarded as ?severity=.
             severity_min: Inclusive lower bound on severity. May be combined with severity_max.
                           Forwarded as ?severityMin=.
             severity_max: Inclusive upper bound on severity. May be combined with severity_min.
                           Forwarded as ?severityMax=.
-            no_severity: If true, return only nodes with no severity set (NULL). Mutually
-                         exclusive with severity[] (invariant guard). Forwarded as ?noSeverity=true.
+            no_severity: If true, return only nodes with no severity set (NULL). May be
+                         combined with severity[] (OR-composed on the backend, not rejected
+                         here). Forwarded as ?noSeverity=true.
             root_node_id: Filter by rootNodeId value(s). Multiple values = OR. Returns only
-                          nodes grouped under one of these root nodes. Mutually exclusive with
-                          no_root_node_id (invariant guard). Forwarded as ?rootNodeId=.
-            no_root_node_id: If true, return only ungrouped nodes (rootNodeId IS NULL). Mutually
-                             exclusive with root_node_id[] (invariant guard). Forwarded as
-                             ?noRootNodeId=true.
+                          nodes grouped under one of these root nodes. NOT mutually exclusive
+                          with no_root_node_id — the backend OR-composes the combination, not
+                          rejected here. Forwarded as ?rootNodeId=.
+            no_root_node_id: If true, return only ungrouped nodes (rootNodeId IS NULL). May be
+                             combined with root_node_id[] (OR-composed on the backend, not
+                             rejected here). Forwarded as ?noRootNodeId=true.
             refinement: Filter by refinement value(s) (open vocabulary, e.g. ['ready'];
                         wildcards %/_ supported). Multiple values = OR. Forwarded as
                         ?refinement=. Answers "how settled is this node's content?",

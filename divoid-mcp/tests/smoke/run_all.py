@@ -1822,12 +1822,16 @@ async def smoke_list_path_and_linkedto_invariant(config: Any) -> None:
     )
 
 
-async def smoke_list_nostatus_and_status_invariant(config: Any) -> None:
-    """divoid_list: nostatus=True + status=['open'] -> mutually_exclusive_nostatus_status invariant."""
-    print("\n--- divoid_list (invariant: nostatus + status mutually exclusive) ---")
+async def smoke_list_nostatus_and_status_not_rejected(config: Any) -> None:
+    """
+    divoid_list: nostatus=True + status=['open'] must NOT raise -- the backend
+    OR-composes the combination ("status is in the list, or it is unset"), the
+    same as refinement/norefinement. A client-side mutual-exclusion guard used
+    to reject this; it has been removed.
+    """
+    print("\n--- divoid_list (nostatus + status together, OR-composed, not rejected) ---")
 
     raised = False
-    violation_code = None
     try:
         _check_list_invariants(
             path=None,
@@ -1838,16 +1842,10 @@ async def smoke_list_nostatus_and_status_invariant(config: Any) -> None:
             sort=None,
             fields=None,
         )
-    except InvariantViolation as exc:
+    except InvariantViolation:
         raised = True
-        violation_code = exc.code
 
-    _assert("nostatus+status raises InvariantViolation", raised)
-    _assert(
-        "violation code is 'mutually_exclusive_nostatus_status'",
-        violation_code == "mutually_exclusive_nostatus_status",
-        f"code={violation_code!r}",
-    )
+    _assert("nostatus+status together does NOT raise InvariantViolation", not raised)
 
 
 async def smoke_list_bounds_invalid_length(config: Any) -> None:
@@ -2064,31 +2062,22 @@ async def smoke_list_pagination(config: Any) -> None:
     _assert("at least 2 unique ids collected across pages", len(seen_ids) >= 2, f"ids={seen_ids}")
 
 
-async def smoke_list_sort_invalid_invariant(config: Any) -> None:
-    """divoid_list: sort='foobar' -> sort_invalid_field invariant rejection."""
-    print("\n--- divoid_list (invariant: sort invalid field) ---")
+async def smoke_list_sort_unknown_field_surfaces_backend_400(config: Any) -> None:
+    """
+    divoid_list: sort='foobar' is no longer rejected client-side -- there is no
+    sort-key allow-list any more. The unrecognised value reaches the backend,
+    which rejects it with a 400 naming the fields it does recognise; that error
+    surfaces here as an isError result rather than a client-side
+    InvariantViolation.
+    """
+    print("\n--- divoid_list (sort='foobar': no client-side guard, backend 400 surfaces) ---")
 
-    raised = False
-    violation_code = None
-    try:
-        _check_list_invariants(
-            path=None,
-            linkedto=None,
-            nostatus=False,
-            status=None,
-            bounds=None,
-            sort="foobar",
-            fields=None,
-        )
-    except InvariantViolation as exc:
-        raised = True
-        violation_code = exc.code
+    result = await _execute_list(config=config, sort="foobar", count=5)
 
-    _assert("invalid sort raises InvariantViolation", raised)
     _assert(
-        "violation code is 'sort_invalid_field'",
-        violation_code == "sort_invalid_field",
-        f"code={violation_code!r}",
+        "unrecognised sort field surfaces as isError from the backend",
+        result.get("isError", False),
+        str(result),
     )
 
 
@@ -4485,13 +4474,13 @@ async def _run_all(config: Any) -> None:
         smoke_list_path_wildcard,
         smoke_list_path_empty_result,
         smoke_list_path_and_linkedto_invariant,
-        smoke_list_nostatus_and_status_invariant,
+        smoke_list_nostatus_and_status_not_rejected,
         smoke_list_bounds_invalid_length,
         smoke_list_bounds_valid,
         smoke_list_sort_name_descending,
         smoke_list_fields_sparse,
         smoke_list_pagination,
-        smoke_list_sort_invalid_invariant,
+        smoke_list_sort_unknown_field_surfaces_backend_400,
         smoke_list_include_content_text,
         smoke_search_include_content,
         smoke_list_include_links,
