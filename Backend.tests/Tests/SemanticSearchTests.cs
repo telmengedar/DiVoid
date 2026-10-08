@@ -557,4 +557,138 @@ public class SemanticSearchTests
         Assert.That(filter.Fields, Does.Not.Contain("similarity"),
             "filter.Fields must not include 'similarity' when Query is absent");
     }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16138: minSimilarity is accepted when only queries is supplied")]
+    public void ListPaged_MinSimilarityWithQueriesOnly_ReachesCapabilityGate()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture, DisabledCapability);
+
+        SemanticSearchUnavailableException ex = Assert.ThrowsAsync<SemanticSearchUnavailableException>(
+            () => svc.ListPaged(new NodeFilter { Queries = ["a", "b"], MinSimilarity = 0.5f, Count = 10 }, callerId: 0, isAdmin: true))!;
+
+        Assert.That(ex.Message, Does.Contain("Postgres"));
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16138: the similarity field is accepted when only queries is supplied")]
+    public void ListPaged_SimilarityFieldWithQueriesOnly_ReachesCapabilityGate()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture, DisabledCapability);
+
+        SemanticSearchUnavailableException ex = Assert.ThrowsAsync<SemanticSearchUnavailableException>(
+            () => svc.ListPaged(new NodeFilter { Queries = ["a", "b"], Fields = ["id", "similarity"], Count = 10 }, callerId: 0, isAdmin: true))!;
+
+        Assert.That(ex.Message, Does.Contain("Postgres"));
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16138: path mode treats queries as a semantic request")]
+    public void ListPagedByPath_QueriesOnSqlite_ThrowsSemanticSearchUnavailable()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture, DisabledCapability);
+
+        SemanticSearchUnavailableException ex = Assert.ThrowsAsync<SemanticSearchUnavailableException>(
+            () => svc.ListPagedByPath(
+                new NodePathFilter { Path = "[type:task]", Queries = ["a", "b"], Count = 10 },
+                callerId: 0, isAdmin: true, CancellationToken.None))!;
+
+        Assert.That(ex.Message, Does.Contain("Postgres"));
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16138: path mode rejects query combined with queries")]
+    public void ListPagedByPath_QueryAndQueriesTogether_ThrowsArgumentException()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture, DisabledCapability);
+
+        Assert.ThrowsAsync<ArgumentException>(
+            () => svc.ListPagedByPath(
+                new NodePathFilter { Path = "[type:task]", Query = "a", Queries = ["b", "c"], Count = 10 },
+                callerId: 0, isAdmin: true, CancellationToken.None));
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16138: path mode rejects more than ten queries")]
+    public void ListPagedByPath_MoreThanTenQueries_ThrowsArgumentException()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture, DisabledCapability);
+
+        Assert.ThrowsAsync<ArgumentException>(
+            () => svc.ListPagedByPath(
+                new NodePathFilter { Path = "[type:task]", Queries = [.. Enumerable.Range(1, 11).Select(i => $"q{i}")], Count = 10 },
+                callerId: 0, isAdmin: true, CancellationToken.None));
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16138: a whitespace-only queries element is rejected at service level")]
+    public void ListPaged_WhitespaceElementInQueries_ThrowsArgumentException()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture, DisabledCapability);
+
+        Assert.ThrowsAsync<ArgumentException>(
+            () => svc.ListPaged(new NodeFilter { Queries = ["a", "  "], Count = 10 }, callerId: 0, isAdmin: true));
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16138: the mapper exposes the similarity field for several queries")]
+    public void NodeMapper_WithTwoQueries_IncludesSimilarityField()
+    {
+        NodeMapper mapper = new(new NodeFilter { Queries = ["a", "b"] });
+
+        Assert.DoesNotThrow(() => _ = mapper["similarity"]);
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16138: an empty queries list is not a semantic request")]
+    public void NodeMapper_WithEmptyQueriesList_DoesNotIncludeSimilarityField()
+    {
+        NodeMapper mapper = new(new NodeFilter { Queries = [] });
+
+        Assert.Throws<UnknownFieldException>(() => _ = mapper["similarity"]);
+    }
+
+    [Parallelizable]
+    [Description("DiVoid #16138: queries win over query; a blank query yields no queries")]
+    [TestCase(new[] { "a", "b" }, null, new[] { "a", "b" })]
+    [TestCase(new string[0], "x", new[] { "x" })]
+    [TestCase(null, "x", new[] { "x" })]
+    [TestCase(null, " ", new string[0])]
+    [TestCase(null, null, new string[0])]
+    public void GetEffectiveQueries_QueriesOrQuery_ReturnsListInOrder(string[]? queries, string? query, string[] expected)
+    {
+        NodeFilter filter = new() { Queries = queries == null ? null : [.. queries], Query = query! };
+
+        Assert.That(filter.GetEffectiveQueries(), Is.EqualTo(expected));
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16138: both guards name queries as well as query so a caller using queries is not told to supply query")]
+    public void ListPaged_MinSimilarityAndSimilarityFieldWithoutAnyQuery_MessagesMentionQueries()
+    {
+        using DatabaseFixture fixture = new();
+        NodeService svc = MakeService(fixture, DisabledCapability);
+
+        SemanticSearchUnavailableException floor = Assert.ThrowsAsync<SemanticSearchUnavailableException>(
+            () => svc.ListPaged(new NodeFilter { MinSimilarity = 0.5f, Count = 10 }, callerId: 0, isAdmin: true))!;
+        SemanticSearchUnavailableException field = Assert.ThrowsAsync<SemanticSearchUnavailableException>(
+            () => svc.ListPaged(new NodeFilter { Fields = ["id", "similarity"], Count = 10 }, callerId: 0, isAdmin: true))!;
+
+        SemanticSearchUnavailableException pathFloor = Assert.ThrowsAsync<SemanticSearchUnavailableException>(
+            () => svc.ListPagedByPath(
+                new NodePathFilter { Path = "[type:task]", MinSimilarity = 0.5f, Count = 10 },
+                callerId: 0, isAdmin: true, CancellationToken.None))!;
+
+        Assert.Multiple(() => {
+            Assert.That(floor.Message, Does.Contain("queries"));
+            Assert.That(field.Message, Does.Contain("queries"));
+            Assert.That(pathFloor.Message, Does.Contain("queries"));
+        });
+    }
 }

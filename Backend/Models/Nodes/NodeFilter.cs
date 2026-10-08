@@ -88,11 +88,16 @@ public class NodeFilter : ListFilter
     public bool NoRootNodeId { get; set; }
 
     /// <summary>
-    /// minimum cosine similarity floor (0–1) for semantic search results.
-    /// only meaningful when <see cref="Pooshit.AspNetCore.Services.Data.ListFilter.Query"/> is also supplied;
-    /// supplying <c>minSimilarity</c> without <c>query</c> returns HTTP 400.
+    /// minimum similarity floor (0–1) for semantic search results.
+    /// only meaningful when <see cref="Pooshit.AspNetCore.Services.Data.ListFilter.Query"/> or <see cref="Queries"/> is also supplied;
+    /// supplying <c>minSimilarity</c> without <c>query</c> or <c>queries</c> returns HTTP 400.
     /// </summary>
     public float? MinSimilarity { get; set; }
+
+    /// <summary>
+    /// semantic queries ranked together by the mean of their per-query similarities
+    /// </summary>
+    public List<string> Queries { get; set; }
 
     /// <summary>
     /// viewport bounding rectangle expressed as four comma-separated doubles:
@@ -121,4 +126,16 @@ public class NodeFilter : ListFilter
     /// exclusive upper bound on <see cref="Node.LastUpdate"/>: only nodes last updated before this timestamp are returned.
     /// </summary>
     public DateTime? UpdatedTo { get; set; }
+
+    /// <summary>
+    /// the semantic queries a search runs with: <see cref="Queries"/> when non-empty, otherwise the single query when not blank, otherwise none
+    /// </summary>
+    /// <returns>queries to rank by</returns>
+    public string[] GetEffectiveQueries()
+    {
+        if (Queries?.Count > 0)
+            return [.. Queries];
+
+        return string.IsNullOrWhiteSpace(Query) ? [] : [Query];
+    }
 }

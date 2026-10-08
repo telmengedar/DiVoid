@@ -20,6 +20,8 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
     const string QueryVectorColumn = "v";
     const string SimilarityAlias = "sim";
     const string SimilarityColumn = "similarity";
+    const string ScaleColumn = "scale";
+    const string SumAlias = "qs";
 
     readonly NodeFilter filter;
 
@@ -31,7 +33,7 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
 
     /// <summary>
     /// creates a new <see cref="NodeMapper"/> optionally configured for semantic search.
-    /// when <paramref name="filter"/> carries a non-empty <c>Query</c>, the
+    /// when <paramref name="filter"/> carries a non-empty <c>Query</c> or <c>Queries</c>, the
     /// <c>similarity</c> field-mapping is included in <see cref="Mappings()"/>.
     /// </summary>
     /// <param name="filter">the inbound node filter; null is treated as standard list mode</param>
@@ -114,19 +116,44 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
         }
     }
 
-    static bool IsSemantic(NodeFilter filter) => !string.IsNullOrWhiteSpace(filter?.Query);
+    static bool IsSemantic(NodeFilter filter) => filter?.GetEffectiveQueries().Length > 0;
+
+    static ISqlToken EmbeddedQuery(string queryText)
+    {
+        return DB.Value<object>(v => DB.Cast(DB.CustomFunction("embedding",
+                                                DB.Constant(TextContentTypePredicate.EmbeddingModel),
+                                                DB.Constant(queryText)), CastType.Vector));
+    }
 
     ILoadOperation QueryVectorSubselect(IEntityManager database)
     {
-        string queryText = filter.Query;
-        return database.Load(DB.As(DB.Value<object>(v => DB.Cast(DB.CustomFunction("embedding",
-                                                        DB.Constant(TextContentTypePredicate.EmbeddingModel),
-                                                        DB.Constant(queryText)), CastType.Vector)), QueryVectorColumn))
+        string[] queries = filter.GetEffectiveQueries();
+        if (queries.Length == 1)
+            return database.Load(DB.As(EmbeddedQuery(queries[0]), QueryVectorColumn))
+                           .Offset(0);
+
+        ISqlToken sum = queries
+                        .Select(query => DB.CustomFunction("l2_normalize", EmbeddedQuery(query)))
+                        .Aggregate((total, next) => DB.CustomFunction("vector_add", total, next));
+        ILoadOperation summed = database.Load(DB.As(sum, QueryVectorColumn)).Offset(0);
+        float queryCount = queries.Length;
+        return database.Load(DB.As(DB.Column(SumAlias, QueryVectorColumn), QueryVectorColumn),
+                             DB.As(DB.Value<object>(v => DB.Cast(DB.CustomFunction("vector_norm", DB.Column(SumAlias, QueryVectorColumn)), CastType.Float).Single / queryCount), ScaleColumn))
+                       .From(summed)
+                       .Alias(SumAlias)
                        .Offset(0);
     }
 
     ILoadOperation SimilaritySubselect(IEntityManager database)
     {
+        if (filter.GetEffectiveQueries().Length > 1)
+            return database.Load(DB.As(DB.Value<object>(v => (1.0f - DB.Cast(
+                                            DB.VCos(
+                                                DB.Column(QueryVectorAlias, QueryVectorColumn),
+                                                DB.Value<object>(w => DB.Cast(DB.Property<Node>(n => n.Embedding, "node"), CastType.Vector))),
+                                            CastType.Float).Single) * DB.Column(QueryVectorAlias, ScaleColumn).Single), SimilarityColumn))
+                           .Offset(0);
+
         return database.Load(DB.As(DB.Value<object>(v => 1.0f - DB.Cast(
                                         DB.VCos(
                                             DB.Column(QueryVectorAlias, QueryVectorColumn),
