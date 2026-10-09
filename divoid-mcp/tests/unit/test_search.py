@@ -363,3 +363,62 @@ async def test_composes_with_include_links(server: FastMCP) -> None:
     assert row["link_details"] == [
         {"source_id": 1, "target_id": 20, "link_type": "Bidirectional"}
     ]
+
+
+def _empty_payload() -> dict[str, Any]:
+    return {"result": [], "total": 0}
+
+
+@pytest.mark.asyncio
+async def test_query_str_sends_query_param_unchanged(server: FastMCP) -> None:
+    with respx.mock(assert_all_called=True) as mock:
+        captured = _mock_response(mock, _empty_payload())
+        result = await _call(server, {"query": "a, b"})
+
+    assert result.get("isError") is not True, result
+    params = captured[0].url.params
+    assert params.get_list("query") == ["a, b"]
+    assert "queries" not in params
+
+
+@pytest.mark.asyncio
+async def test_query_list_sends_repeated_queries_params(server: FastMCP) -> None:
+    with respx.mock(assert_all_called=True) as mock:
+        captured = _mock_response(mock, _empty_payload())
+        result = await _call(server, {"query": ["first, with comma", "second"]})
+
+    assert result.get("isError") is not True, result
+    params = captured[0].url.params
+    assert params.get_list("queries") == ["first, with comma", "second"]
+    assert "query" not in params
+
+
+@pytest.mark.asyncio
+async def test_query_single_element_list_sends_query(server: FastMCP) -> None:
+    with respx.mock(assert_all_called=True) as mock:
+        captured = _mock_response(mock, _empty_payload())
+        result = await _call(server, {"query": ["only"]})
+
+    assert result.get("isError") is not True, result
+    params = captured[0].url.params
+    assert params.get_list("query") == ["only"]
+    assert "queries" not in params
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_query",
+    [[], [""], ["ok", "   "], ["ok", "x" * 1001], "", "   ", "x" * 1001],
+    ids=["empty-list", "empty-element", "blank-element", "long-element",
+         "empty-str", "blank-str", "long-str"],
+)
+async def test_query_list_invalid_rejected_before_http(
+    server: FastMCP, bad_query: Any
+) -> None:
+    with respx.mock(assert_all_called=False) as mock:
+        captured = _mock_response(mock, _empty_payload())
+        result = await _call(server, {"query": bad_query})
+
+    assert result.get("isError") is True, result
+    assert "divoid_bad_request" in str(result["content"])
+    assert captured == []
