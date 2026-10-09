@@ -135,4 +135,77 @@ public class NodeListValidationHttpTests
                 "error text must reference '?query='");
         });
     }
+
+    async Task<(int Status, string Text)> GetErrorAsync(string url)
+    {
+        HttpResponseMessage response = await client.GetAsync(url);
+        using JsonDocument doc = await ReadJsonDocumentAsync(response);
+        return ((int)response.StatusCode, doc.RootElement.GetProperty("text").GetString()!);
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16138: A single queries value is one natural-language query and must never be split on commas")]
+    public async Task Queries_SingleValueWithTenCommas_IsOneQuery()
+    {
+        (int status, string text) = await GetErrorAsync("/api/nodes?queries=a,b,c,d,e,f,g,h,i,j,k&count=1");
+
+        Assert.Multiple(() => {
+            Assert.That(status, Is.EqualTo(400));
+            Assert.That(text, Does.Contain("Semantic search requires Postgres"),
+                "the request must reach the capability gate as one query");
+            Assert.That(text, Does.Not.Contain("at most"));
+        });
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16138: Repeated queries keys bind as separate queries and ten is the largest accepted count")]
+    public async Task Queries_TenRepeatedKeys_ReachesCapabilityGate()
+    {
+        string url = "/api/nodes?count=1&" + string.Join("&", Enumerable.Range(1, 10).Select(i => $"queries=q{i}"));
+
+        (int status, string text) = await GetErrorAsync(url);
+
+        Assert.Multiple(() => {
+            Assert.That(status, Is.EqualTo(400));
+            Assert.That(text, Does.Contain("Semantic search requires Postgres"));
+        });
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16138: More than ten queries must be rejected before any database work")]
+    public async Task Queries_ElevenRepeatedKeys_Returns400TooMany()
+    {
+        string url = "/api/nodes?count=1&" + string.Join("&", Enumerable.Range(1, 11).Select(i => $"queries=q{i}"));
+
+        (int status, string text) = await GetErrorAsync(url);
+
+        Assert.Multiple(() => {
+            Assert.That(status, Is.EqualTo(400));
+            Assert.That(text, Does.Contain("at most 10"));
+        });
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16138: Supplying query and queries together is ambiguous and must be rejected")]
+    public async Task QueryAndQueries_Together_Returns400()
+    {
+        (int status, string text) = await GetErrorAsync("/api/nodes?query=a&queries=b&queries=c&count=1");
+
+        Assert.Multiple(() => {
+            Assert.That(status, Is.EqualTo(400));
+            Assert.That(text, Does.Contain("either query or queries"));
+        });
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16138: A blank element among the queries must be rejected")]
+    public async Task Queries_BlankElement_Returns400()
+    {
+        (int status, string text) = await GetErrorAsync("/api/nodes?queries=a&queries=%20&count=1");
+
+        Assert.Multiple(() => {
+            Assert.That(status, Is.EqualTo(400));
+            Assert.That(text, Does.Contain("blank"));
+        });
+    }
 }

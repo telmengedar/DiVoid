@@ -24,6 +24,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     readonly IEntityManager database = database;
     readonly IEmbeddingCapability embeddingCapability = embeddingCapability;
 
+    const int MaxQueries = 10;
+
     /// <summary>
     /// computes the golden-angle auto-position offset for a new node given its id and an anchor position.
     /// angle = (id * 2.4) mod (2π), radius = 200.
@@ -552,7 +554,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// each hop is a <see cref="LoadOperation{Node}"/> whose predicate wraps the previous
     /// hop's id-subquery via a Union-of-two-<see cref="NodeLink"/>-directions subquery.
     ///
-    /// When <paramref name="filter"/> carries a non-empty <c>Query</c> the terminal
+    /// When <paramref name="filter"/> carries a non-empty <c>Query</c> or <c>Queries</c> the terminal
     /// operation receives the same similarity ordering and predicates as plain-list mode
     /// (see <see cref="ApplySemanticSearch"/>).
     /// </summary>
@@ -621,7 +623,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <summary>
     /// ANDs semantic-search predicates into <paramref name="predicate"/> and overrides the
     /// ORDER BY on <paramref name="operation"/> when <paramref name="filter"/> carries a
-    /// non-empty <c>Query</c>.
+    /// non-empty <c>Query</c> or <c>Queries</c>.
     ///
     /// Both plain-list (<see cref="ListPaged"/>) and path-query (<see cref="ListPagedByPath"/>)
     /// terminal operations go through this helper so the similarity treatment is identical in
@@ -632,7 +634,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// filter predicates in a single <c>Where</c> call.  This follows the "combine manually,
     /// single Where call" contract (Ocelot replaces the existing clause on each Where call).
     ///
-    /// When <c>Query</c> is present this method:
+    /// When <c>Query</c> or <c>Queries</c> is present this method:
     /// <list type="bullet">
     ///   <item>ANDs <c>n.Embedding IS NOT NULL</c> into <paramref name="predicate"/> to exclude un-embedded nodes</item>
     ///   <item>ANDs <c>similarity &gt;= MinSimilarity</c> into <paramref name="predicate"/> when a floor is supplied; the floor reads the similarity column the mapper precomputes per row</item>
@@ -677,6 +679,18 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             throw new ArgumentException("bounds xMin must be less than or equal to xMax", "bounds");
         if (filter.Bounds[1] > filter.Bounds[3])
             throw new ArgumentException("bounds yMin must be less than or equal to yMax", "bounds");
+    }
+
+    static void ValidateQueries(NodeFilter filter)
+    {
+        if (filter.Queries == null || filter.Queries.Length == 0)
+            return;
+        if (!string.IsNullOrWhiteSpace(filter.Query))
+            throw new ArgumentException("supply either query or queries, not both", "queries");
+        if (filter.Queries.Any(string.IsNullOrWhiteSpace))
+            throw new ArgumentException("queries must not contain blank values", "queries");
+        if (filter.Queries.Length > MaxQueries)
+            throw new ArgumentException($"at most {MaxQueries} queries are allowed", "queries");
     }
 
 
@@ -778,12 +792,13 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         filter ??= new();
 
         ValidateBounds(filter);
+        ValidateQueries(filter);
 
-        bool isSemantic = !string.IsNullOrWhiteSpace(filter.Query);
+        bool isSemantic = filter.GetEffectiveQueries().Length > 0;
 
         // guard: minSimilarity without query is a caller error
         if (!isSemantic && filter.MinSimilarity.HasValue)
-            throw new SemanticSearchUnavailableException("minSimilarity requires query");
+            throw new SemanticSearchUnavailableException("minSimilarity requires query or queries");
 
         // guard: semantic search requires Postgres (the embedding() function)
         if (isSemantic && !embeddingCapability.IsEnabled)
@@ -794,7 +809,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             && filter.Fields.Contains("similarity", StringComparer.OrdinalIgnoreCase)
             && !isSemantic)
             throw new SemanticSearchUnavailableException(
-                "Field 'similarity' is only available when a semantic query is provided via '?query='.");
+                "Field 'similarity' is only available when a semantic query is provided via '?query=' or '?queries='.");
 
         if (string.Equals(filter.Sort, "content", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("sort=content is not supported");
@@ -866,12 +881,13 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         filter ??= new();
 
         ValidateBounds(filter);
+        ValidateQueries(filter);
 
-        bool isSemantic = !string.IsNullOrWhiteSpace(filter.Query);
+        bool isSemantic = filter.GetEffectiveQueries().Length > 0;
 
         // guard: minSimilarity without query is a caller error
         if (!isSemantic && filter.MinSimilarity.HasValue)
-            throw new SemanticSearchUnavailableException("minSimilarity requires query");
+            throw new SemanticSearchUnavailableException("minSimilarity requires query or queries");
 
         // guard: semantic search requires Postgres (the embedding() function)
         if (isSemantic && !embeddingCapability.IsEnabled)
