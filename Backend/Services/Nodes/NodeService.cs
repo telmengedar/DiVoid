@@ -683,13 +683,13 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
     static void ValidateQueries(NodeFilter filter)
     {
-        if (filter.Queries == null || filter.Queries.Count == 0)
+        if (filter.Queries == null || filter.Queries.Length == 0)
             return;
         if (!string.IsNullOrWhiteSpace(filter.Query))
             throw new ArgumentException("supply either query or queries, not both", "queries");
         if (filter.Queries.Any(string.IsNullOrWhiteSpace))
             throw new ArgumentException("queries must not contain blank values", "queries");
-        if (filter.Queries.Count > MaxQueries)
+        if (filter.Queries.Length > MaxQueries)
             throw new ArgumentException($"at most {MaxQueries} queries are allowed", "queries");
     }
 

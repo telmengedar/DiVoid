@@ -1,3 +1,4 @@
+using mamgo.services.Binding;
 using Pooshit.AspNetCore.Services.Data;
 
 namespace Backend.Models.Nodes;
@@ -95,9 +96,11 @@ public class NodeFilter : ListFilter
     public float? MinSimilarity { get; set; }
 
     /// <summary>
-    /// semantic queries ranked together by the mean of their per-query similarities
+    /// semantic queries ranked together by the mean of their per-query similarities;
+    /// each repeated <c>queries</c> key is one query and a value containing commas stays one query
     /// </summary>
-    public List<string> Queries { get; set; }
+    [NoCommaSplit]
+    public string[] Queries { get; set; }
 
     /// <summary>
     /// viewport bounding rectangle expressed as four comma-separated doubles:
@@ -133,7 +136,7 @@ public class NodeFilter : ListFilter
     /// <returns>queries to rank by</returns>
     public string[] GetEffectiveQueries()
     {
-        if (Queries?.Count > 0)
+        if (Queries?.Length > 0)
             return [.. Queries];
 
         return string.IsNullOrWhiteSpace(Query) ? [] : [Query];
