@@ -163,8 +163,11 @@ def _from_fallback_file(path: Path) -> DivoidConfig:
     return DivoidConfig(base_url=base_url, api_key=api_key, source=f"file:{path}")
 
 
-def _fail(message: str) -> NoReturn:
+def _fail(message: str, *, with_env_hint: bool = True) -> NoReturn:
     """Logs message plus the environment-source hint to stderr, then exits the process
-    with status 1."""
-    logger.error("%s\n%s", message, _ENV_HINT)
+    with status 1. Startup failures unrelated to credentials pass with_env_hint=False."""
+    if with_env_hint:
+        logger.error("%s\n%s", message, _ENV_HINT)
+    else:
+        logger.error("%s", message)
     sys.exit(1)
