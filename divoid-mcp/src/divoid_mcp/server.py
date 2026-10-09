@@ -22,15 +22,18 @@ import asyncio
 import logging
 import os
 import sys
+from collections.abc import Callable
 
 from . import http_client, paths
-from .config import DivoidConfig, load_secret
+from .config import DivoidConfig, _fail, load_secret
 from .drift import run_canary
 from .resources import register_resources
 from .tools import register_tools
 from .version import __version__
 
 logger = logging.getLogger(__name__)
+
+_CA_BUNDLE_ENV_VAR = "SSL_CERT_FILE"
 
 
 def _configure_logging() -> None:
@@ -52,12 +55,48 @@ def main() -> None:
     config = load_secret()
 
     # Step 3: initialise shared HTTP client
-    http_client.init(config.base_url, config.api_key)
+    _run_startup_step(
+        "Initialising the HTTP client",
+        lambda: http_client.init(config.base_url, config.api_key),
+        _http_failure_hint(),
+    )
 
-    paths.init()
+    _run_startup_step(
+        "Initialising the filesystem path roots",
+        paths.init,
+        f"{paths.ENV_VAR} is read here; when it is unset or empty the process working "
+        "directory is used, and that directory must still exist and be readable.",
+    )
 
     # Run the async startup and serve
     asyncio.run(_async_main(config))
+
+
+def _http_failure_hint() -> str:
+    """Names the environment inputs httpx reads while building its client, with the CA
+    bundle path (proxy variables are named, never echoed)."""
+    value = os.environ.get(_CA_BUNDLE_ENV_VAR)
+    current = "unset" if value is None else f'"{value}"'
+    return (
+        f"httpx builds its TLS context at this point and honours {_CA_BUNDLE_ENV_VAR}; a "
+        f"stale or unreadable path there makes this step fail (currently: {current}). "
+        "Correct or unset it in the \"env\" block of this server's entry in your MCP client "
+        "configuration. An HTTP_PROXY / HTTPS_PROXY / ALL_PROXY (or lowercase http_proxy / "
+        "https_proxy / all_proxy) with an unsupported scheme fails here too."
+    )
+
+
+def _run_startup_step(what: str, step: Callable[[], None], cause_hint: str) -> None:
+    """Runs one post-credential startup step; any exception leaves through config._fail
+    with the step's name, the exception, and the environment inputs that can cause it."""
+    try:
+        step()
+    except Exception as exc:
+        _fail(
+            f"{what} failed: {type(exc).__name__}: {exc} -- divoid-mcp cannot start.\n"
+            f"{cause_hint}",
+            with_env_hint=False,
+        )
 
 
 def _build_instructions(config: DivoidConfig) -> str:

@@ -40,7 +40,9 @@ _roots: tuple[str, ...] = ()
 
 
 def init(env: "os._Environ[str] | dict[str, str] | None" = None) -> None:
-    """Establishes the frozen root list for the process lifetime from DIVOID_MCP_FILE_ROOT, or the cwd. Never raises."""
+    """Establishes the frozen root list for the process lifetime from DIVOID_MCP_FILE_ROOT,
+    or the cwd. Raises only when DIVOID_MCP_FILE_ROOT is unset or empty and the cwd cannot
+    be resolved."""
     global _roots
 
     if env is None:
