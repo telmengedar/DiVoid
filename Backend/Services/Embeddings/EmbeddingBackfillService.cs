@@ -80,9 +80,7 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
             }
 
             await database.Update<Node>()
-                          .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                                      DB.Constant(TextContentTypePredicate.EmbeddingModel),
-                                                                      DB.Constant(composed)).Type<float[]>())
+                          .Set(n => n.Embedding == EmbeddingExpression.OfText(DB.Constant(composed)).Type<float[]>())
                           .Where(n => n.Id == node.Id)
                           .ExecuteAsync();
 

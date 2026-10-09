@@ -1,3 +1,4 @@
+using Backend.Services.Embeddings;
 using Pooshit.AspNetCore.Services.Patches;
 using Pooshit.Ocelot.Entities.Attributes;
 
@@ -49,9 +50,10 @@ public class Node
     public string Substance { get; set; }
 
     /// <summary>
-    /// content embedding (only for text / markdown nodes)
+    /// content embedding (only for text / markdown nodes), the first <see cref="EmbeddingExpression.Dimensions"/> components of the model output.
+    /// write-only: the column is never read into the entity
     /// </summary>
-    [Size(3072)]
+    [Vector(EmbeddingExpression.Dimensions)]
     public float[] Embedding { get; set; }
 
     /// <summary>

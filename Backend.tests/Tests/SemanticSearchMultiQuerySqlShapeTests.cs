@@ -23,11 +23,11 @@ public class SemanticSearchMultiQuerySqlShapeTests
 {
     const string Model = "gemini-embedding-001";
 
-    const string UnitAListBaseline = @"SELECT node.""id"" , type.""type"" , node.""name"" , node.""status"" , node.""severity"" , node.""refinement"" , node.""rootnodeid"" , node.""contenttype"" , node.""ownerid"" , node.""access"" , node.""created"" , node.""lastupdate"" , sim.""similarity"", COUNT(*) OVER() AS __window FROM node AS node INNER JOIN nodetype AS type ON node.""typeid"" = type.""id"" INNER JOIN LATERAL ( SELECT ( embedding ( gemini-embedding-001 , alpha ) ::vector ) AS v OFFSET 0 ) AS q ON TRUE INNER JOIN LATERAL ( SELECT ( 1 - CAST( q.""v"" <=> ( node.""embedding"" ::vector ) AS FLOAT) ) AS similarity OFFSET 0 ) AS sim ON TRUE WHERE node.""typeid"" = ANY( SELECT ""id"" FROM nodetype WHERE ""type"" = ANY( System.String[] ) ) AND node.""embedding"" IS NOT NULL AND sim.""similarity"" >= 0.5 ORDER BY sim.""similarity"" DESC , node.""id"" LIMIT 10";
+    const string UnitAListBaseline = @"SELECT node.""id"" , type.""type"" , node.""name"" , node.""status"" , node.""severity"" , node.""refinement"" , node.""rootnodeid"" , node.""contenttype"" , node.""ownerid"" , node.""access"" , node.""created"" , node.""lastupdate"" , sim.""similarity"", COUNT(*) OVER() AS __window FROM node AS node INNER JOIN nodetype AS type ON node.""typeid"" = type.""id"" INNER JOIN LATERAL ( SELECT subvector ( ( embedding ( gemini-embedding-001 , alpha ) ::vector ) , 1 , 768 ) AS v OFFSET 0 ) AS q ON TRUE INNER JOIN LATERAL ( SELECT ( 1 - CAST( q.""v"" <=> ( node.""embedding"" ::vector ) AS FLOAT) ) AS similarity OFFSET 0 ) AS sim ON TRUE WHERE node.""typeid"" = ANY( SELECT ""id"" FROM nodetype WHERE ""type"" = ANY( System.String[] ) ) AND node.""embedding"" IS NOT NULL AND sim.""similarity"" >= 0.5 ORDER BY sim.""similarity"" DESC , node.""id"" LIMIT 10";
 
-    const string UnitAPathBaseline = @"SELECT node.""id"" , type.""type"" , node.""name"" , node.""status"" , node.""severity"" , node.""refinement"" , node.""rootnodeid"" , node.""contenttype"" , node.""ownerid"" , node.""access"" , node.""created"" , node.""lastupdate"" , sim.""similarity"", COUNT(*) OVER() AS __window FROM node AS node INNER JOIN nodetype AS type ON node.""typeid"" = type.""id"" INNER JOIN LATERAL ( SELECT ( embedding ( gemini-embedding-001 , alpha ) ::vector ) AS v OFFSET 0 ) AS q ON TRUE INNER JOIN LATERAL ( SELECT ( 1 - CAST( q.""v"" <=> ( node.""embedding"" ::vector ) AS FLOAT) ) AS similarity OFFSET 0 ) AS sim ON TRUE WHERE node.""typeid"" = ANY( SELECT ""id"" FROM nodetype WHERE ""type"" = ANY( System.String[] ) ) AND node.""embedding"" IS NOT NULL AND sim.""similarity"" >= 0.5 ORDER BY sim.""similarity"" DESC , node.""id"" LIMIT 10";
+    const string UnitAPathBaseline = @"SELECT node.""id"" , type.""type"" , node.""name"" , node.""status"" , node.""severity"" , node.""refinement"" , node.""rootnodeid"" , node.""contenttype"" , node.""ownerid"" , node.""access"" , node.""created"" , node.""lastupdate"" , sim.""similarity"", COUNT(*) OVER() AS __window FROM node AS node INNER JOIN nodetype AS type ON node.""typeid"" = type.""id"" INNER JOIN LATERAL ( SELECT subvector ( ( embedding ( gemini-embedding-001 , alpha ) ::vector ) , 1 , 768 ) AS v OFFSET 0 ) AS q ON TRUE INNER JOIN LATERAL ( SELECT ( 1 - CAST( q.""v"" <=> ( node.""embedding"" ::vector ) AS FLOAT) ) AS similarity OFFSET 0 ) AS sim ON TRUE WHERE node.""typeid"" = ANY( SELECT ""id"" FROM nodetype WHERE ""type"" = ANY( System.String[] ) ) AND node.""embedding"" IS NOT NULL AND sim.""similarity"" >= 0.5 ORDER BY sim.""similarity"" DESC , node.""id"" LIMIT 10";
 
-    const string UnitAFieldsBaseline = @"SELECT node.""id"" , node.""name"", COUNT(*) OVER() AS __window FROM node AS node INNER JOIN nodetype AS type ON node.""typeid"" = type.""id"" INNER JOIN LATERAL ( SELECT ( embedding ( gemini-embedding-001 , alpha ) ::vector ) AS v OFFSET 0 ) AS q ON TRUE INNER JOIN LATERAL ( SELECT ( 1 - CAST( q.""v"" <=> ( node.""embedding"" ::vector ) AS FLOAT) ) AS similarity OFFSET 0 ) AS sim ON TRUE WHERE node.""embedding"" IS NOT NULL ORDER BY sim.""similarity"" DESC , node.""id"" LIMIT 10";
+    const string UnitAFieldsBaseline = @"SELECT node.""id"" , node.""name"", COUNT(*) OVER() AS __window FROM node AS node INNER JOIN nodetype AS type ON node.""typeid"" = type.""id"" INNER JOIN LATERAL ( SELECT subvector ( ( embedding ( gemini-embedding-001 , alpha ) ::vector ) , 1 , 768 ) AS v OFFSET 0 ) AS q ON TRUE INNER JOIN LATERAL ( SELECT ( 1 - CAST( q.""v"" <=> ( node.""embedding"" ::vector ) AS FLOAT) ) AS similarity OFFSET 0 ) AS sim ON TRUE WHERE node.""embedding"" IS NOT NULL ORDER BY sim.""similarity"" DESC , node.""id"" LIMIT 10";
 
     sealed class StatementCaptured(string sql, object[] parameters) : Exception
     {
@@ -83,7 +83,7 @@ public class SemanticSearchMultiQuerySqlShapeTests
     static int Count(string text, string needle) => Regex.Matches(text, Regex.Escape(needle)).Count;
 
     static string NormalizedEmbedding(string query)
-        => $"l2_normalize ( ( embedding ( {Model} , {query} ) ::vector ) )";
+        => $"l2_normalize ( subvector ( ( embedding ( {Model} , {query} ) ::vector ) , 1 , 768 ) )";
 
     static string ExpectedLaterals(string sum, int queryCount)
         => " INNER JOIN LATERAL ( SELECT qs.\"v\" AS v , ( CAST( vector_norm ( qs.\"v\" ) AS FLOAT) / " + queryCount + " ) AS scale"
@@ -93,7 +93,7 @@ public class SemanticSearchMultiQuerySqlShapeTests
     static string TwoQuerySum => $"vector_add ( {NormalizedEmbedding("alpha")} , {NormalizedEmbedding("beta")} )";
 
     [Test, Parallelizable]
-    [Description("DiVoid #16138: a single query renders exactly the statement that main rendered before multi-query existed (7571e09)")]
+    [Description("DiVoid #16138: a single query renders the statement of the single-query path with the query vector cut to the column dimension")]
     public void SingleQuery_ListStatement_MatchesUnitABaseline()
     {
         Statement statement = CaptureList(new() { Query = "alpha", MinSimilarity = 0.5f, Type = ["task"], Count = 10 });
@@ -102,7 +102,7 @@ public class SemanticSearchMultiQuerySqlShapeTests
     }
 
     [Test, Parallelizable]
-    [Description("DiVoid #16138: a single query in path mode renders exactly the statement that main rendered before multi-query existed (7571e09)")]
+    [Description("DiVoid #16138: a single query in path mode renders the statement of the single-query path with the query vector cut to the column dimension")]
     public void SingleQuery_PathStatement_MatchesUnitABaseline()
     {
         Statement statement = CapturePath(new() { Path = "[type:task]", Query = "alpha", MinSimilarity = 0.5f, Count = 10 });

@@ -32,6 +32,7 @@ public class DatabaseModelService : IHostedService {
 
         await schemaService.CreateOrUpdateSchema<ApiKey>(transaction);
         await schemaService.CreateOrUpdateSchema<User>(transaction);
+        await EmbeddingColumnMigration.RunAsync(database, transaction);
         await schemaService.CreateOrUpdateSchema<Node>(transaction);
         await schemaService.CreateOrUpdateSchema<NodeLink>(transaction);
         await schemaService.CreateOrUpdateSchema<NodeType>(transaction);

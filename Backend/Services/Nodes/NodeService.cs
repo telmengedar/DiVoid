@@ -149,9 +149,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                 : node.Name;
 
             await database.Update<Node>()
-                          .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                                      DB.Constant(TextContentTypePredicate.EmbeddingModel),
-                                                                      DB.Constant(nameInput)).Type<float[]>())
+                          .Set(n => n.Embedding == EmbeddingExpression.OfText(DB.Constant(nameInput)).Type<float[]>())
                           .Where(n => n.Id == nodeId)
                           .ExecuteAsync(transaction);
         }
@@ -1100,33 +1098,26 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                     UpdateValuesOperation<Node> F4)
         BuildEmbeddingBranchOperations(IEntityManager database, long nodeId)
     {
-        string model = TextContentTypePredicate.EmbeddingModel;
         string[] allowlist = TextContentTypePredicate.ApplicationTextTypes;
 
         UpdateValuesOperation<Node> f1 = database.Update<Node>()
-                                                 .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                                                             DB.Constant(model),
-                                                                                             DB.CustomFunction("concat",
-                                                                                                 DB.Property<Node>(x => x.Name),
-                                                                                                 DB.Constant("\n\n"),
-                                                                                                 DB.Left(DB.ConvertFrom(DB.Property<Node>(x => x.Content), "UTF8"), 8000))).Type<float[]>())
+                                                 .Set(n => n.Embedding == EmbeddingExpression.OfText(DB.CustomFunction("concat",
+                                                                                                         DB.Property<Node>(x => x.Name),
+                                                                                                         DB.Constant("\n\n"),
+                                                                                                         DB.Left(DB.ConvertFrom(DB.Property<Node>(x => x.Content), "UTF8"), 8000))).Type<float[]>())
                                                  .Where(n => n.Id == nodeId
                                                           && n.Name != null && n.Name != ""
                                                           && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
                                                           && n.Content != null);
 
         UpdateValuesOperation<Node> f2 = database.Update<Node>()
-                                                 .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                                                             DB.Constant(model),
-                                                                                             DB.Property<Node>(x => x.Name)).Type<float[]>())
+                                                 .Set(n => n.Embedding == EmbeddingExpression.OfText(DB.Property<Node>(x => x.Name)).Type<float[]>())
                                                  .Where(n => n.Id == nodeId
                                                           && n.Name != null && n.Name != ""
                                                           && (!(n.ContentType.Like("text/%") || n.ContentType.In(allowlist)) || n.Content == null));
 
         UpdateValuesOperation<Node> f3 = database.Update<Node>()
-                                                 .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                                                             DB.Constant(model),
-                                                                                             DB.Left(DB.ConvertFrom(DB.Property<Node>(x => x.Content), "UTF8"), 8000)).Type<float[]>())
+                                                 .Set(n => n.Embedding == EmbeddingExpression.OfText(DB.Left(DB.ConvertFrom(DB.Property<Node>(x => x.Content), "UTF8"), 8000)).Type<float[]>())
                                                  .Where(n => n.Id == nodeId
                                                           && (n.Name == null || n.Name == "")
                                                           && (n.ContentType.Like("text/%") || n.ContentType.In(allowlist))
@@ -1232,9 +1223,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         string composed = EmbeddingInputComposer.Compose(row.Name, content, contentType);
         if (composed != null) {
             await database.Update<Node>()
-                          .Set(n => n.Embedding == DB.CustomFunction("embedding",
-                                                                      DB.Constant(TextContentTypePredicate.EmbeddingModel),
-                                                                      DB.Constant(composed)).Type<float[]>())
+                          .Set(n => n.Embedding == EmbeddingExpression.OfText(DB.Constant(composed)).Type<float[]>())
                           .Where(n => n.Id == nodeId)
                           .ExecuteAsync(transaction);
         } else {

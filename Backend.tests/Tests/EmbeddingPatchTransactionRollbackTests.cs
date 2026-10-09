@@ -25,14 +25,14 @@ namespace Backend.tests.Tests;
 /// would silently violate the invariant and is exactly what this test catches.
 ///
 /// fault-injection mechanism:
-/// SQLite does not implement the <c>DB.ConvertFrom</c> / <c>convert_from()</c>
-/// Postgres function.  the test seeds a node using a disabled-capability service (so
+/// SQLite does not implement the <c>::vector</c> cast which the embedding expression
+/// contains.  the test seeds a node using a disabled-capability service (so
 /// CreateNode does not attempt the embedding call), then calls Patch with an
 /// enabled-capability service on the same EntityManager.  with capability enabled,
 /// NodeService.Patch enters the embedding branch, executes UPDATE 1 (name) inside the
 /// open transaction, then calls RegenerateEmbeddingViaBranches which prepares all four
-/// SQL branch UPDATEs including the F1 branch that uses <c>DB.ConvertFrom</c>.  Ocelot
-/// throws <c>NotSupportedException</c> ("DB.ConvertFrom is only supported on PostgreSQL")
+/// SQL branch UPDATEs including the F1 branch with its vector cast.  Ocelot
+/// throws <c>ArgumentException</c> ("Invalid cast target type")
 /// at SQL-preparation time, before <c>transaction.Commit()</c> is reached.  the
 /// <c>using Transaction</c> scope disposes without committing → SQLite rolls back
 /// UPDATE 1.
@@ -90,7 +90,7 @@ public class EmbeddingPatchTransactionRollbackTests
                 [new PatchOperation { Op = "replace", Path = "/name", Value = "New" }],
                 callerId: 0, isAdmin: true, CancellationToken.None);
         }
-        catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
+        catch (ArgumentException ex) when (ex.Message.Contains("cast target type"))
         {
             thrown = ex;
         }
@@ -101,7 +101,7 @@ public class EmbeddingPatchTransactionRollbackTests
 
         Assert.Multiple(() => {
             Assert.That(thrown, Is.Not.Null,
-                "embedding branch on SQLite must throw (DB.ConvertFrom is Postgres-only) — if null the capability guard is not entering the embedding branch");
+                "embedding branch on SQLite must throw (the vector cast is Postgres-only) — if null the capability guard is not entering the embedding branch");
             Assert.That(live.Name, Is.EqualTo("Original"),
                 "UPDATE 1 (name) must be rolled back: transaction must not commit when the embedding step throws");
             Assert.That(live.Embedding, Is.Null,
@@ -116,7 +116,7 @@ public class EmbeddingPatchTransactionRollbackTests
     /// pass the test for the wrong reason.
     /// </summary>
     [Test]
-    public async Task Patch_EmbeddingThrowsMidTransaction_ExceptionMentionsPostgresRestriction()
+    public async Task Patch_EmbeddingThrowsMidTransaction_ExceptionNamesUnsupportedVectorCast()
     {
         using DatabaseFixture fixture = new();
         NodeService seedSvc = new(fixture.EntityManager, DisabledCapability);
@@ -132,15 +132,15 @@ public class EmbeddingPatchTransactionRollbackTests
                 [new PatchOperation { Op = "replace", Path = "/name", Value = "NewDoc" }],
                 callerId: 0, isAdmin: true, CancellationToken.None);
         }
-        catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
+        catch (ArgumentException ex) when (ex.Message.Contains("cast target type"))
         {
             thrown = ex;
         }
 
         Assert.That(thrown, Is.Not.Null,
-            "exception must be thrown from the embedding branch — capability enabled on SQLite triggers Postgres-only DB.ConvertFrom");
-        Assert.That(thrown!.Message, Does.Contain("PostgreSQL").IgnoreCase,
-            "exception message must reference PostgreSQL restriction — distinguishes embedding-branch throw from unrelated failures");
+            "exception must be thrown from the embedding branch — capability enabled on SQLite triggers the Postgres-only vector cast");
+        Assert.That(thrown!.Message, Does.Contain("cast target type").IgnoreCase,
+            "exception message must name the unsupported vector cast — distinguishes embedding-branch throw from unrelated failures");
     }
 
 
