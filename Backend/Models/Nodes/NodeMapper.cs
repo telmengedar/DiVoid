@@ -16,6 +16,11 @@ namespace Backend.Models.Nodes;
 /// </summary>
 public class NodeMapper : FieldMapper<NodeDetails, Node>
 {
+    const string QueryVectorAlias = "q";
+    const string QueryVectorColumn = "v";
+    const string SimilarityAlias = "sim";
+    const string SimilarityColumn = "similarity";
+
     readonly NodeFilter filter;
 
     /// <summary>
@@ -102,30 +107,44 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
                                                         DB.Property<Node>(n => n.LastUpdate, "node"),
                                                         (n, v) => n.LastUpdate = v);
 
-        if (!string.IsNullOrWhiteSpace(filter?.Query)) {
-            // similarity = 1.0 - cosineDistance(queryEmbedding, nodeEmbedding)
-            // DB.VCos compiles to pgvector's <=> (cosine distance: smaller = more similar).
-            // Both sides are cast to vector so Postgres can invoke the <=> operator.
-            // The outer Float cast makes the result a plain float for the .Single projection.
-            // Shape taken verbatim from mamgo-backend CampaignItemTargetMapper.cs:171-174.
-            string queryText = filter.Query;
+        if (IsSemantic(filter)) {
             yield return new FieldMapping<NodeDetails, float>("similarity",
-                t => 1.0f - DB.Cast(
-                    DB.VCos(
-                        DB.Value<object>(v => DB.Cast(DB.CustomFunction("embedding",
-                                                        DB.Constant(TextContentTypePredicate.EmbeddingModel),
-                                                        DB.Constant(queryText)), CastType.Vector)),
-                        DB.Value<object>(v => DB.Cast(DB.Property<Node>(n => n.Embedding, "node"), CastType.Vector))),
-                    CastType.Float).Single,
+                DB.Column(SimilarityAlias, SimilarityColumn),
                 (n, v) => n.Similarity = v);
         }
+    }
+
+    static bool IsSemantic(NodeFilter filter) => !string.IsNullOrWhiteSpace(filter?.Query);
+
+    ILoadOperation QueryVectorSubselect(IEntityManager database)
+    {
+        string queryText = filter.Query;
+        return database.Load(DB.As(DB.Value<object>(v => DB.Cast(DB.CustomFunction("embedding",
+                                                        DB.Constant(TextContentTypePredicate.EmbeddingModel),
+                                                        DB.Constant(queryText)), CastType.Vector)), QueryVectorColumn))
+                       .Offset(0);
+    }
+
+    ILoadOperation SimilaritySubselect(IEntityManager database)
+    {
+        return database.Load(DB.As(DB.Value<object>(v => 1.0f - DB.Cast(
+                                        DB.VCos(
+                                            DB.Column(QueryVectorAlias, QueryVectorColumn),
+                                            DB.Value<object>(w => DB.Cast(DB.Property<Node>(n => n.Embedding, "node"), CastType.Vector))),
+                                        CastType.Float).Single), SimilarityColumn))
+                       .Offset(0);
     }
 
     /// <inheritdoc />
     public override LoadOperation<Node> CreateOperation(IEntityManager database, params IDBField[] fields)
     {
-        return database.Load<Node>(fields)
-                        .Alias("node")
-                        .Join<NodeType>((n, t) => n.TypeId == t.Id, "type");
+        LoadOperation<Node> operation = database.Load<Node>(fields)
+                                                .Alias("node")
+                                                .Join<NodeType>((n, t) => n.TypeId == t.Id, "type");
+        if (!IsSemantic(filter))
+            return operation;
+
+        return operation.LateralJoin(QueryVectorSubselect(database), null, QueryVectorAlias)
+                        .LateralJoin(SimilaritySubselect(database), null, SimilarityAlias);
     }
 }

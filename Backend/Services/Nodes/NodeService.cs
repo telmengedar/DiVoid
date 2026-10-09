@@ -635,7 +635,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// When <c>Query</c> is present this method:
     /// <list type="bullet">
     ///   <item>ANDs <c>n.Embedding IS NOT NULL</c> into <paramref name="predicate"/> to exclude un-embedded nodes</item>
-    ///   <item>ANDs <c>similarity &gt;= MinSimilarity</c> into <paramref name="predicate"/> when a floor is supplied</item>
+    ///   <item>ANDs <c>similarity &gt;= MinSimilarity</c> into <paramref name="predicate"/> when a floor is supplied; the floor reads the similarity column the mapper precomputes per row</item>
     ///   <item>removes any sort that <see cref="FilterExtensions.ApplyFilter{T,TEntity}"/> may have added and
     ///         replaces it with <c>ORDER BY similarity DESC, id ASC</c></item>
     /// </list>
