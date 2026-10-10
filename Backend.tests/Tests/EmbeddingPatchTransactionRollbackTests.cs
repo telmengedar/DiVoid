@@ -11,44 +11,9 @@ using Pooshit.AspNetCore.Services.Patches;
 namespace Backend.tests.Tests;
 
 /// <summary>
-/// regression pin for the transaction-rollback invariant on name-PATCH embedding regen
-/// (task #445, architecture doc DiVoid #440 §10 / §13).
-///
-/// PR #68 (task #437) wraps two UPDATEs inside one transaction in
-/// <c>NodeService.Patch</c>:
-///   UPDATE 1 — apply JSON-Patch operations (name, status, etc.)
-///   UPDATE 2 — regenerate the embedding column via four SQL-side branches
-///
-/// the invariant: if the embedding regen fails (UPDATE 2 throws), UPDATE 1 must also be
-/// rolled back.  a future refactor that splits the transaction (e.g. pulls the embedding
-/// regen to a background job, or forgets to pass the transaction object to ExecuteAsync)
-/// would silently violate the invariant and is exactly what this test catches.
-///
-/// fault-injection mechanism:
-/// SQLite does not implement the <c>::vector</c> cast which the embedding expression
-/// contains.  the test seeds a node using a disabled-capability service (so
-/// CreateNode does not attempt the embedding call), then calls Patch with an
-/// enabled-capability service on the same EntityManager.  with capability enabled,
-/// NodeService.Patch enters the embedding branch, executes UPDATE 1 (name) inside the
-/// open transaction, then calls RegenerateEmbeddingViaBranches which prepares all four
-/// SQL branch UPDATEs including the F1 branch with its vector cast.  Ocelot
-/// throws <c>ArgumentException</c> ("Invalid cast target type")
-/// at SQL-preparation time, before <c>transaction.Commit()</c> is reached.  the
-/// <c>using Transaction</c> scope disposes without committing → SQLite rolls back
-/// UPDATE 1.
-///
-/// load-bearing (DiVoid #275) — substitution proof documented in XML below.
-/// the broken production code is never committed.
-///
-/// DB engine: SQLite only (the embedded SQLite engine is the fault source; the
-/// Postgres-specific DB.ConvertFrom token is what triggers the exception).
-/// the rollback semantics (exception before Commit → Dispose rolls back) are identical
-/// on Postgres — this is a standard ADO.NET transaction contract.  on Postgres the
-/// analogous fault would be a real embedding-model RPC failure; here the SQLite dialect
-/// rejection is structurally equivalent: both throw before Commit(), both exercise the
-/// same <c>using Transaction</c> rollback path.
+/// pins that a failing embedding write rolls back the name patch it belongs to
 /// </summary>
-[TestFixture]
+[TestFixture, Parallelizable]
 public class EmbeddingPatchTransactionRollbackTests
 {
     static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
@@ -56,24 +21,9 @@ public class EmbeddingPatchTransactionRollbackTests
 
 
     /// <summary>
-    /// core regression: embedding-branch failure mid-transaction rolls back the name UPDATE.
-    ///
-    /// arrange: node seeded with name "Original" via a disabled-capability service so that
-    ///          CreateNode does not attempt any embedding call.
-    /// act:     PATCH /name → "New" via an enabled-capability service on the same EntityManager.
-    ///          Ocelot throws NotSupportedException (DB.ConvertFrom not supported on SQLite)
-    ///          inside the transaction scope, before Commit().
-    /// assert:  exception propagates; live row still has name "Original" (UPDATE 1 rolled back).
-    ///
-    /// substitution proof (DiVoid #275):
-    ///   in NodeService.Patch, move transaction.Commit() to BEFORE the nameTouched block
-    ///   (i.e. commit UPDATE 1 before RegenerateEmbeddingViaBranches runs).  re-running
-    ///   this test then shows live.Name == "New" — the commit landed before the embedding
-    ///   threw, so the name change is permanent even though the embedding step failed.
-    ///   the assertion "UPDATE 1 (name) must be rolled back" fails.  restoring the commit
-    ///   to after the embedding block makes it pass.  the broken code is never committed.
+    /// a name patch whose embedding write throws leaves the old name in place
     /// </summary>
-    [Test]
+    [Test, Parallelizable]
     public async Task Patch_EmbeddingThrowsMidTransaction_NameUpdateRolledBack()
     {
         using DatabaseFixture fixture = new();
@@ -111,11 +61,9 @@ public class EmbeddingPatchTransactionRollbackTests
 
 
     /// <summary>
-    /// confirms the exception from the embedding branch mentions the Postgres-only restriction,
-    /// so future Ocelot versions that add SQLite support for ConvertFrom would not silently
-    /// pass the test for the wrong reason.
+    /// the embedding write fails with the unsupported vector cast error
     /// </summary>
-    [Test]
+    [Test, Parallelizable]
     public async Task Patch_EmbeddingThrowsMidTransaction_ExceptionNamesUnsupportedVectorCast()
     {
         using DatabaseFixture fixture = new();
@@ -149,7 +97,7 @@ public class EmbeddingPatchTransactionRollbackTests
     /// confirming the fault in the rollback test is caused by the embedding path, not by some
     /// other transaction issue.
     /// </summary>
-    [Test]
+    [Test, Parallelizable]
     public async Task Patch_NonNameField_EmbeddingCapabilityEnabled_NoThrow()
     {
         using DatabaseFixture fixture = new();
