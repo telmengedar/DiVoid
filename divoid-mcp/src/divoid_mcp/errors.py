@@ -73,7 +73,9 @@ def map_http_error(
     if status == 404:
         return (
             "node_not_found",
-            f"{prefix}DiVoid returned 404. The node does not exist.",
+            f"{prefix}DiVoid returned 404. The node does not exist, or the caller's access "
+            "does not permit this operation on it (DiVoid answers 404 for per-node access "
+            "denials so that non-readers cannot learn a node exists).",
         )
 
     if status >= 500:
