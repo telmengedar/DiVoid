@@ -120,9 +120,7 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
 
     static ISqlToken EmbeddedQuery(string queryText)
     {
-        return DB.Value<object>(v => DB.Cast(DB.CustomFunction("embedding",
-                                                DB.Constant(TextContentTypePredicate.EmbeddingModel),
-                                                DB.Constant(queryText)), CastType.Vector));
+        return EmbeddingExpression.OfText(DB.Constant(queryText));
     }
 
     ILoadOperation QueryVectorSubselect(IEntityManager database)

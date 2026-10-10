@@ -10,7 +10,6 @@ using Backend.tests.Fixtures;
 using NUnit.Framework;
 using Pooshit.AspNetCore.Services.Patches;
 using Pooshit.Ocelot.Entities;
-using Pooshit.Ocelot.Errors;
 
 namespace Backend.tests.Tests;
 
@@ -43,7 +42,7 @@ public class NodeSubstanceEmbeddingIsolationTests
                 [new PatchOperation { Op = "replace", Path = "/name", Value = "S9_Renamed" }],
                 callerId: 0, isAdmin: true, CancellationToken.None);
         }
-        catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
+        catch (ArgumentException ex) when (ex.Message.Contains("cast target type"))
         {
             nameThrown = ex;
         }
@@ -56,7 +55,7 @@ public class NodeSubstanceEmbeddingIsolationTests
                 [new PatchOperation { Op = "replace", Path = "/substance", Value = "S9|after" }],
                 callerId: 0, isAdmin: true, CancellationToken.None);
         }
-        catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
+        catch (ArgumentException ex) when (ex.Message.Contains("cast target type"))
         {
             substanceThrown = ex;
         }
@@ -99,7 +98,7 @@ public class NodeSubstanceEmbeddingIsolationTests
             [new PatchOperation { Op = "replace", Path = "/substance", Value = "C7|must-survive-rollback" }],
             callerId: 0, isAdmin: true, CancellationToken.None);
 
-        StatementException? thrown = null;
+        ArgumentException? thrown = null;
         try
         {
             await uploadSvc.UploadContent(
@@ -108,7 +107,7 @@ public class NodeSubstanceEmbeddingIsolationTests
                 new MemoryStream(Encoding.UTF8.GetBytes("# C7 v2 body that must not commit")),
                 callerId: 0, isAdmin: true, CancellationToken.None);
         }
-        catch (StatementException ex)
+        catch (ArgumentException ex) when (ex.Message.Contains("cast target type"))
         {
             thrown = ex;
         }

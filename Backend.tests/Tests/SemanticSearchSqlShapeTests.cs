@@ -146,7 +146,7 @@ public class SemanticSearchSqlShapeTests
         MatchCollection laterals = Regex.Matches(statement.Resolved, @"INNER JOIN LATERAL \( (?<body>SELECT .*?) \) AS (?<alias>\w+) ON TRUE");
         Assert.Multiple(() => {
             Assert.That(laterals.Select(m => m.Groups["body"].Value), Is.EqualTo(new[] {
-                "SELECT ( embedding ( gemini-embedding-001 , semantic search latency ) ::vector ) AS v OFFSET 0",
+                "SELECT subvector ( ( embedding ( gemini-embedding-001 , semantic search latency ) ::vector ) , 1 , 768 ) AS v OFFSET 0",
                 "SELECT ( 1 - CAST( q.\"v\" <=> ( node.\"embedding\" ::vector ) AS FLOAT) ) AS similarity OFFSET 0"
             }));
         });
