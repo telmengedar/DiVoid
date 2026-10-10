@@ -143,17 +143,16 @@ public class ApiKeyService : IApiKeyService {
         if (user == null || !user.Enabled)
             throw new InvalidOperationException("disabled_user");
 
-        // Fire-and-forget LastUsedAt update
         long rowId = row.Id;
-        _ = Task.Run(async () => {
-            try {
-                DateTime usedAt = DateTime.UtcNow;
-                await database.Update<ApiKey>()
-                              .Set(k => k.LastUsedAt == usedAt)
-                              .Where(k => k.Id == rowId)
-                              .ExecuteAsync();
-            } catch { /* best-effort */ }
-        });
+        try {
+            DateTime usedAt = DateTime.UtcNow;
+            await database.Update<ApiKey>()
+                          .Set(k => k.LastUsedAt == usedAt)
+                          .Where(k => k.Id == rowId)
+                          .ExecuteAsync();
+        } catch (Exception e) {
+            logger.LogWarning(e, "event=apikey.lastused.failed keyId={KeyId}", keyId);
+        }
 
         return BuildDetails(row);
     }
