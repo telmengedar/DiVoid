@@ -65,24 +65,13 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
         logger.LogInformation("event=backfill.candidates total={Total}", total);
 
         int embedded = 0;
-        int skipped = 0;
 
         await foreach (Node node in database.Load<Node>(n => n.Id, n => n.Name, n => n.ContentType, n => n.Content)
                                             .Where(CandidatePredicate().Content)
                                             .ExecuteEntitiesAsync()) {
             ct.ThrowIfCancellationRequested();
 
-            string composed = EmbeddingInputComposer.Compose(node.Name, node.Content, node.ContentType);
-            if (composed == null) {
-                // composition returned null despite passing the candidate predicate — safety skip
-                skipped++;
-                continue;
-            }
-
-            await database.Update<Node>()
-                          .Set(n => n.Embedding == EmbeddingExpression.OfText(DB.Constant(composed)).Type<float[]>())
-                          .Where(n => n.Id == node.Id)
-                          .ExecuteAsync();
+            await EmbeddingWrite.Build(database, node.Id, node.Name, node.Content, node.ContentType).ExecuteAsync();
 
             embedded++;
 
@@ -92,7 +81,7 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
 
         TimeSpan elapsed = DateTimeOffset.UtcNow - started;
         logger.LogInformation(
-            "event=backfill.complete embedded={Embedded} skipped={Skipped} total={Total} elapsed={Elapsed}",
-            embedded, skipped, total, elapsed);
+            "event=backfill.complete embedded={Embedded} total={Total} elapsed={Elapsed}",
+            embedded, total, elapsed);
     }
 }

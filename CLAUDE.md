@@ -82,7 +82,7 @@ There is a deliberate two-class pattern: `Node` is the DB entity, `NodeDetails` 
 2. **`ArrayParameterBinderProvider` is inserted at index 0** of `ModelBinderProviders`. It enables `?id=1,2,3`, `?id=[1,2,3]`, `?id={1,2,3}`, and repeated `?id=1&id=2` for any array query parameter — this is what makes `NodeFilter.Id`, `Type`, `Name`, `LinkedTo` work from the URL.
 3. `JsonStringEnumConverter` is registered globally, so enums serialize as strings in both directions.
 
-Errors flow through `Pooshit.AspNetCore.Services` middleware: throwing `NotFoundException<T>` / `PropertyNotFoundException` / `InvalidOperationException` from a service produces the right HTTP status — don't catch and rethrow as `ProblemDetails`.
+Errors flow through `Pooshit.AspNetCore.Services` middleware: throwing `NotFoundException<T>` (404), `PropertyNotFoundException` (400), `NotSupportedException` (400) or `ArgumentException` (400, via `ArgumentExceptionHandler`) from a service produces the right HTTP status — don't catch and rethrow as `ProblemDetails`. Handlers are matched along the exception's base-type chain, and an exception with no handler (including a bare `InvalidOperationException`) becomes a 500 `Unhandled` response, so input validation throws `ArgumentException`, never `InvalidOperationException`.
 
 ### Routing
 
