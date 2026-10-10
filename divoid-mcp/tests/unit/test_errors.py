@@ -33,3 +33,19 @@ def test_401_never_echoes_the_api_key():
     _, message = errors.map_http_error(401, b"", api_key=sentinel)
 
     assert sentinel not in message
+
+
+def test_map_http_error_404_message_names_access_denial():
+    """A 404 may mean 'absent' or 'no access'; the message must not claim only absence."""
+    _, message = errors.map_http_error(404, b"", api_key="k")
+
+    assert "does not exist" in message
+    assert "access" in message
+    assert message.index("does not exist") < message.index("access")
+
+
+def test_map_http_error_404_code_unchanged():
+    """Callers match on the code; rewording the message must not rename it."""
+    code, _ = errors.map_http_error(404, b"", api_key="k")
+
+    assert code == "node_not_found"
