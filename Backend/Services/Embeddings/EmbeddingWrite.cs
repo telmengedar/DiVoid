@@ -1,6 +1,8 @@
+using System;
 using Backend.Models.Nodes;
 using Pooshit.Ocelot.Entities;
 using Pooshit.Ocelot.Entities.Operations;
+using Pooshit.Ocelot.Expressions;
 using Pooshit.Ocelot.Tokens;
 
 namespace Backend.Services.Embeddings;
@@ -18,16 +20,26 @@ public static class EmbeddingWrite {
     /// <param name="name">node name</param>
     /// <param name="content">content bytes, null when the node has none</param>
     /// <param name="contentType">MIME type of <paramref name="content"/></param>
+    /// <param name="lastUpdate">when set, the UPDATE only applies while the row still has this <c>lastUpdate</c></param>
     /// <returns>operation ready to be executed inside the caller's transaction or standalone</returns>
-    public static UpdateValuesOperation<Node> Build(IEntityManager database, long nodeId, string name, byte[] content, string contentType) {
+    public static UpdateValuesOperation<Node> Build(IEntityManager database, long nodeId, string name, byte[] content, string contentType, DateTime? lastUpdate = null) {
         string composed = EmbeddingInputComposer.Compose(name, content, contentType);
         UpdateValuesOperation<Node> update = database.Update<Node>();
 
         if (composed == null)
             return update.Set(n => n.Embedding == (float[]) null)
-                         .Where(n => n.Id == nodeId);
+                         .Where(Target(nodeId, lastUpdate).Content);
 
         return update.Set(n => n.Embedding == EmbeddingExpression.OfText(DB.Constant(composed)).Type<float[]>())
-                     .Where(n => n.Id == nodeId);
+                     .Where(Target(nodeId, lastUpdate).Content);
+    }
+
+    static PredicateExpression<Node> Target(long nodeId, DateTime? lastUpdate) {
+        PredicateExpression<Node> target = new PredicateExpression<Node>(n => n.Id == nodeId);
+        if (lastUpdate == null)
+            return target;
+
+        DateTime expected = lastUpdate.Value;
+        return target & new PredicateExpression<Node>(n => n.LastUpdate == expected);
     }
 }

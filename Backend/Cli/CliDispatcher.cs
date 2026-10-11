@@ -29,7 +29,7 @@ public static class CliDispatcher {
                 await CreateAdminAsync(args[1..]);
                 break;
             case "backfill-embeddings":
-                await BackfillEmbeddingsAsync();
+                await BackfillEmbeddingsAsync(args[1..]);
                 break;
             case "layout-nodes":
                 await LayoutNodesAsync();
@@ -41,7 +41,26 @@ public static class CliDispatcher {
         }
     }
 
-    static async Task BackfillEmbeddingsAsync() {
+    static async Task BackfillEmbeddingsAsync(string[] args) {
+        long[] ids = null;
+        bool longOnly = false;
+
+        for (int i = 0; i < args.Length; i++) {
+            switch (args[i]) {
+                case "--ids" when i + 1 < args.Length && TryParseIds(args[i + 1], out long[] parsed):
+                    ids = parsed;
+                    i++;
+                    break;
+                case "--long-only":
+                    longOnly = true;
+                    break;
+                default:
+                    Console.Error.WriteLine($"error: unsupported or invalid argument '{args[i]}' for backfill-embeddings. Usage: backfill-embeddings [--ids <id,id,...>] [--long-only]");
+                    Environment.Exit(1);
+                    return;
+            }
+        }
+
         IServiceCollection services = new ServiceCollection();
 
         IConfiguration configuration = new ConfigurationBuilder()
@@ -73,7 +92,7 @@ public static class CliDispatcher {
         ILogger logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("CliDispatcher");
 
         try {
-            await backfill.RunAsync();
+            await backfill.RunAsync(ids, longOnly);
             logger.LogInformation("event=cli.backfill-embeddings exitCode=0");
             Environment.Exit(0);
         } catch (Exception ex) {
@@ -81,6 +100,20 @@ public static class CliDispatcher {
             logger.LogError(ex, "event=cli.backfill-embeddings exitCode=1");
             Environment.Exit(1);
         }
+    }
+
+    static bool TryParseIds(string value, out long[] ids) {
+        string[] parts = value.Split(',', StringSplitOptions.TrimEntries);
+        long[] parsed = new long[parts.Length];
+        for (int i = 0; i < parts.Length; i++) {
+            if (!long.TryParse(parts[i], out parsed[i])) {
+                ids = null;
+                return false;
+            }
+        }
+
+        ids = parsed;
+        return true;
     }
 
     static async Task LayoutNodesAsync() {
