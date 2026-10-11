@@ -11,7 +11,7 @@ namespace Backend.Services.Embeddings;
 public static class EmbeddingWrite {
 
     /// <summary>
-    /// builds the UPDATE which stores the embedding of the composed input, or NULL when the node has no embeddable surface
+    /// builds the UPDATE which stores the embedding of the composed windows, or NULL when the node has no embeddable surface
     /// </summary>
     /// <param name="database">entity manager used to create the operation</param>
     /// <param name="nodeId">id of the row whose embedding is written</param>
@@ -20,14 +20,14 @@ public static class EmbeddingWrite {
     /// <param name="contentType">MIME type of <paramref name="content"/></param>
     /// <returns>operation ready to be executed inside the caller's transaction or standalone</returns>
     public static UpdateValuesOperation<Node> Build(IEntityManager database, long nodeId, string name, byte[] content, string contentType) {
-        string composed = EmbeddingInputComposer.Compose(name, content, contentType);
+        string[] windows = EmbeddingInputComposer.ComposeWindows(name, content, contentType);
         UpdateValuesOperation<Node> update = database.Update<Node>();
 
-        if (composed == null)
+        if (windows.Length == 0)
             return update.Set(n => n.Embedding == (float[]) null)
                          .Where(n => n.Id == nodeId);
 
-        return update.Set(n => n.Embedding == EmbeddingExpression.OfText(DB.Constant(composed)).Type<float[]>())
+        return update.Set(n => n.Embedding == EmbeddingExpression.OfTexts(windows).Type<float[]>())
                      .Where(n => n.Id == nodeId);
     }
 }
