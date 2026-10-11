@@ -33,6 +33,7 @@ from divoid_mcp.tools.get_content import register as register_get_content
 from divoid_mcp.tools.get_node import register as register_get_node
 from divoid_mcp.tools.list_nodes import register as register_list_nodes
 from divoid_mcp.tools.patch_node import register as register_patch_node
+from divoid_mcp.tools.resolve_user import register as register_resolve_user
 from divoid_mcp.tools.search import register as register_search
 
 # ---------------------------------------------------------------------------
@@ -49,6 +50,7 @@ _CONTENT_URL = f"{_DUMMY_BASE}/nodes/{{id}}/content"
 _NODES_URL = f"{_DUMMY_BASE}/nodes"
 _NODE_URL = f"{_DUMMY_BASE}/nodes/{{id}}"
 _MESSAGES_URL = f"{_DUMMY_BASE}/messages/{{id}}"
+_USER_URL = f"{_DUMMY_BASE}/nodes/{{id}}/user"
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +80,7 @@ def server() -> FastMCP:
     register_search(mcp_server)
     register_delete_message(mcp_server)
     register_delete_node(mcp_server)
+    register_resolve_user(mcp_server)
 
     return mcp_server
 
@@ -907,10 +910,12 @@ async def test_search_include_links_empty_neighbors(server: FastMCP) -> None:
 # The server returns:
 #   204 No Content on success (ok=True, empty body)
 #   404 JSON {code, text} when the message does not exist
-#   403 JSON {code, text} when the caller is not the recipient and not admin
+#   404 JSON {code, text} also when the caller is not the recipient and not admin
 #
 # DiVoid #426 §4: senders cannot recall; only recipient or admin can DELETE.
-# The 403 branch is the no-recall guarantee — it is structural, not just policy.
+# The server answers 404 for a non-recipient, so message existence is not leaked.
+# A 403 comes only from a key without write permission (the route requires it), never
+# for a non-recipient; the 403 test below covers that generic 4xx branch.
 # ---------------------------------------------------------------------------
 
 
@@ -969,11 +974,10 @@ async def test_delete_message_forbidden(server: FastMCP) -> None:
     """
     403 → tool returns isError with divoid_bad_request code (4xx fallback).
 
-    Why this branch exists: DiVoid #426 §4 specifies that only the recipient or
-    an admin can delete a message. Senders cannot recall — this is the no-recall
-    guarantee. The server returns 403 (not 404) for a non-recipient caller so
-    that message existence is not leaked to the sender. This test asserts that
-    the tool surfaces the 403 as an error rather than masking it as success.
+    Why this branch exists: the server answers 403 on this route only when the
+    key lacks write permission, never for a non-recipient (that gets 404). The
+    test asserts that the tool surfaces a non-404 4xx as an error rather than
+    masking it as success.
     """
     msg_id = 77
     body = json.dumps({
@@ -2648,3 +2652,43 @@ async def test_patch_node_lone_root_node_id_passes_invariant(server: FastMCP) ->
         f"Expected exactly one HTTP PATCH call, got {len(captured_body)}. "
         "Substitution probe: if the invariant guard fires, no HTTP call is made and this fails."
     )
+
+
+@pytest.mark.asyncio
+async def test_delete_message_404_names_message(server: FastMCP) -> None:
+    msg_id = 88
+    body = json.dumps({
+        "code": "data_entitynotfound",
+        "text": f"'Message' with id '{msg_id}' not found",
+    }).encode()
+
+    with respx.mock(assert_all_called=True) as mock:
+        mock.delete(_MESSAGES_URL.format(id=msg_id)).mock(
+            return_value=httpx.Response(404, content=body)
+        )
+        result = await _call(server, "divoid_delete_message", {"id": msg_id})
+
+    assert result.get("isError") is True
+    text: str = result["content"][0]["text"]
+    assert "node_not_found" in text
+    assert "only the message's recipient or an admin" in text
+    assert "The node does not exist" not in text
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_404_names_missing_binding(server: FastMCP) -> None:
+    node_id = 5150
+    body = json.dumps({
+        "code": "data_entitynotfound",
+        "text": f"'User' with id '{node_id}' not found",
+    }).encode()
+
+    with respx.mock(assert_all_called=True) as mock:
+        mock.get(_USER_URL.format(id=node_id)).mock(return_value=httpx.Response(404, content=body))
+        result = await _call(server, "divoid_resolve_user", {"node_id": node_id})
+
+    assert result.get("isError") is True
+    text: str = result["content"][0]["text"]
+    assert "node_not_found" in text
+    assert f"No user is bound to node #{node_id}" in text
+    assert "access" not in text

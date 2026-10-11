@@ -238,3 +238,29 @@ async def test_round_trip_against_edit_content_translation(server: FastMCP) -> N
             f"wire translation (start={start}, length={length}) addresses {expected_display!r}. "
             "These must be the same text."
         )
+
+
+@pytest.mark.asyncio
+async def test_get_content_404_uses_shared_message(server: FastMCP) -> None:
+    body = f'{{"code":"data_entitynotfound","text":"\'Node\' with id \'{_NODE_ID}\' not found"}}'.encode()
+
+    with respx.mock(assert_all_called=True) as mock:
+        mock.get(_CONTENT_URL).mock(return_value=httpx.Response(404, content=body))
+        result = await _get(server, {"id": _NODE_ID})
+
+    assert result.get("isError") is True
+    text = result["content"][0]["text"]
+    assert "node_not_found" in text
+    assert "caller's access" in text
+
+
+@pytest.mark.asyncio
+async def test_get_content_404_unparseable_uses_shared_message(server: FastMCP) -> None:
+    with respx.mock(assert_all_called=True) as mock:
+        mock.get(_CONTENT_URL).mock(return_value=httpx.Response(404, content=b"<html>not json</html>"))
+        result = await _get(server, {"id": _NODE_ID})
+
+    assert result.get("isError") is True
+    text = result["content"][0]["text"]
+    assert "node_not_found" in text
+    assert "caller's access" in text

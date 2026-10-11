@@ -10,16 +10,16 @@ read message is a bug — it will be re-processed by the next inbox scan.
 Auth rules (server-enforced, per DiVoid #426 §4):
   - Only the RECIPIENT of a message can delete it.
   - Admins can delete any message regardless of who the recipient is.
-  - Senders cannot recall: a 403 is returned if a non-recipient, non-admin
-    tries to delete (existence is not revealed — server returns 403, not 404,
-    to prevent probing).
+  - Senders cannot recall: a non-recipient, non-admin gets a 404 (existence is
+    not revealed -- the server answers 404, not 403, to prevent probing).
   - If the API key carries the admin permission, the caller can delete any
     message regardless of recipient. Otherwise only messages addressed to the
     caller's own user-id can be deleted.
 
 Error shapes:
-  - 404: message does not exist (or: exists but caller has no right to know).
-  - 403: caller is not the recipient and not an admin.
+  - 404: message does not exist, was already deleted, or the caller is not the
+    recipient and not an admin.
+  - 403: the API key lacks the write permission (never for a non-recipient).
   - 2xx (typically 204 No Content): success.
 """
 
@@ -42,9 +42,10 @@ This is the REQUIRED end-of-lifecycle step per DiVoid #435: \
 read -> act -> delete. There is no archive; an undeleted message is a bug \
 and will be re-processed by every future inbox scan. \
 Auth: only the recipient or an admin can delete. Senders cannot recall — \
-a 403 is returned for non-recipients (the no-recall guarantee is structural, \
+a non-recipient gets a 404 (the no-recall guarantee is structural, \
 not just policy). \
-Returns {success: true, id: N} on success; isError on 404/403/5xx.\
+Returns {success: true, id: N} on success; isError on 404/403/5xx \
+(403 only for a key without write permission).\
 """
 
 
@@ -67,7 +68,13 @@ async def _execute(id: int, config: "DivoidConfig") -> dict[str, Any]:
 
     if not result.ok:
         code, msg = map_http_error(
-            result.status, result.body, config.api_key, "delete message"
+            result.status, result.body, config.api_key, "delete message",
+            (
+                "The message does not exist, was already deleted, or the caller may not "
+                "delete it: only the message's recipient or an admin can delete it, and "
+                "DiVoid answers 404 rather than 403 so that other callers cannot learn the "
+                "message exists."
+            ),
         )
         logger.info("divoid_delete_message err=%s status=%d", code, result.status)
         return {"isError": True, "content": make_error_content(code, msg)}

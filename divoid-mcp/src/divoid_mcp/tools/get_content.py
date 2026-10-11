@@ -18,7 +18,7 @@ import mcp.server.fastmcp as fastmcp
 
 from .. import http_client
 from ..config import DivoidConfig
-from ..errors import make_error_content, map_http_error, map_unreachable
+from ..errors import backend_error_text, make_error_content, map_http_error, map_unreachable
 
 logger = logging.getLogger(__name__)
 
@@ -91,42 +91,12 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             return {"isError": True, "content": make_error_content(code, msg)}
 
         # 404 on the content endpoint covers two distinct cases:
-        #   (a) Node does not exist → body: {"code":"data_entitynotfound","text":"'Node' with id '...' not found"}
-        #   (b) Node exists but has no content → body text contains "has no content"
-        # We must distinguish them: (b) is a valid empty-content signal; (a) is a hard error.
-        if result.status == 404:
-            body_text = ""
-            try:
-                body_json = result.json()
-                body_text = body_json.get("text", "") if isinstance(body_json, dict) else ""
-            except Exception:
-                # Malformed JSON — can't determine which case; default to node_not_found.
-                logger.warning(
-                    "divoid_get_content id=%d 404 with unparseable body, treating as node_not_found",
-                    id,
-                )
-                return {
-                    "isError": True,
-                    "content": make_error_content(
-                        "node_not_found",
-                        f"Node {id} not found (404 with unparseable body).",
-                    ),
-                }
-
-            if "has no content" in body_text:
-                # Node exists but has no content body — return the empty-content shape.
-                logger.info("divoid_get_content id=%d → empty (node has no content)", id)
-                return {"id": id, "content": "", "content_type": None, "byte_length": 0}
-
-            # Node truly does not exist.
-            logger.info("divoid_get_content id=%d → node_not_found", id)
-            return {
-                "isError": True,
-                "content": make_error_content(
-                    "node_not_found",
-                    f"Node {id} not found.",
-                ),
-            }
+        #   (a) Node does not exist or is not readable -> a node_not_found error
+        #   (b) Node exists but has no content -> body text contains "has no content"
+        # (b) is a valid empty-content signal; (a) is a hard error.
+        if result.status == 404 and "has no content" in backend_error_text(result.body):
+            logger.info("divoid_get_content id=%d → empty (node has no content)", id)
+            return {"id": id, "content": "", "content_type": None, "byte_length": 0}
 
         if not result.ok:
             code, msg = map_http_error(result.status, result.body, config.api_key, "divoid_get_content")

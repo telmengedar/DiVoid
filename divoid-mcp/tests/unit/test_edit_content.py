@@ -1371,3 +1371,80 @@ async def test_e2e_append_onto_content_without_trailing_newline_merges_unless_va
     content = "L1\nL2"
     edits = await _capture_backend_edits(server, [{"op": "append", "value": "L3"}], get_content=content)
     assert _apply_line_and_char_edits(content, edits) == "L1\nL2L3"
+
+
+# ---------------------------------------------------------------------------
+# 404 messages: no content vs. missing node
+# ---------------------------------------------------------------------------
+
+_NO_CONTENT_BODY = json.dumps({
+    "code": "data_entitynotfound",
+    "text": f"'Node' with id 'Node '{_NODE_ID}' has no content' not found",
+}).encode()
+
+_MISSING_NODE_BODY = json.dumps({
+    "code": "data_entitynotfound",
+    "text": f"'Node' with id '{_NODE_ID}' not found",
+}).encode()
+
+
+@pytest.mark.asyncio
+async def test_edit_content_append_preread_no_content_message(server: FastMCP) -> None:
+    patched = False
+
+    def patch_handler(req: httpx.Request) -> httpx.Response:
+        nonlocal patched
+        patched = True
+        return httpx.Response(200, json=_OK_NODE)
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(
+            return_value=httpx.Response(404, content=_NO_CONTENT_BODY)
+        )
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(side_effect=patch_handler)
+        result = await _call(server, {"id": _NODE_ID, "edits": [{"op": "append", "value": "x"}]})
+
+    assert result.get("isError") is True
+    text = result["content"][0]["text"]
+    assert "node_not_found" in text
+    assert "divoid_set_content" in text
+    assert "The node does not exist" not in text
+    assert not patched
+
+
+@pytest.mark.asyncio
+async def test_edit_content_patch_no_content_message(server: FastMCP) -> None:
+    with respx.mock(assert_all_called=True) as mock:
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(
+            return_value=httpx.Response(404, content=_NO_CONTENT_BODY)
+        )
+        result = await _call(
+            server, {"id": _NODE_ID, "edits": [{"op": "delete_lines", "start_line": 1, "end_line": 1}]}
+        )
+
+    assert result.get("isError") is True
+    text = result["content"][0]["text"]
+    assert "node_not_found" in text
+    assert "divoid_set_content" in text
+    assert "The node does not exist" not in text
+
+
+@pytest.mark.asyncio
+async def test_edit_content_404_missing_node_uses_default(server: FastMCP) -> None:
+    with respx.mock(assert_all_called=True) as mock:
+        mock.get(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(
+            return_value=httpx.Response(404, content=_MISSING_NODE_BODY)
+        )
+        mock.patch(_CONTENT_URL_TEMPLATE.format(id=_NODE_ID)).mock(
+            return_value=httpx.Response(404, content=_MISSING_NODE_BODY)
+        )
+        pre_read = await _call(server, {"id": _NODE_ID, "edits": [{"op": "append", "value": "x"}]})
+        patch = await _call(
+            server, {"id": _NODE_ID, "edits": [{"op": "delete_lines", "start_line": 1, "end_line": 1}]}
+        )
+
+    for result in (pre_read, patch):
+        assert result.get("isError") is True
+        text = result["content"][0]["text"]
+        assert "The node does not exist" in text
+        assert "divoid_set_content" not in text

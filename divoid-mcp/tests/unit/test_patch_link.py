@@ -349,3 +349,45 @@ async def test_non_positive_source_id_rejected_before_http(server: FastMCP) -> N
     assert not http_called, "HTTP must NOT be called when source_id < 1"
     text = result["content"][0]["text"]
     assert "divoid_bad_request" in text, f"Expected 'divoid_bad_request' code, got: {text!r}"
+
+
+# ---------------------------------------------------------------------------
+# 404 messages: missing edge vs. source node
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_patch_link_404_missing_edge_message(server: FastMCP) -> None:
+    body = json.dumps({
+        "code": "data_entitynotfound",
+        "text": f"'NodeLink' with id 'No link between '{_SOURCE_ID}' and '{_TARGET_ID}'' not found",
+    }).encode()
+
+    with respx.mock(assert_all_called=True) as mock:
+        mock.patch(_LINK_URL).mock(return_value=httpx.Response(404, content=body))
+        result = await _call(server, {"source_id": _SOURCE_ID, "target_id": _TARGET_ID, "context": "x"})
+
+    assert result.get("isError") is True
+    text = result["content"][0]["text"]
+    assert "node_not_found" in text
+    assert "No edge exists between" in text
+    assert f"node #{_TARGET_ID} is not checked on its own" in text
+    assert "The node does not exist" not in text
+
+
+@pytest.mark.asyncio
+async def test_patch_link_404_source_node_uses_default(server: FastMCP) -> None:
+    body = json.dumps({
+        "code": "data_entitynotfound",
+        "text": f"'Node' with id '{_SOURCE_ID}' not found",
+    }).encode()
+
+    with respx.mock(assert_all_called=True) as mock:
+        mock.patch(_LINK_URL).mock(return_value=httpx.Response(404, content=body))
+        result = await _call(server, {"source_id": _SOURCE_ID, "target_id": _TARGET_ID, "context": "x"})
+
+    assert result.get("isError") is True
+    text = result["content"][0]["text"]
+    assert "node_not_found" in text
+    assert "The node does not exist" in text
+    assert "No edge exists between" not in text

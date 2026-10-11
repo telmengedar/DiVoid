@@ -24,7 +24,13 @@ import mcp.server.fastmcp as fastmcp
 
 from .. import http_client, paths
 from ..config import DivoidConfig
-from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
+from ..errors import (
+    InvariantViolation,
+    backend_error_text,
+    make_error_content,
+    map_http_error,
+    map_unreachable,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,38 +92,14 @@ async def _execute(node_id: int, path: str, config: DivoidConfig) -> dict[str, A
         logger.warning("divoid_download_content node_id=%d err=%s", node_id, code)
         return {"isError": True, "content": make_error_content(code, msg)}
 
-    if result.status == 404:
-        body_text = ""
-        try:
-            body_json = result.json()
-            body_text = body_json.get("text", "") if isinstance(body_json, dict) else ""
-        except Exception:
-            logger.warning(
-                "divoid_download_content node_id=%d 404 with unparseable body",
-                node_id,
-            )
-            return {
-                "isError": True,
-                "content": make_error_content(
-                    "node_not_found",
-                    f"Node {node_id} not found (404 with unparseable body).",
-                ),
-            }
-
-        if "has no content" in body_text:
-            logger.info("divoid_download_content node_id=%d -> node has no content", node_id)
-            return {
-                "isError": True,
-                "content": make_error_content(
-                    "node_has_no_content",
-                    f"Node {node_id} exists but has no content to download.",
-                ),
-            }
-
-        logger.info("divoid_download_content node_id=%d -> node_not_found", node_id)
+    if result.status == 404 and "has no content" in backend_error_text(result.body):
+        logger.info("divoid_download_content node_id=%d -> node has no content", node_id)
         return {
             "isError": True,
-            "content": make_error_content("node_not_found", f"Node {node_id} not found."),
+            "content": make_error_content(
+                "node_has_no_content",
+                f"Node {node_id} exists but has no content to download.",
+            ),
         }
 
     if not result.ok:

@@ -11,6 +11,7 @@ structured shape. The api key is never included in any output branch.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -36,17 +37,39 @@ def make_error_content(code: str, message: str) -> list[dict[str, Any]]:
     return [{"type": "text", "text": f"{code}: {message}"}]
 
 
+def backend_error_text(body: bytes) -> str:
+    """
+    Return the 'text' field of the backend's error envelope.
+
+    Returns an empty string when the body is not JSON, not an object, or has
+    no string 'text' field. Never raises.
+    """
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except Exception:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    text = data.get("text")
+    return text if isinstance(text, str) else ""
+
+
 def map_http_error(
     status: int,
     body: bytes,
     api_key: str,
     context: str = "",
+    not_found_explanation: str | None = None,
 ) -> tuple[str, str]:
     """
     Translate an HTTP error status + body into (code, message).
 
     api_key is passed so we can redact it from any body text, as a
     defence-in-depth measure (the primary defence is never putting it there).
+
+    not_found_explanation replaces the default node-oriented sentence on a 404
+    when the call site knows its 404 is about something else. The code stays
+    node_not_found. Ignored for every other status.
 
     Returns (code, human_readable_message).
     """
@@ -71,12 +94,12 @@ def map_http_error(
         )
 
     if status == 404:
-        return (
-            "node_not_found",
-            f"{prefix}DiVoid returned 404. The node does not exist, or the caller's access "
+        explanation = not_found_explanation or (
+            "The node does not exist, or the caller's access "
             "does not permit this operation on it (DiVoid answers 404 for per-node access "
-            "denials so that non-readers cannot learn a node exists).",
+            "denials so that non-readers cannot learn a node exists)."
         )
+        return ("node_not_found", f"{prefix}DiVoid returned 404. {explanation}")
 
     if status >= 500:
         return (

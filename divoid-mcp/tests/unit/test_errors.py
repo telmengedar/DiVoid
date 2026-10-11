@@ -49,3 +49,36 @@ def test_map_http_error_404_code_unchanged():
     code, _ = errors.map_http_error(404, b"", api_key="k")
 
     assert code == "node_not_found"
+
+
+def test_map_http_error_404_uses_explanation():
+    code, message = errors.map_http_error(
+        404, b"", api_key="k", context="divoid_x", not_found_explanation="The edge is missing."
+    )
+
+    assert code == "node_not_found"
+    assert message.startswith("divoid_x: DiVoid returned 404. ")
+    assert "The edge is missing." in message
+    assert "The node does not exist" not in message
+
+
+def test_map_http_error_explanation_ignored_on_non_404():
+    body = b'{"code":"bad","text":"nope"}'
+
+    code, message = errors.map_http_error(
+        400, body, api_key="k", not_found_explanation="The edge is missing."
+    )
+
+    assert code == "divoid_bad_request"
+    assert "nope" in message
+    assert "The edge is missing." not in message
+
+
+def test_backend_error_text_extracts_and_tolerates():
+    envelope = b'{"code":"data_entitynotfound","text":"\'Node\' with id \'5\' not found"}'
+
+    assert errors.backend_error_text(envelope) == "'Node' with id '5' not found"
+    assert errors.backend_error_text(b"not json at all") == ""
+    assert errors.backend_error_text(b"[1, 2]") == ""
+    assert errors.backend_error_text(b'{"code":"x"}') == ""
+    assert errors.backend_error_text(b"") == ""
