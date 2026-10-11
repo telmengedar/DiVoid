@@ -59,6 +59,11 @@ full adjacency, not just the labelled subset; composes with include_links (both 
 together). Same pass-through convention as divoid_get_links: link_type/context are \
 surfaced only when the backend row carries them (invariant 6 — no vocabulary policing).
 
+MULTIPLE PHRASINGS: pass query as a list to search for one need phrased several ways. \
+similarity is then the mean of the per-query similarities and ranking is by that mean. \
+Means are typically lower than the best single phrasing, so the 0.7 / 0.4 rules of thumb \
+are looser guides here. A JSON-array string such as '["a","b"]' is treated as a list of queries.
+
 SCOPED SEARCH: supply root_node_id=[N] to constrain results to nodes grouped \
 under root N. This is the primary use case for the rootNodeId grouping feature — \
 a semantic search scoped to a single docs-group or project-group runs faster and \
@@ -71,7 +76,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
 
     @mcp_server.tool(description=_TOOL_DESCRIPTION)
     async def divoid_search(
-        query: str,
+        query: str | list[str],
         type: list[str] | None = None,
         linkedto: list[int] | None = None,
         status: list[str] | None = None,
@@ -92,7 +97,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         Args:
             query: The question or topic, in plain language.
                    Searched semantically against node content + name.
-                   Min 1 char, max 1000 chars.
+                   Min 1 char, max 1000 chars. A list searches several phrasings
+                   at once (each element validated the same way); similarity is
+                   then the mean over the list. The backend caps the list length.
+                   A JSON-array string such as '["a","b"]' is treated as a list.
             type: Optional filter: only return nodes of these types
                   (e.g. ['task', 'documentation']).
             linkedto: Optional filter: only return nodes linked to any
@@ -141,7 +149,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                           excluded from a root-scoped search. Each result row includes
                           rootNodeId: int | null regardless of whether this filter is set.
         """
-        if not query or not query.strip():
+        phrasings = [query] if isinstance(query, str) else query
+        if not phrasings or any(not q or not q.strip() for q in phrasings):
             return {
                 "isError": True,
                 "content": make_error_content(
@@ -149,7 +158,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                 ),
             }
 
-        if len(query) > 1000:
+        if any(len(q) > 1000 for q in phrasings):
             return {
                 "isError": True,
                 "content": make_error_content(
@@ -159,10 +168,11 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
 
         count = max(1, min(50, count))
 
-        params: dict[str, Any] = {
-            "query": query,
-            "count": count,
-        }
+        params: dict[str, Any] = {"count": count}
+        if len(phrasings) == 1:
+            params["query"] = phrasings[0]
+        else:
+            params["queries"] = phrasings
         if type:
             params["type"] = type
         if linkedto:
@@ -201,7 +211,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
 
         logger.info(
             "divoid_search query=%r type=%s linkedto=%s status=%s count=%d",
-            query[:80] + ("..." if len(query) > 80 else ""),
+            " | ".join(q[:80] for q in phrasings),
             type,
             linkedto,
             status,
