@@ -227,4 +227,37 @@ public class SemanticSearchSqlShapeTests
             Assert.That(statement.Where, Does.Contain("nodetype"));
         });
     }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #13604: id and name exclusions sit in the WHERE of the one ranked statement, ahead of ORDER BY and LIMIT")]
+    public void SingleQuery_ExcludeIdAndName_RenderedInWhereBeforeOrderBy()
+    {
+        Statement statement = CaptureList(new() { Query = QueryText, Count = 10, ExcludeId = [7, 8], ExcludeName = ["processor-run%"] });
+
+        Assert.Multiple(() => {
+            Assert.That(statement.Where, Does.Match(@"^ WHERE .*NOT node\.""id"" = ANY\( @\d+ \).* ORDER BY .* LIMIT @\d+$"));
+            Assert.That(statement.Where, Does.Match(@"^ WHERE .*\( node\.""name"" IS NULL OR NOT node\.""name"" ILIKE .*\).* ORDER BY .* LIMIT @\d+$"));
+        });
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #13604: an exact-value name exclusion keeps null names and sits ahead of ORDER BY and LIMIT")]
+    public void SingleQuery_ExcludeNameExact_RenderedInWhereBeforeOrderBy()
+    {
+        Statement statement = CaptureList(new() { Query = QueryText, Count = 10, ExcludeName = ["alpha", "beta"] });
+
+        Assert.That(statement.Where, Does.Match(@"^ WHERE .*\( node\.""name"" IS NULL OR NOT node\.""name"" = ANY\( @\d+ \) \).* ORDER BY .* LIMIT @\d+$"));
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #13604: path mode keeps the hop predicate and the name exclusion together in the terminal WHERE")]
+    public void PathQuery_ExcludeName_TerminalWhereKeepsHopPredicateAndExclusion()
+    {
+        Statement statement = CapturePath(new() { Path = "[type:task]", Query = QueryText, Count = 10, ExcludeName = ["processor-run%"] });
+
+        Assert.Multiple(() => {
+            Assert.That(statement.Where, Does.Contain("nodetype"));
+            Assert.That(statement.Where, Does.Match(@"^ WHERE .*\( node\.""name"" IS NULL OR NOT node\.""name"" ILIKE .*\).* ORDER BY .* LIMIT @\d+$"));
+        });
+    }
 }
