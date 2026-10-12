@@ -337,6 +337,19 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                 predicate &= n => n.Name.In(filter.Name);
             }
 
+        if (filter.ExcludeId?.Length > 0)
+            predicate &= n => !n.Id.In(filter.ExcludeId);
+
+        if (filter.ExcludeName?.Length > 0)
+            if (filter.ExcludeName.Any(n => n.ContainsWildcards()))
+            {
+                foreach (string nameFilter in filter.ExcludeName)
+                    predicate &= n => n.Name == null || !n.Name.Like(nameFilter);
+            } else
+            {
+                predicate &= n => n.Name == null || !n.Name.In(filter.ExcludeName);
+            }
+
         if (filter.Type?.Length > 0)
         {
             LoadOperation<NodeType> typeOp = database.Load<NodeType>(t => t.Id)

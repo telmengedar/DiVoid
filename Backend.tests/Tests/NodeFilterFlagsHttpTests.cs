@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Threading.Tasks;
 using Backend.Models.Nodes;
@@ -13,7 +14,7 @@ namespace Backend.tests.Tests;
 
 /// <summary>
 /// HTTP-layer tests driving the <c>refinement</c>/<c>norefinement</c>, <c>status</c>/<c>nostatus</c>
-/// and <c>severity</c>/<c>noseverity</c> query-string flags through <c>GET /api/nodes</c>.
+/// and <c>severity</c>/<c>noseverity</c> query-string flags, and the <c>excludeId</c>/<c>excludeName</c> exclusions, through <c>GET /api/nodes</c>.
 /// </summary>
 [TestFixture, Parallelizable]
 public class NodeFilterFlagsHttpTests
@@ -54,6 +55,27 @@ public class NodeFilterFlagsHttpTests
         Page<NodeDetails> page = Json.Read<Page<NodeDetails>>(json);
         return page.Result?.Select(n => n.Id).ToArray() ?? [];
     }
+
+    async Task<long> CreateNamedNodeAsync(string? name)
+    {
+        NodeDetails created = await http.Post<NodeDetails, NodeDetails>(
+            $"{TestSetup.BaseUrl}/api/nodes",
+            new NodeDetails { Type = "task", Name = name },
+            new HttpOptions());
+        return created.Id;
+    }
+
+    async Task<Page<NodeDetails>> ListPageAsync(string query)
+    {
+        HttpResponseMessage response = await http.Get<HttpResponseMessage>($"{TestSetup.BaseUrl}/api/nodes?{query}");
+        response.EnsureSuccessStatusCode();
+        string json = await response.Content.ReadAsStringAsync();
+        return Json.Read<Page<NodeDetails>>(json);
+    }
+
+    static string Scope(params long[] ids) => $"id={string.Join(",", ids)}&count=100";
+
+    static string Escaped(string value) => Uri.EscapeDataString(value);
 
     [Test, Parallelizable]
     public async Task RefinementSingleValue_ReturnsOnlyMatchingNode()
@@ -245,5 +267,136 @@ public class NodeFilterFlagsHttpTests
             Assert.That(ids, Does.Contain(matchNull), "severity-less node must also be returned (OR composition)");
             Assert.That(ids, Does.Not.Contain(excluded), "node with a different severity must stay excluded");
         });
+    }
+
+    [Test, Parallelizable]
+    public async Task ExcludeId_OmitsListedNodesKeepsOthers()
+    {
+        string tag = NewTag();
+        long first = await CreateNamedNodeAsync($"{tag}-1");
+        long second = await CreateNamedNodeAsync($"{tag}-2");
+        long third = await CreateNamedNodeAsync($"{tag}-3");
+
+        Page<NodeDetails> page = await ListPageAsync($"{Scope(first, second, third)}&excludeId={second}");
+
+        long[] ids = page.Result.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Not.Contain(second), "listed id must be omitted");
+            Assert.That(ids, Does.Contain(first), "unlisted id before the excluded one must be returned");
+            Assert.That(ids, Does.Contain(third), "unlisted id after the excluded one must be returned");
+        });
+    }
+
+    [Test, Parallelizable]
+    public async Task ExcludeNameExact_OmitsOnlyExactMatch()
+    {
+        string tag = NewTag();
+        long exact = await CreateNamedNodeAsync($"{tag}-alpha");
+        long longer = await CreateNamedNodeAsync($"{tag}-alpha-2");
+
+        Page<NodeDetails> page = await ListPageAsync($"{Scope(exact, longer)}&excludeName={Escaped($"{tag}-alpha")}");
+
+        long[] ids = page.Result.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Not.Contain(exact), "node named exactly like the value must be omitted");
+            Assert.That(ids, Does.Contain(longer), "node whose name merely starts with the value must be returned");
+        });
+    }
+
+    [Test, Parallelizable]
+    public async Task ExcludeNameWildcard_OmitsPatternMatches()
+    {
+        string tag = NewTag();
+        long runOne = await CreateNamedNodeAsync($"{tag}-run-1");
+        long runTwo = await CreateNamedNodeAsync($"{tag}-run-2");
+        long skip = await CreateNamedNodeAsync($"{tag}-skip-1");
+        long other = await CreateNamedNodeAsync($"{tag}-other");
+
+        Page<NodeDetails> page = await ListPageAsync($"{Scope(runOne, runTwo, skip, other)}&excludeName={Escaped($"{tag}-run-%")}&excludeName={Escaped($"{tag}-skip-%")}");
+
+        long[] ids = page.Result.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Not.Contain(runOne), "first node of the first pattern must be omitted");
+            Assert.That(ids, Does.Not.Contain(runTwo), "second node of the first pattern must be omitted");
+            Assert.That(ids, Does.Not.Contain(skip), "node of the second pattern must be omitted");
+            Assert.That(ids, Does.Contain(other), "node matching no pattern must be returned");
+        });
+    }
+
+    [Test, Parallelizable]
+    public async Task ExcludeNameMixedExactAndWildcard_MatchesEveryValueAsPattern()
+    {
+        string tag = NewTag();
+        long exact = await CreateNamedNodeAsync($"{tag}-a");
+        long pattern = await CreateNamedNodeAsync($"{tag}-b-1");
+        long kept = await CreateNamedNodeAsync($"{tag}-keep");
+
+        Page<NodeDetails> page = await ListPageAsync($"{Scope(exact, pattern, kept)}&excludeName={Escaped($"{tag.ToUpperInvariant()}-A")}&excludeName={Escaped($"{tag}-b-%")}");
+
+        Assert.That(page.Result.Select(n => n.Id), Is.EqualTo(new[] { kept }));
+    }
+
+    [Test, Parallelizable]
+    public async Task ExcludeNameExact_KeepsNodesWithoutName()
+    {
+        string tag = NewTag();
+        long unnamed = await CreateNamedNodeAsync(null);
+        long named = await CreateNamedNodeAsync($"{tag}-x");
+
+        Page<NodeDetails> page = await ListPageAsync($"{Scope(unnamed, named)}&excludeName={Escaped($"{tag}-x")}");
+
+        long[] ids = page.Result.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(unnamed), "node without a name must survive an exact-value exclusion");
+            Assert.That(ids, Does.Not.Contain(named), "node with the excluded name must be omitted");
+        });
+    }
+
+    [Test, Parallelizable]
+    public async Task ExcludeNameWildcard_KeepsNodesWithoutName()
+    {
+        string tag = NewTag();
+        long unnamed = await CreateNamedNodeAsync(null);
+        long named = await CreateNamedNodeAsync($"{tag}-x");
+
+        Page<NodeDetails> page = await ListPageAsync($"{Scope(unnamed, named)}&excludeName={Escaped($"{tag}-%")}");
+
+        long[] ids = page.Result.Select(n => n.Id).ToArray();
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(unnamed), "node without a name must survive a wildcard exclusion");
+            Assert.That(ids, Does.Not.Contain(named), "node matching the pattern must be omitted");
+        });
+    }
+
+    [Test, Parallelizable]
+    public async Task ExcludeName_CountFilledFromEligibleRows()
+    {
+        string tag = NewTag();
+        long[] excluded = [await CreateNamedNodeAsync($"{tag}-run-1"), await CreateNamedNodeAsync($"{tag}-run-2"), await CreateNamedNodeAsync($"{tag}-run-3")];
+        List<long> eligible = [];
+        for (int i = 1; i <= 5; i++)
+            eligible.Add(await CreateNamedNodeAsync($"{tag}-keep-{i}"));
+
+        Page<NodeDetails> page = await ListPageAsync($"id={string.Join(",", excluded.Concat(eligible))}&sort=id&count=3&excludeName={Escaped($"{tag}-run-%")}");
+
+        Assert.Multiple(() => {
+            Assert.That(page.Result.Select(n => n.Id), Is.EqualTo(eligible.Take(3)), "the page must be filled with the first eligible rows");
+            Assert.That(page.Total, Is.EqualTo(5), "total must count only eligible rows");
+        });
+    }
+
+    [Test, Parallelizable]
+    public async Task ExcludeId_WithLinkedTo_OmitsExcludedNeighbour()
+    {
+        string tag = NewTag();
+        long anchor = await CreateNamedNodeAsync($"{tag}-anchor");
+        long excluded = await CreateNamedNodeAsync($"{tag}-b");
+        long kept = await CreateNamedNodeAsync($"{tag}-c");
+        await http.Post<long>($"{TestSetup.BaseUrl}/api/nodes/{anchor}/links", excluded);
+        await http.Post<long>($"{TestSetup.BaseUrl}/api/nodes/{anchor}/links", kept);
+
+        Page<NodeDetails> page = await ListPageAsync($"linkedto={anchor}&excludeId={excluded}&count=100");
+
+        Assert.That(page.Result.Select(n => n.Id), Is.EqualTo(new[] { kept }));
     }
 }

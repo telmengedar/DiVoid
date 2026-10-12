@@ -231,4 +231,16 @@ public class SemanticSearchMultiQuerySqlShapeTests
             Assert.That(statement.Where, Does.Contain("sim.\"similarity\" >="));
         });
     }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #13604: with several queries the name exclusion sits in the WHERE of the one ranked statement, ahead of ORDER BY and LIMIT")]
+    public void TwoQueries_ExcludeName_RenderedInWhere()
+    {
+        Statement statement = CaptureList(new() { Queries = ["alpha", "beta"], Count = 10, ExcludeName = ["processor-run%"] });
+
+        Assert.Multiple(() => {
+            Assert.That(statement.Laterals, Is.EqualTo(ExpectedLaterals(TwoQuerySum, 2)));
+            Assert.That(statement.Where, Does.Match(@"^ WHERE .*\( node\.""name"" IS NULL OR NOT node\.""name"" ILIKE .*\).* ORDER BY .* LIMIT @\d+$"));
+        });
+    }
 }

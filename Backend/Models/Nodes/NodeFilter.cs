@@ -30,6 +30,16 @@ public class NodeFilter : ListFilter
     public string[] Name { get; set; }
 
     /// <summary>
+    /// ids of nodes to leave out; combined with every other filter, so an id listed here is never returned
+    /// </summary>
+    public long[] ExcludeId { get; set; }
+
+    /// <summary>
+    /// names of nodes to leave out, matched like <see cref="Name"/>: when any value contains a wildcard every value is matched with LIKE, otherwise by equality; nodes without a name are never left out
+    /// </summary>
+    public string[] ExcludeName { get; set; }
+
+    /// <summary>
     /// nodes node needs to be linked to
     /// </summary>
     public long[] LinkedTo { get; set; }
