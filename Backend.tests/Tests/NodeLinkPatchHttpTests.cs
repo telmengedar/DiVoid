@@ -1,4 +1,5 @@
 using System.Net.Http;
+using System.Text.Json;
 using Backend.Models.Nodes;
 using Microsoft.AspNetCore.Mvc.Testing;
 using NUnit.Framework;
@@ -21,7 +22,7 @@ namespace Backend.tests.Tests;
 ///
 /// Auth is disabled — the error-mapping/wire-shape logic under test is orthogonal to auth.
 /// </summary>
-[TestFixture]
+[TestFixture, Parallelizable]
 public class NodeLinkPatchHttpTests
 {
     WebApplicationFactory<Program> factory = null!;
@@ -137,6 +138,20 @@ public class NodeLinkPatchHttpTests
         HttpResponseMessage resp = await PatchLinkAsync(source, target, ops);
         Assert.That((int) resp.StatusCode, Is.EqualTo(404),
             "patching a link that does not exist must return 404, not 500");
+    }
+
+    [Test, Parallelizable]
+    [Description("divoid-mcp matches this phrase in the 404 text to report a missing link (DiVoid #16222)")]
+    public async Task PatchLink_NoEdgeBetweenNodes_ErrorTextSaysNoLinkBetween()
+    {
+        long source = await CreateNodeAsync(name: "NoEdgeTextSource");
+        long target = await CreateNodeAsync(name: "NoEdgeTextTarget");
+
+        PatchOperation[] ops = [new() { Op = "replace", Path = "/context", Value = "no-edge" }];
+        HttpResponseMessage resp = await PatchLinkAsync(source, target, ops);
+        using JsonDocument doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+
+        Assert.That(doc.RootElement.GetProperty("text").GetString(), Does.Contain("No link between"));
     }
 
     [Test, Parallelizable]

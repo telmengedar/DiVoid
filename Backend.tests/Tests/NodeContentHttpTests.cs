@@ -1,5 +1,6 @@
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Backend.Models.Nodes;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -18,7 +19,7 @@ namespace Backend.tests.Tests;
 ///     not 500 (unhandled ArgumentNullException).
 ///   - Happy path: content uploaded → GET returns 200 with the correct bytes.
 /// </summary>
-[TestFixture]
+[TestFixture, Parallelizable]
 public class NodeContentHttpTests
 {
     WebApplicationFactory<Program> factory = null!;
@@ -57,7 +58,7 @@ public class NodeContentHttpTests
     // Bug #175 — node with no content must return 404, not 500
     // -----------------------------------------------------------------------
 
-    [Test]
+    [Test, Parallelizable]
     public async Task GetContent_NodeExistsWithNoContent_Returns404()
     {
         long id = await CreateNodeAsync(name: "NoContentNode");
@@ -68,7 +69,7 @@ public class NodeContentHttpTests
             "GET /api/nodes/{id}/content for a content-less node must return 404, not 500 (bug #175)");
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task GetContent_NodeExistsWithNoContent_ReturnsEntityNotFoundCode()
     {
         long id = await CreateNodeAsync(name: "NoContentNodeCode");
@@ -81,11 +82,23 @@ public class NodeContentHttpTests
             "error code must be data_entitynotfound for content-less node (bug #175)");
     }
 
+    [Test, Parallelizable]
+    [Description("divoid-mcp matches this phrase in the 404 text to report a node without content (DiVoid #16222)")]
+    public async Task GetContent_NodeExistsWithNoContent_ErrorTextSaysHasNoContent()
+    {
+        long id = await CreateNodeAsync(name: "NoContentNodeText");
+
+        HttpResponseMessage resp = await GetContentAsync(id);
+        using JsonDocument doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+
+        Assert.That(doc.RootElement.GetProperty("text").GetString(), Does.Contain("has no content"));
+    }
+
     // -----------------------------------------------------------------------
     // Positive path — upload content then retrieve it
     // -----------------------------------------------------------------------
 
-    [Test]
+    [Test, Parallelizable]
     public async Task GetContent_AfterUpload_Returns200WithCorrectBytes()
     {
         long id = await CreateNodeAsync(name: "ContentUploadNode");

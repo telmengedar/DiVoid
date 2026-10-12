@@ -1,5 +1,6 @@
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Backend.Models.Nodes;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -16,7 +17,7 @@ namespace Backend.tests.Tests;
 /// verifies the end-to-end wire contract an MCP client uses: JSON edit list in, edited bytes
 /// persisted, and the anti-corruption faults surfaced as 400 / 404 rather than 500.
 /// </summary>
-[TestFixture]
+[TestFixture, Parallelizable]
 public class NodeContentPatchHttpTests
 {
     WebApplicationFactory<Program> factory = null!;
@@ -70,7 +71,7 @@ public class NodeContentPatchHttpTests
         return await resp.Content.ReadAsStringAsync();
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task PatchContent_ReplaceLine_PersistsEditedContent()
     {
         long id = await CreateNodeAsync();
@@ -83,7 +84,7 @@ public class NodeContentPatchHttpTests
         Assert.That(await GetContentStringAsync(id), Is.EqualTo("alpha\nBRAVO\ncharlie\n"));
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task PatchContent_ReplaceCharRange_PersistsEditedContent()
     {
         long id = await CreateNodeAsync();
@@ -96,7 +97,7 @@ public class NodeContentPatchHttpTests
         Assert.That(await GetContentStringAsync(id), Is.EqualTo("HELLO world"));
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task PatchContent_MultipleEdits_AppliedAgainstOriginalFrame()
     {
         long id = await CreateNodeAsync();
@@ -109,7 +110,7 @@ public class NodeContentPatchHttpTests
         Assert.That(await GetContentStringAsync(id), Is.EqualTo("AA234BB789"));
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task PatchContent_NonExistentNode_Returns404()
     {
         HttpResponseMessage resp = await PatchContentAsync(999999,
@@ -117,7 +118,7 @@ public class NodeContentPatchHttpTests
         Assert.That((int) resp.StatusCode, Is.EqualTo(404));
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task PatchContent_NodeWithNoContent_Returns404()
     {
         long id = await CreateNodeAsync(name: "NoContentForPatch");
@@ -126,7 +127,19 @@ public class NodeContentPatchHttpTests
         Assert.That((int) resp.StatusCode, Is.EqualTo(404));
     }
 
-    [Test]
+    [Test, Parallelizable]
+    [Description("divoid-mcp matches this phrase in the 404 text to report a node without content (DiVoid #16222)")]
+    public async Task PatchContent_NodeWithNoContent_ErrorTextSaysHasNoContent()
+    {
+        long id = await CreateNodeAsync(name: "NoContentForPatchText");
+        HttpResponseMessage resp = await PatchContentAsync(id,
+            """[ { "unit": "char", "start": 0, "length": 0, "value": "x" } ]""");
+        using JsonDocument doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+
+        Assert.That(doc.RootElement.GetProperty("text").GetString(), Does.Contain("has no content"));
+    }
+
+    [Test, Parallelizable]
     public async Task PatchContent_OutOfRange_Returns400AndLeavesContentUntouched()
     {
         long id = await CreateNodeAsync();
@@ -143,7 +156,7 @@ public class NodeContentPatchHttpTests
             "a rejected edit must not mutate the stored content");
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task PatchContent_NonTextContent_Returns400()
     {
         long id = await CreateNodeAsync();
@@ -155,7 +168,7 @@ public class NodeContentPatchHttpTests
         Assert.That((int) resp.StatusCode, Is.EqualTo(400));
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task PatchContent_OverlappingEdits_Returns400()
     {
         long id = await CreateNodeAsync();
