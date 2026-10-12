@@ -190,4 +190,55 @@ public class ArrayParameterBinderTests
         Array? result = await Bind<long>("id", "");
         Assert.That(result, Is.Null);
     }
+
+
+    [Parallelizable]
+    [TestCase("1,abc,3", "abc", TestName = "Bind_CommaSeparatedLongsWithUnparsableToken_ThrowsArgumentException")]
+    [TestCase("[1,abc]", "abc", TestName = "Bind_BracketDelimitedLongsWithUnparsableToken_ThrowsArgumentException")]
+    [TestCase("{abc,2}", "abc", TestName = "Bind_BraceDelimitedLongsWithUnparsableToken_ThrowsArgumentException")]
+    public void Bind_DelimitedLongsWithUnparsableToken_ThrowsArgumentException(string value, string token)
+    {
+        ArgumentException? exception = Assert.ThrowsAsync<ArgumentException>(() => Bind<long>("id", value));
+
+        Assert.Multiple(() => {
+            Assert.That(exception!.Message, Does.Contain($"'{token}'"), "message must name the offending token");
+            Assert.That(exception.Message, Does.EndWith(" id"), "message must name the parameter");
+            Assert.That(exception.ParamName, Is.Null, "ParamName would append a suffix to the client-facing text");
+            Assert.That(exception.InnerException, Is.TypeOf<FormatException>(), "original failure must stay available for logs");
+        });
+    }
+
+
+    [Test, Parallelizable]
+    public void Bind_RepeatedLongValuesWithUnparsableToken_ThrowsArgumentException()
+    {
+        ArgumentException? exception = Assert.ThrowsAsync<ArgumentException>(() => BindMultiple<long>("id", "10", "x", "30"));
+
+        Assert.Multiple(() => {
+            Assert.That(exception!.Message, Does.Contain("'x'"), "message must name the offending token");
+            Assert.That(exception.InnerException, Is.TypeOf<FormatException>(), "original failure must stay available for logs");
+        });
+    }
+
+
+    [Test, Parallelizable]
+    public void Bind_LongOverflow_ThrowsArgumentException()
+    {
+        ArgumentException? exception = Assert.ThrowsAsync<ArgumentException>(() => Bind<long>("id", "99999999999999999999"));
+
+        Assert.Multiple(() => {
+            Assert.That(exception!.Message, Does.Contain("'99999999999999999999'"), "message must name the offending token");
+            Assert.That(exception.Message, Does.EndWith(" id"), "message must name the parameter");
+            Assert.That(exception.InnerException, Is.TypeOf<OverflowException>(), "original failure must stay available for logs");
+        });
+    }
+
+
+    [Test, Parallelizable]
+    public void Bind_ElementTypeConverterCannotHandle_DoesNotThrowArgumentException()
+    {
+        Exception? exception = Assert.CatchAsync(() => Bind<System.Text.StringBuilder>("id", "x"));
+
+        Assert.That(exception, Is.Not.InstanceOf<ArgumentException>(), "a server-side type defect is not a client error");
+    }
 }

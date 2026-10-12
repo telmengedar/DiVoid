@@ -6,6 +6,7 @@ using Backend.Models.Nodes;
 using Microsoft.AspNetCore.Mvc.Testing;
 using NUnit.Framework;
 using Pooshit.AspNetCore.Services.Data;
+using Pooshit.AspNetCore.Services.Errors;
 using Pooshit.Http;
 using Pooshit.Json;
 
@@ -285,6 +286,48 @@ public class NodeFilterFlagsHttpTests
             Assert.That(ids, Does.Contain(first), $"'{query}' must match its first id");
             Assert.That(ids, Does.Contain(second), $"'{query}' must match its second id");
             Assert.That(ids, Does.Not.Contain(third), $"id not listed in '{query}' must be excluded");
+        });
+    }
+
+
+    async Task<(int Status, ErrorResponse Error)> GetErrorAsync(string query)
+    {
+        HttpResponseMessage response = await http.Get<HttpResponseMessage>($"{TestSetup.BaseUrl}/api/nodes?{query}");
+        string json = await response.Content.ReadAsStringAsync();
+        return ((int) response.StatusCode, Json.Read<ErrorResponse>(json));
+    }
+
+
+    [TestCase("severity=abc", "abc", TestName = "SeverityCommaSeparated_UnparsableValue_Returns400BadParameter")]
+    [TestCase("severity=[3,5", "[3", TestName = "SeverityUnbalancedBracket_Returns400BadParameter")]
+    [TestCase("severity=3&severity=x", "x", TestName = "SeverityRepeatedKey_UnparsableValue_Returns400BadParameter")]
+    [Parallelizable]
+    public async Task SeverityListSyntax_UnparsableValue_Returns400BadParameter(string query, string token)
+    {
+        (int status, ErrorResponse error) = await GetErrorAsync(query);
+
+        Assert.Multiple(() => {
+            Assert.That(status, Is.EqualTo(400), $"'{query}' is malformed client input");
+            Assert.That(error.Code, Is.EqualTo("badparameter"), "error body must be the canonical shape");
+            Assert.That(error.Text, Does.Contain($"'{token}'"), "error text must name the offending token");
+            Assert.That(error.Text, Does.EndWith(" severity").IgnoreCase, "error text must name the parameter");
+        });
+    }
+
+
+    [TestCase("id={1,2]", "{1", TestName = "IdMismatchedDelimiters_Returns400BadParameter")]
+    [TestCase("id=abc", "abc", TestName = "IdCommaSeparated_UnparsableValue_Returns400BadParameter")]
+    [TestCase("id=99999999999999999999", "99999999999999999999", TestName = "IdOverflow_Returns400BadParameter")]
+    [Parallelizable]
+    public async Task IdListSyntax_UnparsableValue_Returns400BadParameter(string query, string token)
+    {
+        (int status, ErrorResponse error) = await GetErrorAsync(query);
+
+        Assert.Multiple(() => {
+            Assert.That(status, Is.EqualTo(400), $"'{query}' is malformed client input");
+            Assert.That(error.Code, Is.EqualTo("badparameter"), "error body must be the canonical shape");
+            Assert.That(error.Text, Does.Contain($"'{token}'"), "error text must name the offending token");
+            Assert.That(error.Text, Does.EndWith(" id").IgnoreCase, "error text must name the parameter");
         });
     }
 }
