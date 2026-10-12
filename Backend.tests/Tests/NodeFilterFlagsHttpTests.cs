@@ -14,7 +14,8 @@ namespace Backend.tests.Tests;
 
 /// <summary>
 /// HTTP-layer tests driving the <c>refinement</c>/<c>norefinement</c>, <c>status</c>/<c>nostatus</c>
-/// and <c>severity</c>/<c>noseverity</c> query-string flags, and the <c>excludeId</c>/<c>excludeName</c> exclusions, through <c>GET /api/nodes</c>.
+/// and <c>severity</c>/<c>noseverity</c> query-string flags and the <c>excludeId</c>/<c>excludeName</c> exclusions through <c>GET /api/nodes</c>,
+/// plus the comma, repeated-key, bracket and brace array syntaxes for the <c>severity</c> and <c>id</c> filters.
 /// </summary>
 [TestFixture, Parallelizable]
 public class NodeFilterFlagsHttpTests
@@ -398,5 +399,45 @@ public class NodeFilterFlagsHttpTests
         Page<NodeDetails> page = await ListPageAsync($"linkedto={anchor}&excludeId={excluded}&count=100");
 
         Assert.That(page.Result.Select(n => n.Id), Is.EqualTo(new[] { kept }));
+    }
+
+    [TestCase("severity=3,5", TestName = "SeverityCommaSeparated_ReturnsNodesMatchingAnyListedValue")]
+    [TestCase("severity=3&severity=5", TestName = "SeverityRepeatedKey_ReturnsNodesMatchingAnyListedValue")]
+    [Parallelizable]
+    public async Task SeverityListSyntax_ReturnsNodesMatchingAnyListedValue(string query)
+    {
+        string tag = NewTag();
+        long first = await CreateNodeAsync(tag, severity: 3);
+        long second = await CreateNodeAsync(tag, severity: 5);
+        long third = await CreateNodeAsync(tag, severity: 7);
+
+        long[] ids = await ListIdsAsync(tag, query);
+
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(first), $"'{query}' must match its first integer value");
+            Assert.That(ids, Does.Contain(second), $"'{query}' must match its second integer value");
+            Assert.That(ids, Does.Not.Contain(third), $"integer value not listed in '{query}' must be excluded");
+        });
+    }
+
+    [TestCase("id=[{0},{1}]", TestName = "IdBracketDelimited_ReturnsOnlyListedNodes")]
+    [TestCase("id={{{0},{1}}}", TestName = "IdBraceDelimited_ReturnsOnlyListedNodes")]
+    [TestCase("id={0}&id={1}", TestName = "IdRepeatedKey_ReturnsOnlyListedNodes")]
+    [Parallelizable]
+    public async Task IdListSyntax_ReturnsOnlyListedNodes(string queryTemplate)
+    {
+        string tag = NewTag();
+        long first = await CreateNodeAsync(tag);
+        long second = await CreateNodeAsync(tag);
+        long third = await CreateNodeAsync(tag);
+        string query = string.Format(queryTemplate, first, second);
+
+        long[] ids = await ListIdsAsync(tag, query);
+
+        Assert.Multiple(() => {
+            Assert.That(ids, Does.Contain(first), $"'{query}' must match its first id");
+            Assert.That(ids, Does.Contain(second), $"'{query}' must match its second id");
+            Assert.That(ids, Does.Not.Contain(third), $"id not listed in '{query}' must be excluded");
+        });
     }
 }
