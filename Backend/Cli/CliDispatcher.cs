@@ -22,26 +22,23 @@ public static class CliDispatcher {
     /// runs the CLI verb indicated by <paramref name="args"/>
     /// </summary>
     /// <param name="args">command-line arguments; first element is the verb</param>
-    public static async Task RunAsync(string[] args) {
+    /// <returns>process exit code of the verb</returns>
+    public static Task<int> RunAsync(string[] args) {
         string verb = args[0];
         switch (verb) {
             case "create-admin":
-                await CreateAdminAsync(args[1..]);
-                break;
+                return CreateAdminAsync(args[1..]);
             case "backfill-embeddings":
-                await BackfillEmbeddingsAsync(args[1..]);
-                break;
+                return BackfillEmbeddingsAsync(args[1..]);
             case "layout-nodes":
-                await LayoutNodesAsync();
-                break;
+                return LayoutNodesAsync();
             default:
                 Console.Error.WriteLine($"Unknown verb '{verb}'. Supported verbs: create-admin, backfill-embeddings, layout-nodes");
-                Environment.Exit(1);
-                break;
+                return Task.FromResult(1);
         }
     }
 
-    static async Task BackfillEmbeddingsAsync(string[] args) {
+    static async Task<int> BackfillEmbeddingsAsync(string[] args) {
         long[] ids = null;
         bool longOnly = false;
 
@@ -56,8 +53,7 @@ public static class CliDispatcher {
                     break;
                 default:
                     Console.Error.WriteLine($"error: unsupported or invalid argument '{args[i]}' for backfill-embeddings. Usage: backfill-embeddings [--ids <id,id,...>] [--long-only]");
-                    Environment.Exit(1);
-                    return;
+                    return 1;
             }
         }
 
@@ -84,8 +80,7 @@ public static class CliDispatcher {
             await schemaSvc.StartAsync(default);
         } catch (Exception ex) {
             Console.Error.WriteLine($"error: failed to initialise database schema: {ex.Message}");
-            Environment.Exit(1);
-            return;
+            return 1;
         }
 
         EmbeddingBackfillService backfill = provider.GetRequiredService<EmbeddingBackfillService>();
@@ -94,11 +89,11 @@ public static class CliDispatcher {
         try {
             await backfill.RunAsync(ids, longOnly);
             logger.LogInformation("event=cli.backfill-embeddings exitCode=0");
-            Environment.Exit(0);
+            return 0;
         } catch (Exception ex) {
             Console.Error.WriteLine($"error: {ex.Message}");
             logger.LogError(ex, "event=cli.backfill-embeddings exitCode=1");
-            Environment.Exit(1);
+            return 1;
         }
     }
 
@@ -116,7 +111,7 @@ public static class CliDispatcher {
         return true;
     }
 
-    static async Task LayoutNodesAsync() {
+    static async Task<int> LayoutNodesAsync() {
         IServiceCollection services = new ServiceCollection();
 
         IConfiguration configuration = new ConfigurationBuilder()
@@ -137,8 +132,7 @@ public static class CliDispatcher {
             await schemaSvc.StartAsync(default);
         } catch (Exception ex) {
             Console.Error.WriteLine($"error: failed to initialise database schema: {ex.Message}");
-            Environment.Exit(1);
-            return;
+            return 1;
         }
 
         LayoutNodesService layoutService = provider.GetRequiredService<LayoutNodesService>();
@@ -147,16 +141,16 @@ public static class CliDispatcher {
         try {
             await layoutService.RunAsync();
             logger.LogInformation("event=cli.layout-nodes exitCode=0");
-            Environment.Exit(0);
+            return 0;
         } catch (Exception ex) {
             Console.Error.WriteLine($"error: {ex.Message}");
             logger.LogError(ex, "event=cli.layout-nodes exitCode=1");
-            Environment.Exit(1);
+            return 1;
         }
     }
 
 
-    static async Task CreateAdminAsync(string[] args) {
+    static async Task<int> CreateAdminAsync(string[] args) {
         string name = null;
         string email = null;
 
@@ -173,8 +167,7 @@ public static class CliDispatcher {
 
         if (string.IsNullOrWhiteSpace(name)) {
             Console.Error.WriteLine("error: --name is required for create-admin");
-            Environment.Exit(1);
-            return;
+            return 1;
         }
 
         IServiceCollection services = new ServiceCollection();
@@ -201,8 +194,7 @@ public static class CliDispatcher {
             await schemaSvc.StartAsync(default);
         } catch (Exception ex) {
             Console.Error.WriteLine($"error: failed to initialise database schema: {ex.Message}");
-            Environment.Exit(1);
-            return;
+            return 1;
         }
 
         IUserService userService = provider.GetRequiredService<IUserService>();
@@ -221,15 +213,15 @@ public static class CliDispatcher {
             Console.WriteLine($"Admin user created:  id={user.Id} name={user.Name}");
             Console.WriteLine($"Admin key created:   id={key.Id} keyId={key.KeyId}");
             Console.WriteLine($"Key (store now — unrecoverable): {key.PlaintextKey}");
-            Environment.Exit(0);
+            return 0;
         } catch (MissingPepperException ex) {
             Console.Error.WriteLine($"error: {ex.Message}");
             logger.LogError("event=cli.create-admin exitCode=1 reason=missing_pepper");
-            Environment.Exit(1);
+            return 1;
         } catch (Exception ex) {
             Console.Error.WriteLine($"error: {ex.Message}");
             logger.LogError(ex, "event=cli.create-admin exitCode=1");
-            Environment.Exit(1);
+            return 1;
         }
     }
 }
