@@ -1,5 +1,5 @@
 using System;
-using System.Text;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Backend.Models.Nodes;
@@ -13,8 +13,7 @@ using Pooshit.Ocelot.Tokens;
 namespace Backend.Services.Embeddings;
 
 /// <summary>
-/// one-shot service that walks all nodes with any embeddable surface (non-empty name OR
-/// text content) and (re)generates their embedding using the v2 composition policy.
+/// walks nodes with an embeddable surface (non-empty name OR text content) and (re)generates their embedding using the current composition policy.
 /// Postgres-only: if <see cref="IEmbeddingCapability.IsEnabled"/> is false the method
 /// exits immediately with a log message and no database writes.
 /// </summary>
@@ -26,30 +25,35 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
     readonly IEmbeddingCapability embeddingCapability = embeddingCapability;
     readonly ILogger<EmbeddingBackfillService> logger = logger;
 
-    /// <summary>
-    /// builds the v2 candidate predicate: any row where the composition would yield a
-    /// non-null embeddable string, i.e. name is non-empty OR (content is non-null AND
-    /// content-type is text).
-    /// </summary>
-    internal static PredicateExpression<Node> CandidatePredicate() {
-        PredicateExpression<Node> hasName = new PredicateExpression<Node>(n => n.Name != null && n.Name != "");
+    static PredicateExpression<Node> CandidatePredicate(long[] ids, bool longOnly) {
+        PredicateExpression<Node> candidates = new PredicateExpression<Node>(n => n.Name != null && n.Name != "") |
+                                               new PredicateExpression<Node>(n => n.Content != null);
 
-        PredicateExpression<Node> isTextType =
-            new PredicateExpression<Node>(n => n.ContentType.Like("text/%")) |
-            new PredicateExpression<Node>(n => n.ContentType.In(TextContentTypePredicate.ApplicationTextTypes));
+        if (ids != null)
+            candidates &= new PredicateExpression<Node>(n => n.Id.In(ids));
 
-        PredicateExpression<Node> hasTextContent =
-            new PredicateExpression<Node>(n => n.Content != null) & isTextType;
+        if (longOnly)
+            candidates &= LongOnlyPredicate();
 
-        return hasName | hasTextContent;
+        return candidates;
+    }
+
+    static PredicateExpression<Node> LongOnlyPredicate() {
+        PredicateExpression<Node> namedOverflow = new PredicateExpression<Node>(n => n.Name != null && n.Name != "" && DB.CustomFunction("length", DB.Property<Node>(x => x.Name)).Single * 2 + 2 + DB.CustomFunction("length", DB.Property<Node>(x => x.Content)).Single > EmbeddingInputComposer.MaxLength);
+        PredicateExpression<Node> unnamedOverflow = new PredicateExpression<Node>(n => (n.Name == null || n.Name == "") && DB.CustomFunction("length", DB.Property<Node>(x => x.Content)).Single > EmbeddingInputComposer.MaxLength);
+        return namedOverflow | unnamedOverflow;
     }
 
     /// <summary>
-    /// runs the v2 backfill: re-embeds every node with any embeddable surface using
-    /// the name+content composition policy.
+    /// re-embeds the selected nodes using the name+content composition policy.
+    /// without options every node with an embeddable surface is selected.
     /// </summary>
+    /// <param name="ids">when set, only nodes with one of these ids are selected</param>
+    /// <param name="longOnly">when true, only nodes whose name and content may exceed the composition length are selected</param>
     /// <param name="ct">cancellation token</param>
-    public async Task RunAsync(CancellationToken ct = default) {
+    public async Task RunAsync(long[] ids = null, bool longOnly = false, CancellationToken ct = default) {
+        logger.LogInformation("event=backfill.options ids={IdCount} long_only={LongOnly}", ids?.Length ?? 0, longOnly);
+
         if (!embeddingCapability.IsEnabled) {
             logger.LogInformation("event=backfill.skip reason=capability_disabled message=\"embedding capability is disabled; backfill is a no-op\"");
             return;
@@ -58,30 +62,52 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
         logger.LogInformation("event=backfill.start version=v2 composition=name_plus_content");
         DateTimeOffset started = DateTimeOffset.UtcNow;
 
-        long total = await database.Load<Node>(DB.Count())
-                                   .Where(CandidatePredicate().Content)
-                                   .ExecuteScalarAsync<long>();
+        PredicateExpression<Node> predicate = CandidatePredicate(ids, longOnly);
 
-        logger.LogInformation("event=backfill.candidates total={Total}", total);
-
-        int embedded = 0;
-
-        await foreach (Node node in database.Load<Node>(n => n.Id, n => n.Name, n => n.ContentType, n => n.Content)
-                                            .Where(CandidatePredicate().Content)
+        List<Node> loaded = [];
+        await foreach (Node node in database.Load<Node>(n => n.Id, n => n.Name, n => n.ContentType, n => n.LastUpdate)
+                                            .Where(predicate.Content)
+                                            .OrderBy(n => n.Id)
                                             .ExecuteEntitiesAsync()) {
             ct.ThrowIfCancellationRequested();
 
-            await EmbeddingWrite.Build(database, node.Id, node.Name, node.Content, node.ContentType).ExecuteAsync();
+            if (TextContentTypePredicate.IsText(node.ContentType) || (!longOnly && !string.IsNullOrEmpty(node.Name)))
+                loaded.Add(node);
+        }
 
-            embedded++;
+        Node[] candidates = loaded.ToArray();
 
-            if (embedded % ProgressInterval == 0)
-                logger.LogInformation("event=backfill.progress embedded={Embedded} of={Total}", embedded, total);
+        logger.LogInformation("event=backfill.candidates total={Total}", candidates.Length);
+
+        int embedded = 0;
+        int skippedChanged = 0;
+
+        foreach (Node candidate in candidates) {
+            ct.ThrowIfCancellationRequested();
+
+            byte[] content = TextContentTypePredicate.IsText(candidate.ContentType) ? await LoadContent(candidate.Id) : null;
+            long written = await EmbeddingWrite.Build(database, candidate.Id, candidate.Name, content, candidate.ContentType, candidate.LastUpdate)
+                                              .ExecuteAsync();
+
+            if (written == 0)
+                skippedChanged++;
+            else
+                embedded++;
+
+            if ((embedded + skippedChanged) % ProgressInterval == 0)
+                logger.LogInformation("event=backfill.progress embedded={Embedded} skipped_changed={SkippedChanged} of={Total}", embedded, skippedChanged, candidates.Length);
         }
 
         TimeSpan elapsed = DateTimeOffset.UtcNow - started;
         logger.LogInformation(
-            "event=backfill.complete embedded={Embedded} total={Total} elapsed={Elapsed}",
-            embedded, total, elapsed);
+            "event=backfill.complete embedded={Embedded} skipped_changed={SkippedChanged} total={Total} elapsed={Elapsed}",
+            embedded, skippedChanged, candidates.Length, elapsed);
+    }
+
+    async Task<byte[]> LoadContent(long nodeId) {
+        Node node = await database.Load<Node>(n => n.Content)
+                                  .Where(n => n.Id == nodeId)
+                                  .ExecuteEntityAsync();
+        return node?.Content;
     }
 }

@@ -346,7 +346,8 @@ public class EmbeddingWriteSqlShapeTests
         candidates.Columns.Add("name", typeof(string));
         candidates.Columns.Add("contenttype", typeof(string));
         candidates.Columns.Add("content", typeof(byte[]));
-        candidates.Rows.Add(5L, "   ", DBNull.Value, DBNull.Value);
+        candidates.Columns.Add("lastupdate", typeof(DateTime));
+        candidates.Rows.Add(5L, "   ", DBNull.Value, DBNull.Value, DateTime.UtcNow);
         Mock<IDBClient> client = CreateClient(() => candidates);
         EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), NullLogger<EmbeddingBackfillService>.Instance);
 
@@ -424,13 +425,14 @@ public class EmbeddingWriteSqlShapeTests
         candidates.Columns.Add("name", typeof(string));
         candidates.Columns.Add("contenttype", typeof(string));
         candidates.Columns.Add("content", typeof(byte[]));
-        candidates.Rows.Add(5L, "named", "text/markdown", Encoding.UTF8.GetBytes("body"));
+        candidates.Columns.Add("lastupdate", typeof(DateTime));
+        candidates.Rows.Add(5L, "named", "text/markdown", Encoding.UTF8.GetBytes("body"), DateTime.UtcNow);
         Mock<IDBClient> client = CreateClient(() => candidates);
         EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), NullLogger<EmbeddingBackfillService>.Instance);
 
         await backfill.RunAsync();
 
-        Assert.That(EmbeddingUpdates(client), Has.Length.EqualTo(1).And.All.EndsWith("\"id\" = 5"));
+        Assert.That(EmbeddingUpdates(client), Has.Length.EqualTo(1).And.All.Contain("\"id\" = 5"));
     }
 
     [Test, Parallelizable]
@@ -442,7 +444,8 @@ public class EmbeddingWriteSqlShapeTests
         candidates.Columns.Add("name", typeof(string));
         candidates.Columns.Add("contenttype", typeof(string));
         candidates.Columns.Add("content", typeof(byte[]));
-        candidates.Rows.Add(5L, "named", "text/markdown", Encoding.UTF8.GetBytes("body"));
+        candidates.Columns.Add("lastupdate", typeof(DateTime));
+        candidates.Rows.Add(5L, "named", "text/markdown", Encoding.UTF8.GetBytes("body"), DateTime.UtcNow);
         Mock<IDBClient> client = CreateClient(() => candidates);
         EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), NullLogger<EmbeddingBackfillService>.Instance);
 
@@ -460,13 +463,33 @@ public class EmbeddingWriteSqlShapeTests
         candidates.Columns.Add("name", typeof(string));
         candidates.Columns.Add("contenttype", typeof(string));
         candidates.Columns.Add("content", typeof(byte[]));
-        candidates.Rows.Add(5L, "named", "text/markdown", Encoding.UTF8.GetBytes("body"));
+        candidates.Columns.Add("lastupdate", typeof(DateTime));
+        candidates.Rows.Add(5L, "named", "text/markdown", Encoding.UTF8.GetBytes("body"), DateTime.UtcNow);
         Mock<IDBClient> client = CreateClient(() => candidates);
         EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), NullLogger<EmbeddingBackfillService>.Instance);
 
         await backfill.RunAsync();
 
         AssertCutToDimension(EmbeddingValues(Statements(client)), 1);
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16207: the backfill reads its candidates in id order so the progress log reads as a position")]
+    public async Task Backfill_CandidateQuery_IsOrderedById()
+    {
+        DataTable candidates = new();
+        candidates.Columns.Add("id", typeof(long));
+        candidates.Columns.Add("name", typeof(string));
+        candidates.Columns.Add("contenttype", typeof(string));
+        candidates.Columns.Add("content", typeof(byte[]));
+        candidates.Columns.Add("lastupdate", typeof(DateTime));
+        Mock<IDBClient> client = CreateClient(() => candidates);
+        EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), NullLogger<EmbeddingBackfillService>.Instance);
+
+        await backfill.RunAsync();
+
+        string[] selects = Statements(client).Where(sql => sql.StartsWith("SELECT") && sql.Contains("FROM node")).ToArray();
+        Assert.That(selects, Has.Length.EqualTo(1).And.All.EndsWith("ORDER BY \"id\""));
     }
 
     static readonly Regex WindowFold = new(@"^UPDATE node SET ""embedding"" = l2_normalize \( vector_add \( .* \) \) WHERE ", RegexOptions.Compiled | RegexOptions.Singleline);
@@ -517,7 +540,8 @@ public class EmbeddingWriteSqlShapeTests
         candidates.Columns.Add("name", typeof(string));
         candidates.Columns.Add("contenttype", typeof(string));
         candidates.Columns.Add("content", typeof(byte[]));
-        candidates.Rows.Add(5L, "named", "text/markdown", Encoding.UTF8.GetBytes(LongContent));
+        candidates.Columns.Add("lastupdate", typeof(DateTime));
+        candidates.Rows.Add(5L, "named", "text/markdown", Encoding.UTF8.GetBytes(LongContent), DateTime.UtcNow);
         Mock<IDBClient> client = CreateClient(() => candidates);
         EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), NullLogger<EmbeddingBackfillService>.Instance);
 
