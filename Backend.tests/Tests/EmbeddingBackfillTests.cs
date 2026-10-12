@@ -1,21 +1,22 @@
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
 using Backend.Services.Nodes;
 using Backend.tests.Fixtures;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Pooshit.Ocelot.Entities;
 using NUnit.Framework;
 
 namespace Backend.tests.Tests;
 
 /// <summary>
 /// tests for <see cref="EmbeddingBackfillService"/>.
-/// all tests run on SQLite (via <see cref="DatabaseFixture"/>).
-/// the Postgres embedding() call path is never reached — the capability flag is false.
+/// all tests run on SQLite (via <see cref="DatabaseFixture"/>); embedding writes are either never reached (capability disabled, nothing to embed)
+/// or executed as marker writes by <see cref="EmbeddingWriteMarkerClient"/>.
 /// </summary>
-[TestFixture]
+[TestFixture, Parallelizable]
 public class EmbeddingBackfillTests
 {
     static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
@@ -31,7 +32,7 @@ public class EmbeddingBackfillTests
     // 1. Capability disabled (SQLite) — exits immediately, no DB writes
     // -----------------------------------------------------------------------
 
-    [Test]
+    [Test, Parallelizable]
     public async Task RunAsync_CapabilityDisabled_ExitsWithoutWriting()
     {
         using DatabaseFixture fixture = new();
@@ -70,7 +71,7 @@ public class EmbeddingBackfillTests
     // during the production smoke check.
     // -----------------------------------------------------------------------
 
-    [Test]
+    [Test, Parallelizable]
     public async Task RunAsync_CapabilityEnabled_SkipsNonTextNodesWithoutName()
     {
         using DatabaseFixture fixture = new();
@@ -92,7 +93,7 @@ public class EmbeddingBackfillTests
             "non-text content + empty name → no embeddable surface → skipped by v2 candidate predicate");
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task RunAsync_CapabilityEnabled_IncludesNonTextNodesWithName()
     {
         using DatabaseFixture fixture = new();
@@ -111,7 +112,7 @@ public class EmbeddingBackfillTests
             "node with non-empty name is a v2 candidate; RunAsync must attempt (and fail on SQLite) to embed it");
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task RunAsync_CapabilityEnabled_SkipsNodesWithNullContentAndEmptyName()
     {
         using DatabaseFixture fixture = new();
@@ -136,7 +137,7 @@ public class EmbeddingBackfillTests
             "node with empty name + null content must remain unembedded — no embeddable surface");
     }
 
-    [Test]
+    [Test, Parallelizable]
     public async Task RunAsync_CapabilityEnabled_IncludesNodesWithNameAndNullContent()
     {
         // v2 change: a node with non-empty name but null content IS a candidate (name-only embedding).
@@ -158,7 +159,7 @@ public class EmbeddingBackfillTests
     // 3. Idempotency contract: re-running on an empty candidate set is a no-op
     // -----------------------------------------------------------------------
 
-    [Test]
+    [Test, Parallelizable]
     public async Task RunAsync_CapabilityDisabled_EmptyDb_CompletesCleanly()
     {
         // Database with no nodes at all — RunAsync should complete without exception.
@@ -168,31 +169,173 @@ public class EmbeddingBackfillTests
         Assert.DoesNotThrowAsync(() => backfill.RunAsync());
     }
 
-    [Test]
-    public async Task CandidatePredicate_SqlShape_NameArmOrContentArm()
+    static async Task<long> Seed(DatabaseFixture fixture, string name, string? contentType, byte[]? content)
+    {
+        NodeService nodeSvc = MakeNodeService(fixture);
+        NodeDetails node = await nodeSvc.CreateNode(new NodeDetails { Type = "doc", Name = name }, callerId: 0);
+        if (content != null)
+            await nodeSvc.UploadContent(node.Id, contentType!, new MemoryStream(content), callerId: 0, isAdmin: true);
+        return node.Id;
+    }
+
+    static byte[] Bytes(int length) => Encoding.UTF8.GetBytes(new string('x', length));
+
+    static EmbeddingBackfillService MakeRecordingBackfill(DatabaseFixture fixture, Func<Task>? beforeWrite = null, ILogger<EmbeddingBackfillService>? logger = null)
+    {
+        IEntityManager recording = new EntityManager(EmbeddingWriteMarkerClient.Wrap(fixture.EntityManager.DBClient, beforeWrite));
+        return new EmbeddingBackfillService(recording, EnabledCapability, logger ?? NullLogger<EmbeddingBackfillService>.Instance);
+    }
+
+    static async Task<long[]> EmbeddedIds(DatabaseFixture fixture)
+    {
+        List<long> ids = [];
+        await foreach (Node node in fixture.EntityManager.Load<Node>(n => n.Id)
+                                                         .Where(n => n.Substance == "embedded")
+                                                         .ExecuteEntitiesAsync())
+            ids.Add(node.Id);
+        return ids.Order().ToArray();
+    }
+
+    [Test, Parallelizable]
+    public async Task NoOptions_SelectionUnchanged()
     {
         using DatabaseFixture fixture = new();
+        long named = await Seed(fixture, "named", null, null);
+        long unnamedText = await Seed(fixture, "", "text/plain", Bytes(10));
+        long namedImage = await Seed(fixture, "image", "image/png", [0x89, 0x50]);
+        await Seed(fixture, "", "image/png", [0x89, 0x50]);
+        await Seed(fixture, "", null, null);
+        long longNode = await Seed(fixture, "long", "text/plain", Bytes(9000));
+        EmbeddingBackfillService backfill = MakeRecordingBackfill(fixture);
 
-        string commandText = fixture.EntityManager
-                                    .Load<Node>(n => n.Id)
-                                    .Where(EmbeddingBackfillService.CandidatePredicate().Content)
-                                    .Prepare()
-                                    .CommandText;
+        await backfill.RunAsync();
 
-        string where = Regex.Match(commandText, @"(?i)\bWHERE\b(.+)$").Groups[1].Value.Trim();
+        Assert.That(await EmbeddedIds(fixture), Is.EqualTo(new[] { named, unnamedText, namedImage, longNode }));
+    }
 
-        Assert.That(where, Does.Contain("OR").IgnoreCase,
-            "WHERE clause must contain OR so that name-only nodes are not excluded by the content-type arm");
+    [Test, Parallelizable]
+    [Description("DiVoid #16207: only rows which may compose to more than MaxLength are selected, measured as twice the name characters + 2 + content bytes")]
+    public async Task LongOnly_SelectsOnlyRowsOverMaxLength()
+    {
+        using DatabaseFixture fixture = new();
+        await Seed(fixture, "ab", "text/plain", Bytes(100));
+        await Seed(fixture, "ab", "text/plain", Bytes(EmbeddingInputComposer.MaxLength - 6));
+        long namedOverLimit = await Seed(fixture, "ab", "text/plain", Bytes(EmbeddingInputComposer.MaxLength - 5));
+        await Seed(fixture, "", "text/plain", Bytes(EmbeddingInputComposer.MaxLength));
+        long unnamedOverLimit = await Seed(fixture, "", "text/plain", Bytes(EmbeddingInputComposer.MaxLength + 1));
+        await Seed(fixture, new string('n', EmbeddingInputComposer.MaxLength + 10), null, null);
+        long multiByteOverLimitInBytes = await Seed(fixture, "", "text/plain", Encoding.UTF8.GetBytes(new string('ä', 5000)));
+        EmbeddingBackfillService backfill = MakeRecordingBackfill(fixture);
 
-        int orIndex   = where.IndexOf("OR", StringComparison.OrdinalIgnoreCase);
-        int nameIndex = where.IndexOf("name", StringComparison.OrdinalIgnoreCase);
+        await backfill.RunAsync(longOnly: true);
 
-        Assert.That(nameIndex, Is.GreaterThanOrEqualTo(0), "WHERE clause must reference the 'name' column");
-        Assert.That(nameIndex, Is.LessThan(orIndex),
-            "name-arm must appear before the top-level OR (i.e. be the left operand of the disjunction)");
+        Assert.That(await EmbeddedIds(fixture), Is.EqualTo(new[] { namedOverLimit, unnamedOverLimit, multiByteOverLimitInBytes }));
+    }
 
-        int contentIndex = where.IndexOf("content", StringComparison.OrdinalIgnoreCase);
-        Assert.That(contentIndex, Is.GreaterThan(orIndex),
-            "content-type arm must appear after the top-level OR (i.e. be the right operand of the disjunction)");
+    [Test, Parallelizable]
+    [Description("DiVoid #16209: a name of astral characters counts two UTF-16 units each in the composer, so it must not shrink the long-only measure")]
+    public async Task LongOnly_NameOfAstralCharacters_IsMeasuredInUtf16Units()
+    {
+        using DatabaseFixture fixture = new();
+        string emoji = string.Concat(Enumerable.Repeat("😀", 3));
+        long astralOverLimit = await Seed(fixture, emoji, "text/plain", Bytes(EmbeddingInputComposer.MaxLength - 5));
+        EmbeddingBackfillService backfill = MakeRecordingBackfill(fixture);
+
+        await backfill.RunAsync(longOnly: true);
+
+        Assert.That(await EmbeddedIds(fixture), Is.EqualTo(new[] { astralOverLimit }));
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16209: non-text content cannot be windowed, so a long named image is not re-embedded under long-only")]
+    public async Task LongOnly_NonTextContent_IsNotSelected()
+    {
+        using DatabaseFixture fixture = new();
+        await Seed(fixture, "image", "image/png", Bytes(EmbeddingInputComposer.MaxLength + 100));
+        long text = await Seed(fixture, "text", "text/plain", Bytes(EmbeddingInputComposer.MaxLength + 100));
+        EmbeddingBackfillService backfill = MakeRecordingBackfill(fixture);
+
+        await backfill.RunAsync(longOnly: true);
+
+        Assert.That(await EmbeddedIds(fixture), Is.EqualTo(new[] { text }));
+    }
+
+    [Test, Parallelizable]
+    public async Task Ids_RestrictsSelectionToGivenIds()
+    {
+        using DatabaseFixture fixture = new();
+        long first = await Seed(fixture, "first", null, null);
+        await Seed(fixture, "second", null, null);
+        long third = await Seed(fixture, "third", null, null);
+        EmbeddingBackfillService backfill = MakeRecordingBackfill(fixture);
+
+        await backfill.RunAsync(ids: [first, third]);
+
+        Assert.That(await EmbeddedIds(fixture), Is.EqualTo(new[] { first, third }));
+    }
+
+    [Test, Parallelizable]
+    public async Task IdsAndLongOnly_AreCombined()
+    {
+        using DatabaseFixture fixture = new();
+        long longListed = await Seed(fixture, "long", "text/plain", Bytes(9000));
+        await Seed(fixture, "long", "text/plain", Bytes(9000));
+        long shortListed = await Seed(fixture, "short", "text/plain", Bytes(10));
+        EmbeddingBackfillService backfill = MakeRecordingBackfill(fixture);
+
+        await backfill.RunAsync(ids: [longListed, shortListed], longOnly: true);
+
+        Assert.That(await EmbeddedIds(fixture), Is.EqualTo(new[] { longListed }));
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16209: a charset parameter or upper case in the content type must not hide text content, as TextContentTypePredicate.IsText")]
+    public async Task UnnamedTextContent_WithParametersOrUpperCase_IsSelectedLikeIsText()
+    {
+        using DatabaseFixture fixture = new();
+        long json = await Seed(fixture, "", "application/json; charset=utf-8", Bytes(10));
+        long upper = await Seed(fixture, "", "TEXT/Plain", Bytes(10));
+        long spaced = await Seed(fixture, "", "Application/JSON ; charset=utf-8", Bytes(10));
+        await Seed(fixture, "", "application/jsonx", Bytes(10));
+        await Seed(fixture, "", "application/octet-stream", Bytes(10));
+        EmbeddingBackfillService backfill = MakeRecordingBackfill(fixture);
+
+        await backfill.RunAsync();
+
+        Assert.That(await EmbeddedIds(fixture), Is.EqualTo(new[] { json, upper, spaced }));
+    }
+
+    [Test, Parallelizable]
+    public async Task RowChangedAfterLoad_IsNotOverwritten()
+    {
+        using DatabaseFixture fixture = new();
+        long changed = await Seed(fixture, "changed", "text/plain", Bytes(10));
+        long unchanged = await Seed(fixture, "unchanged", "text/plain", Bytes(10));
+        ListLogger<EmbeddingBackfillService> logger = new();
+        EmbeddingBackfillService backfill = MakeRecordingBackfill(fixture, async () => {
+            await fixture.EntityManager.Update<Node>()
+                                       .Set(n => n.LastUpdate == DateTime.UtcNow.AddMinutes(5))
+                                       .Where(n => n.Id == changed)
+                                       .ExecuteAsync();
+        }, logger);
+
+        await backfill.RunAsync();
+
+        Assert.That(await EmbeddedIds(fixture), Is.EqualTo(new[] { unchanged }));
+        Assert.That(logger.Messages, Has.Some.Contains("event=backfill.complete embedded=1 skipped_changed=1 total=2"));
+    }
+
+    [Test, Parallelizable]
+    public async Task RunAsync_UnchangedRows_LogsEmbeddedSkippedChangedTotalAndElapsed()
+    {
+        using DatabaseFixture fixture = new();
+        await Seed(fixture, "one", null, null);
+        await Seed(fixture, "two", null, null);
+        ListLogger<EmbeddingBackfillService> logger = new();
+        EmbeddingBackfillService backfill = MakeRecordingBackfill(fixture, logger: logger);
+
+        await backfill.RunAsync();
+
+        Assert.That(logger.Messages, Has.Some.Matches<string>(m => m.StartsWith("event=backfill.complete embedded=2 skipped_changed=0 total=2 elapsed=")));
     }
 }
