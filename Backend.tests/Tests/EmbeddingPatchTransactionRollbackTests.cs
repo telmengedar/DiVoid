@@ -93,9 +93,7 @@ public class EmbeddingPatchTransactionRollbackTests
 
 
     /// <summary>
-    /// non-name PATCH does not enter the embedding branch regardless of the capability flag —
-    /// confirming the fault in the rollback test is caused by the embedding path, not by some
-    /// other transaction issue.
+    /// a non-name PATCH succeeds with the embedding capability enabled
     /// </summary>
     [Test, Parallelizable]
     public async Task Patch_NonNameField_EmbeddingCapabilityEnabled_NoThrow()

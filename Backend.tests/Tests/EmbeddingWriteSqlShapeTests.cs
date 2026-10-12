@@ -120,7 +120,9 @@ public class EmbeddingWriteSqlShapeTests
 
     static string[] EmbeddedTexts(Mock<IDBClient> client)
     {
-        return client.Invocations.Where(invocation => invocation.Arguments.OfType<string>().FirstOrDefault()?.StartsWith("UPDATE node SET \"embedding\" = subvector") == true)
+        return client.Invocations.Where(invocation => invocation.Arguments.OfType<string>().FirstOrDefault()?.StartsWith("UPDATE node SET \"embedding\" = ") == true
+                                                                  && !invocation.Arguments.OfType<string>().First().StartsWith("UPDATE node SET \"embedding\" = @")
+                                                                  && !invocation.Arguments.OfType<string>().First().StartsWith("UPDATE node SET \"embedding\" = NULL"))
                      .SelectMany(invocation => invocation.Arguments.OfType<IEnumerable<object>>().First())
                      .OfType<string>()
                      .Where(text => text != TextContentTypePredicate.EmbeddingModel)
@@ -265,14 +267,14 @@ public class EmbeddingWriteSqlShapeTests
     }
 
     [Test, Parallelizable]
-    [Description("DiVoid #16207: a name patch cuts the content to the composer budget so the text including the name stays within the maximum length")]
-    public async Task PatchName_ContentLongerThanBudget_EmbedsComposerTruncation()
+    [Description("DiVoid #16207: a name patch of content which pushes the composed input over the maximum embeds the content windows")]
+    public async Task PatchName_ContentLongerThanBudget_EmbedsWindows()
     {
         string content = new('x', EmbeddingInputComposer.MaxLength);
 
         string[] patched = await PatchNameEmbeddedTexts("ab", "text/markdown", Encoding.UTF8.GetBytes(content));
 
-        Assert.That(patched, Is.EqualTo(new[] { "ab\n\n" + new string('x', EmbeddingInputComposer.MaxLength - 4) }));
+        Assert.That(patched, Is.EqualTo(new[] { "ab\n\n" + new string('x', EmbeddingInputComposer.WindowLength), "ab\n\n" + new string('x', EmbeddingInputComposer.MaxLength - EmbeddingInputComposer.WindowStride) }));
     }
 
     [Test, Parallelizable]
@@ -488,5 +490,75 @@ public class EmbeddingWriteSqlShapeTests
 
         string[] selects = Statements(client).Where(sql => sql.StartsWith("SELECT") && sql.Contains("FROM node")).ToArray();
         Assert.That(selects, Has.Length.EqualTo(1).And.All.EndsWith("ORDER BY \"id\""));
+    }
+
+    static readonly Regex WindowFold = new(@"^UPDATE node SET ""embedding"" = l2_normalize \( vector_add \( .* \) \) WHERE ", RegexOptions.Compiled | RegexOptions.Singleline);
+
+    static string LongContent => new('x', 20000);
+
+    static void AssertWindowFold(Mock<IDBClient> client, int expectedWindows)
+    {
+        string[] updates = EmbeddingUpdates(client);
+        Assert.Multiple(() => {
+            Assert.That(updates, Has.Length.EqualTo(1));
+            Assert.That(updates[0], Does.Match(WindowFold));
+            Assert.That(Regex.Matches(updates[0], @"embedding \( gemini-embedding-001").Count, Is.EqualTo(expectedWindows));
+            Assert.That(EmbeddedTexts(client), Has.Length.EqualTo(expectedWindows).And.All.StartWith("named\n\n"));
+        });
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16207: a content upload of a long node writes the normalised fold over one embedding per window")]
+    public async Task UploadContent_LongContent_WritesWindowFold()
+    {
+        Mock<IDBClient> client = CreateClient(() => NameTable("named"));
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true));
+
+        await service.UploadContent(5, "text/markdown", new MemoryStream(Encoding.UTF8.GetBytes(LongContent)), callerId: 0, isAdmin: true);
+
+        AssertWindowFold(client, 5);
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16207: a content patch of a long node writes the normalised fold over one embedding per window")]
+    public async Task PatchContent_LongContent_WritesWindowFold()
+    {
+        Mock<IDBClient> client = CreateClient(() => NodeFields("named", "text/markdown", Encoding.UTF8.GetBytes(LongContent)));
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true));
+
+        await service.PatchContent(5, [new ContentEdit { Unit = ContentEditUnit.Char, Start = 0, Length = 0, Value = "y" }], callerId: 0, isAdmin: true, CancellationToken.None);
+
+        AssertWindowFold(client, 5);
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16207: the backfill of a long node writes the normalised fold over one embedding per window")]
+    public async Task Backfill_LongContent_WritesWindowFold()
+    {
+        DataTable candidates = new();
+        candidates.Columns.Add("id", typeof(long));
+        candidates.Columns.Add("name", typeof(string));
+        candidates.Columns.Add("contenttype", typeof(string));
+        candidates.Columns.Add("content", typeof(byte[]));
+        candidates.Columns.Add("lastupdate", typeof(DateTime));
+        candidates.Rows.Add(5L, "named", "text/markdown", Encoding.UTF8.GetBytes(LongContent), DateTime.UtcNow);
+        Mock<IDBClient> client = CreateClient(() => candidates);
+        EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), NullLogger<EmbeddingBackfillService>.Instance);
+
+        await backfill.RunAsync();
+
+        AssertWindowFold(client, 5);
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #16207: a name patch of a long node writes the normalised fold over one embedding per window")]
+    public async Task PatchName_LongContent_WritesWindowFold()
+    {
+        Mock<IDBClient> client = CreateClient(() => NodeFields("named", "text/markdown", Encoding.UTF8.GetBytes(LongContent)));
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true));
+
+        await service.Patch(5, [new PatchOperation { Op = "replace", Path = "/name", Value = "named" }], callerId: 0, isAdmin: true, CancellationToken.None);
+
+        AssertWindowFold(client, 5);
     }
 }
