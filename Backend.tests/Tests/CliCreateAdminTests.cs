@@ -15,11 +15,7 @@ using NUnit.Framework;
 namespace Backend.tests.Tests;
 
 /// <summary>
-/// Tests for the CLI create-admin happy path and error paths.
-///
-/// We test at the service layer rather than via <see cref="Backend.Cli.CliDispatcher"/> because
-/// the dispatcher calls <c>Environment.Exit</c>, which would kill the test process.
-/// Instead we exercise exactly the operations the dispatcher performs, verifying the end state.
+/// tests for the operations the CLI create-admin verb performs, at the service layer
 /// </summary>
 [TestFixture]
 public class CliCreateAdminTests

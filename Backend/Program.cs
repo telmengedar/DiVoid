@@ -11,7 +11,7 @@ using Microsoft.Extensions.Hosting;
 bool isCli = args.Length > 0 && !args[0].StartsWith("--");
 
 if (isCli) {
-    await CliDispatcher.RunAsync(args);
+    Environment.ExitCode = await CliDispatcher.RunAsync(args);
 } else {
     Host.CreateDefaultBuilder(args)
         .ConfigureWebHostDefaults(webBuilder => {
