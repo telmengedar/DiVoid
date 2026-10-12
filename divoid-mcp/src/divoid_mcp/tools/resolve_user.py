@@ -17,11 +17,11 @@ then call this tool with the agent's node-id. The returned user-id is the
 messaging recipient. A human's own user-id is never the recipient — humans do
 not poll the inbox.
 
-The 404 response is collapsed by the API: it means either the node does not exist
-OR the node exists but has no User record linked to it via User.HomeNodeId. If you
-need to distinguish, call divoid_get_node first — 200 there + 404 here means
-"node exists, no user binding yet." Surface that as a binding-gap rather than
-falling back to addressing a human's user-id or guessing.
+The 404 response means no User record has this node as its HomeNodeId. The lookup
+does not check the node itself and applies no per-node access check, so a node that does not
+exist gives the same 404. To tell the two apart, call divoid_get_node first — 200
+there + 404 here means "node exists, no user binding yet." Surface that as a
+binding-gap rather than falling back to addressing a human's user-id or guessing.
 """
 
 from __future__ import annotations
@@ -47,8 +47,9 @@ responsible for the topic, find the notifier agent linked to that human, \
 resolve THAT agent's node-id here, then send to the resolved user-id. A \
 human's own user-id is never the right messaging recipient — humans do not \
 poll the inbox. \
-A 404 means either the node doesn't exist or it has no User binding yet (the API \
-collapses both); surface that as a binding-gap rather than falling back to a guess.\
+A 404 means no User is bound to the node; the lookup does not check the node itself \
+and applies no per-node access check, so a missing node gives the same answer. Surface that as a \
+binding-gap rather than falling back to a guess.\
 """
 
 
@@ -71,14 +72,19 @@ async def _execute(node_id: int, config: "DivoidConfig") -> dict[str, Any]:
 
     if not result.ok:
         code, msg = map_http_error(
-            result.status, result.body, config.api_key, f"resolve user for node #{node_id}"
+            result.status, result.body, config.api_key, f"resolve user for node #{node_id}",
+            (
+                f"No user is bound to node #{node_id}: no User record has this node as its "
+                "home node. This lookup does not check the node itself, so a node that does "
+                "not exist gives the same answer; divoid_get_node tells the two apart. Treat "
+                "this as a binding gap, not as a reason to fall back to a guessed or human "
+                "user-id."
+            ),
         )
         logger.info(
             "divoid_resolve_user node_id=%d err=%s status=%d",
             node_id, code, result.status,
         )
-        # Surface the original 404 envelope without over-disambiguation — the API
-        # intentionally collapses "no such node" and "node has no User binding".
         return {"isError": True, "content": make_error_content(code, msg)}
 
     try:

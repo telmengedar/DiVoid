@@ -25,7 +25,8 @@ back which end is actually source.
 
 Unlike divoid_unlink_nodes, a missing edge is a hard 404 (node_not_found via
 the standard error mapper), not an idempotent no-op -- there is nothing
-sensible to patch on an edge that does not exist.
+sensible to patch on an edge that does not exist. The 404 message tells a
+missing edge apart from a source node the caller cannot write.
 
 At least one of link_type/context/clear_context must be provided -- the
 invariant guard fires before any HTTP call with code 'no_fields_to_patch'.
@@ -43,7 +44,13 @@ import mcp.server.fastmcp as fastmcp
 
 from .. import http_client
 from ..config import DivoidConfig
-from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
+from ..errors import (
+    InvariantViolation,
+    backend_error_text,
+    make_error_content,
+    map_http_error,
+    map_unreachable,
+)
 from ._link_details import normalize_link_detail
 
 logger = logging.getLogger(__name__)
@@ -60,8 +67,9 @@ clear_link_type -- LinkType is non-nullable on the server). context is a \
 free-text label read source_id -> target_id; use clear_context=True to set it \
 to NULL. At least one of link_type, context, or clear_context must be provided \
 (invariant guard: no_fields_to_patch). A missing edge is a hard 404 \
-(node_not_found) -- not a silent no-op, unlike divoid_unlink_nodes. Returns the \
-patched edge normalized to {source_id, target_id, link_type, context}, in its \
+(node_not_found) -- not a silent no-op, unlike divoid_unlink_nodes -- and its \
+message distinguishes a missing edge from a source node the caller cannot write. \
+Returns the patched edge normalized to {source_id, target_id, link_type, context}, in its \
 true stored orientation.\
 """
 
@@ -125,8 +133,17 @@ async def _execute(
         return {"isError": True, "content": make_error_content(code, msg)}
 
     if not result.ok:
+        explanation = None
+        if result.status == 404 and "No link between" in backend_error_text(result.body):
+            explanation = (
+                f"No edge exists between node #{source_id} and node #{target_id} in either "
+                f"orientation. Node #{source_id} exists and the caller may write it; node "
+                f"#{target_id} is not checked on its own, so a wrong target id also produces "
+                "this answer. divoid_get_links shows the edges that exist; divoid_link_nodes "
+                "creates one."
+            )
         code, msg = map_http_error(
-            result.status, result.body, config.api_key, "divoid_patch_link"
+            result.status, result.body, config.api_key, "divoid_patch_link", explanation
         )
         logger.info(
             "divoid_patch_link source=%d target=%d err=%s status=%d",
@@ -189,7 +206,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         (invariant guard: no_fields_to_patch). A missing edge between
         source_id and target_id returns a hard 404 (node_not_found) --
         unlike divoid_unlink_nodes, this is not treated as an idempotent
-        no-op.
+        no-op. The message distinguishes a missing edge from a source node
+        the caller cannot write.
         """
         if source_id < 1:
             return {

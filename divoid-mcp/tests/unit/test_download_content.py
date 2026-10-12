@@ -457,3 +457,36 @@ async def test_no_usable_root_returns_file_root_unusable(server: FastMCP, tmp_pa
     assert not http_called
     text = result.get("content", [{}])[0].get("text", "")
     assert "file_root_unusable" in text, f"Expected 'file_root_unusable', got: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_download_content_404_uses_shared_message(server: FastMCP, tmp_path: Any) -> None:
+    target = tmp_path / "missing.bin"
+    body = f'{{"code":"data_entitynotfound","text":"\'Node\' with id \'{_NODE_ID}\' not found"}}'.encode()
+
+    with respx.mock(assert_all_called=True) as mock:
+        mock.get(_CONTENT_URL).mock(return_value=httpx.Response(404, content=body))
+        result = await _call(server, {"node_id": _NODE_ID, "path": str(target)})
+
+    assert result.get("isError") is True
+    text = result["content"][0]["text"]
+    assert "node_not_found" in text
+    assert "caller's access" in text
+    assert not target.exists()
+
+
+@pytest.mark.asyncio
+async def test_download_content_404_unparseable_uses_shared_message(
+    server: FastMCP, tmp_path: Any
+) -> None:
+    target = tmp_path / "unparseable.bin"
+
+    with respx.mock(assert_all_called=True) as mock:
+        mock.get(_CONTENT_URL).mock(return_value=httpx.Response(404, content=b"<html>not json</html>"))
+        result = await _call(server, {"node_id": _NODE_ID, "path": str(target)})
+
+    assert result.get("isError") is True
+    text = result["content"][0]["text"]
+    assert "node_not_found" in text
+    assert "caller's access" in text
+    assert not target.exists()

@@ -46,9 +46,26 @@ import mcp.server.fastmcp as fastmcp
 
 from .. import http_client
 from ..config import DivoidConfig
-from ..errors import InvariantViolation, make_error_content, map_http_error, map_unreachable
+from ..errors import (
+    InvariantViolation,
+    backend_error_text,
+    make_error_content,
+    map_http_error,
+    map_unreachable,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _no_content_explanation(status: int, body: bytes, node_id: int) -> str | None:
+    """The 404 explanation for a node that exists but has no body, else None."""
+    if status == 404 and "has no content" in backend_error_text(body):
+        return (
+            f"Node #{node_id} exists but has no content, and divoid_edit_content only edits "
+            "an existing body. Use divoid_set_content to write the first body."
+        )
+    return None
+
 
 _TOOL_DESCRIPTION = """\
 Apply one or more partial edits to a DiVoid node's text content in a single atomic \
@@ -82,8 +99,9 @@ node content once to determine current length; all appends in a batch share that
 pre-read. Example: {"op": "append", "value": "\\n## New Section\\n"}
 
 Returns the updated NodeDetails on success. 400 from the server means bad addressing \
-(overlap, out-of-bounds, non-text content, or empty batch); 404 means missing node or \
-no content set.\
+(overlap, out-of-bounds, non-text content, or empty batch); 404 means missing node, \
+no write access to it, or a node with no content to edit (use divoid_set_content to \
+write the first body).\
 """
 
 _ALLOWED_KEYS: dict[str, frozenset[str]] = {
@@ -260,6 +278,7 @@ async def _execute(
             code, msg = map_http_error(
                 get_result.status, get_result.body, config.api_key,
                 f"GET content pre-read for append on node #{id}",
+                _no_content_explanation(get_result.status, get_result.body, id),
             )
             logger.warning("divoid_edit_content id=%d append pre-read err=%s status=%d", id, code, get_result.status)
             return {"isError": True, "content": make_error_content(code, msg)}
@@ -332,6 +351,7 @@ async def _execute(
         code, msg = map_http_error(
             result.status, result.body, config.api_key,
             f"PATCH content on node #{id}",
+            _no_content_explanation(result.status, result.body, id),
         )
         logger.info("divoid_edit_content id=%d err=%s status=%d", id, code, result.status)
         return {"isError": True, "content": make_error_content(code, msg)}
