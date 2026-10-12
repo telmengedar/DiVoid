@@ -38,7 +38,7 @@ public static class CliDispatcher {
         }
     }
 
-    static async Task<int> BackfillEmbeddingsAsync(string[] args) {
+    static Task<int> BackfillEmbeddingsAsync(string[] args) {
         long[] ids = null;
         bool longOnly = false;
 
@@ -53,48 +53,30 @@ public static class CliDispatcher {
                     break;
                 default:
                     Console.Error.WriteLine($"error: unsupported or invalid argument '{args[i]}' for backfill-embeddings. Usage: backfill-embeddings [--ids <id,id,...>] [--long-only]");
-                    return 1;
+                    return Task.FromResult(1);
             }
         }
 
-        IServiceCollection services = new ServiceCollection();
+        return RunWithContainerAsync(
+            (services, configuration) => {
+                bool embeddingEnabled = configuration["Database:Type"] != "Sqlite";
+                services.AddSingleton<IEmbeddingCapability>(new EmbeddingCapability(embeddingEnabled));
+                services.AddTransient<EmbeddingBackfillService>();
+            },
+            async provider => {
+                EmbeddingBackfillService backfill = provider.GetRequiredService<EmbeddingBackfillService>();
+                ILogger logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("CliDispatcher");
 
-        IConfiguration configuration = new ConfigurationBuilder()
-            .AddJsonFile("appsettings.json", optional: true)
-            .AddEnvironmentVariables()
-            .Build();
-
-        services.AddSingleton(configuration);
-        services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Information));
-        services.ConfigureDatabaseService(configuration);
-
-        bool embeddingEnabled = configuration["Database:Type"] != "Sqlite";
-        services.AddSingleton<IEmbeddingCapability>(new EmbeddingCapability(embeddingEnabled));
-        services.AddTransient<EmbeddingBackfillService>();
-
-        await using ServiceProvider provider = services.BuildServiceProvider();
-
-        // Ensure schema exists
-        Init.DatabaseModelService schemaSvc = new(provider.GetRequiredService<Pooshit.Ocelot.Entities.IEntityManager>());
-        try {
-            await schemaSvc.StartAsync(default);
-        } catch (Exception ex) {
-            Console.Error.WriteLine($"error: failed to initialise database schema: {ex.Message}");
-            return 1;
-        }
-
-        EmbeddingBackfillService backfill = provider.GetRequiredService<EmbeddingBackfillService>();
-        ILogger logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("CliDispatcher");
-
-        try {
-            await backfill.RunAsync(ids, longOnly);
-            logger.LogInformation("event=cli.backfill-embeddings exitCode=0");
-            return 0;
-        } catch (Exception ex) {
-            Console.Error.WriteLine($"error: {ex.Message}");
-            logger.LogError(ex, "event=cli.backfill-embeddings exitCode=1");
-            return 1;
-        }
+                try {
+                    await backfill.RunAsync(ids, longOnly);
+                    logger.LogInformation("event=cli.backfill-embeddings exitCode=0");
+                    return 0;
+                } catch (Exception ex) {
+                    Console.Error.WriteLine($"error: {ex.Message}");
+                    logger.LogError(ex, "event=cli.backfill-embeddings exitCode=1");
+                    return 1;
+                }
+            });
     }
 
     static bool TryParseIds(string value, out long[] ids) {
@@ -111,46 +93,27 @@ public static class CliDispatcher {
         return true;
     }
 
-    static async Task<int> LayoutNodesAsync() {
-        IServiceCollection services = new ServiceCollection();
+    static Task<int> LayoutNodesAsync() {
+        return RunWithContainerAsync(
+            (services, _) => services.AddTransient<LayoutNodesService>(),
+            async provider => {
+                LayoutNodesService layoutService = provider.GetRequiredService<LayoutNodesService>();
+                ILogger logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("CliDispatcher");
 
-        IConfiguration configuration = new ConfigurationBuilder()
-            .AddJsonFile("appsettings.json", optional: true)
-            .AddEnvironmentVariables()
-            .Build();
-
-        services.AddSingleton(configuration);
-        services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Information));
-        services.ConfigureDatabaseService(configuration);
-        services.AddTransient<LayoutNodesService>();
-
-        await using ServiceProvider provider = services.BuildServiceProvider();
-
-        // Ensure schema exists
-        Init.DatabaseModelService schemaSvc = new(provider.GetRequiredService<Pooshit.Ocelot.Entities.IEntityManager>());
-        try {
-            await schemaSvc.StartAsync(default);
-        } catch (Exception ex) {
-            Console.Error.WriteLine($"error: failed to initialise database schema: {ex.Message}");
-            return 1;
-        }
-
-        LayoutNodesService layoutService = provider.GetRequiredService<LayoutNodesService>();
-        ILogger logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("CliDispatcher");
-
-        try {
-            await layoutService.RunAsync();
-            logger.LogInformation("event=cli.layout-nodes exitCode=0");
-            return 0;
-        } catch (Exception ex) {
-            Console.Error.WriteLine($"error: {ex.Message}");
-            logger.LogError(ex, "event=cli.layout-nodes exitCode=1");
-            return 1;
-        }
+                try {
+                    await layoutService.RunAsync();
+                    logger.LogInformation("event=cli.layout-nodes exitCode=0");
+                    return 0;
+                } catch (Exception ex) {
+                    Console.Error.WriteLine($"error: {ex.Message}");
+                    logger.LogError(ex, "event=cli.layout-nodes exitCode=1");
+                    return 1;
+                }
+            });
     }
 
 
-    static async Task<int> CreateAdminAsync(string[] args) {
+    static Task<int> CreateAdminAsync(string[] args) {
         string name = null;
         string email = null;
 
@@ -167,9 +130,53 @@ public static class CliDispatcher {
 
         if (string.IsNullOrWhiteSpace(name)) {
             Console.Error.WriteLine("error: --name is required for create-admin");
-            return 1;
+            return Task.FromResult(1);
         }
 
+        return RunWithContainerAsync(
+            (services, _) => {
+                services.AddTransient<IKeyGenerator, KeyGenerator>();
+                services.AddTransient<IUserService, UserService>();
+                services.AddTransient<IApiKeyService, ApiKeyService>();
+            },
+            async provider => {
+                IUserService userService = provider.GetRequiredService<IUserService>();
+                IApiKeyService apiKeyService = provider.GetRequiredService<IApiKeyService>();
+                ILogger logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("CliDispatcher");
+
+                try {
+                    UserDetails user = await userService.CreateUser(new UserParameters { Name = name, Email = email });
+                    ApiKeyDetails key = await apiKeyService.CreateApiKey(new ApiKeyParameters {
+                        UserId = user.Id,
+                        Permissions = ["admin", "write", "read"]
+                    });
+
+                    logger.LogInformation("event=cli.create-admin userId={UserId} keyId={KeyId} exitCode=0", user.Id, key.KeyId);
+
+                    Console.WriteLine($"Admin user created:  id={user.Id} name={user.Name}");
+                    Console.WriteLine($"Admin key created:   id={key.Id} keyId={key.KeyId}");
+                    Console.WriteLine($"Key (store now — unrecoverable): {key.PlaintextKey}");
+                    return 0;
+                } catch (MissingPepperException ex) {
+                    Console.Error.WriteLine($"error: {ex.Message}");
+                    logger.LogError("event=cli.create-admin exitCode=1 reason=missing_pepper");
+                    return 1;
+                } catch (Exception ex) {
+                    Console.Error.WriteLine($"error: {ex.Message}");
+                    logger.LogError(ex, "event=cli.create-admin exitCode=1");
+                    return 1;
+                }
+            });
+    }
+
+
+    /// <summary>
+    /// builds the verb container, initialises the schema and runs <paramref name="job"/> before the provider scope closes
+    /// </summary>
+    /// <param name="register">adds the verb-specific registrations</param>
+    /// <param name="job">the verb's work; its result is the exit code</param>
+    /// <returns>exit code of the verb, 1 if the schema could not be initialised</returns>
+    static async Task<int> RunWithContainerAsync(Action<IServiceCollection, IConfiguration> register, Func<IServiceProvider, Task<int>> job) {
         IServiceCollection services = new ServiceCollection();
 
         IConfiguration configuration = new ConfigurationBuilder()
@@ -180,15 +187,10 @@ public static class CliDispatcher {
         services.AddSingleton(configuration);
         services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Information));
         services.ConfigureDatabaseService(configuration);
-
-        // Register auth services — ApiKeyService validates pepper in its constructor
-        services.AddTransient<IKeyGenerator, KeyGenerator>();
-        services.AddTransient<IUserService, UserService>();
-        services.AddTransient<IApiKeyService, ApiKeyService>();
+        register(services, configuration);
 
         await using ServiceProvider provider = services.BuildServiceProvider();
 
-        // Ensure schema exists
         Init.DatabaseModelService schemaSvc = new(provider.GetRequiredService<Pooshit.Ocelot.Entities.IEntityManager>());
         try {
             await schemaSvc.StartAsync(default);
@@ -197,31 +199,6 @@ public static class CliDispatcher {
             return 1;
         }
 
-        IUserService userService = provider.GetRequiredService<IUserService>();
-        IApiKeyService apiKeyService = provider.GetRequiredService<IApiKeyService>();
-        ILogger logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("CliDispatcher");
-
-        try {
-            UserDetails user = await userService.CreateUser(new UserParameters { Name = name, Email = email });
-            ApiKeyDetails key = await apiKeyService.CreateApiKey(new ApiKeyParameters {
-                UserId = user.Id,
-                Permissions = ["admin", "write", "read"]
-            });
-
-            logger.LogInformation("event=cli.create-admin userId={UserId} keyId={KeyId} exitCode=0", user.Id, key.KeyId);
-
-            Console.WriteLine($"Admin user created:  id={user.Id} name={user.Name}");
-            Console.WriteLine($"Admin key created:   id={key.Id} keyId={key.KeyId}");
-            Console.WriteLine($"Key (store now — unrecoverable): {key.PlaintextKey}");
-            return 0;
-        } catch (MissingPepperException ex) {
-            Console.Error.WriteLine($"error: {ex.Message}");
-            logger.LogError("event=cli.create-admin exitCode=1 reason=missing_pepper");
-            return 1;
-        } catch (Exception ex) {
-            Console.Error.WriteLine($"error: {ex.Message}");
-            logger.LogError(ex, "event=cli.create-admin exitCode=1");
-            return 1;
-        }
+        return await job(provider);
     }
 }
