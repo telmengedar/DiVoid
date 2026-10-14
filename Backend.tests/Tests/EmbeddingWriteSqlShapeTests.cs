@@ -350,7 +350,7 @@ public class EmbeddingWriteSqlShapeTests
         candidates.Columns.Add("lastupdate", typeof(DateTime));
         candidates.Rows.Add(5L, "   ", DBNull.Value, DBNull.Value, DateTime.UtcNow);
         Mock<IDBClient> client = CreateClient(() => candidates);
-        EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), NullLogger<EmbeddingBackfillService>.Instance, EmbeddingProducers.Function);
+        EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), new Mock<IEmbeddingModelGuard>().Object, NullLogger<EmbeddingBackfillService>.Instance, EmbeddingProducers.Function);
 
         await backfill.RunAsync();
 
@@ -429,7 +429,7 @@ public class EmbeddingWriteSqlShapeTests
         candidates.Columns.Add("lastupdate", typeof(DateTime));
         candidates.Rows.Add(5L, "named", "text/markdown", Encoding.UTF8.GetBytes("body"), DateTime.UtcNow);
         Mock<IDBClient> client = CreateClient(() => candidates);
-        EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), NullLogger<EmbeddingBackfillService>.Instance, EmbeddingProducers.Function);
+        EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), new Mock<IEmbeddingModelGuard>().Object, NullLogger<EmbeddingBackfillService>.Instance, EmbeddingProducers.Function);
 
         await backfill.RunAsync();
 
@@ -448,7 +448,7 @@ public class EmbeddingWriteSqlShapeTests
         candidates.Columns.Add("lastupdate", typeof(DateTime));
         candidates.Rows.Add(5L, "named", "text/markdown", Encoding.UTF8.GetBytes("body"), DateTime.UtcNow);
         Mock<IDBClient> client = CreateClient(() => candidates);
-        EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), NullLogger<EmbeddingBackfillService>.Instance, EmbeddingProducers.Function);
+        EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), new Mock<IEmbeddingModelGuard>().Object, NullLogger<EmbeddingBackfillService>.Instance, EmbeddingProducers.Function);
 
         await backfill.RunAsync();
 
@@ -467,7 +467,7 @@ public class EmbeddingWriteSqlShapeTests
         candidates.Columns.Add("lastupdate", typeof(DateTime));
         candidates.Rows.Add(5L, "named", "text/markdown", Encoding.UTF8.GetBytes("body"), DateTime.UtcNow);
         Mock<IDBClient> client = CreateClient(() => candidates);
-        EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), NullLogger<EmbeddingBackfillService>.Instance, EmbeddingProducers.Function);
+        EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), new Mock<IEmbeddingModelGuard>().Object, NullLogger<EmbeddingBackfillService>.Instance, EmbeddingProducers.Function);
 
         await backfill.RunAsync();
 
@@ -485,7 +485,7 @@ public class EmbeddingWriteSqlShapeTests
         candidates.Columns.Add("content", typeof(byte[]));
         candidates.Columns.Add("lastupdate", typeof(DateTime));
         Mock<IDBClient> client = CreateClient(() => candidates);
-        EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), NullLogger<EmbeddingBackfillService>.Instance, EmbeddingProducers.Function);
+        EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), new Mock<IEmbeddingModelGuard>().Object, NullLogger<EmbeddingBackfillService>.Instance, EmbeddingProducers.Function);
 
         await backfill.RunAsync();
 
@@ -544,7 +544,7 @@ public class EmbeddingWriteSqlShapeTests
         candidates.Columns.Add("lastupdate", typeof(DateTime));
         candidates.Rows.Add(5L, "named", "text/markdown", Encoding.UTF8.GetBytes(LongContent), DateTime.UtcNow);
         Mock<IDBClient> client = CreateClient(() => candidates);
-        EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), NullLogger<EmbeddingBackfillService>.Instance, EmbeddingProducers.Function);
+        EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), new Mock<IEmbeddingModelGuard>().Object, NullLogger<EmbeddingBackfillService>.Instance, EmbeddingProducers.Function);
 
         await backfill.RunAsync();
 

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using Backend.Init;
 using Backend.Models.Auth;
 using Backend.Models.Nodes;
@@ -45,7 +46,7 @@ public sealed class DatabaseFixture : IDisposable
 
     async Task ApplySchema()
     {
-        DatabaseModelService svc = new(EntityManager);
+        DatabaseModelService svc = new(EntityManager, NullLogger<DatabaseModelService>.Instance);
         await svc.StartAsync(CancellationToken.None);
     }
 

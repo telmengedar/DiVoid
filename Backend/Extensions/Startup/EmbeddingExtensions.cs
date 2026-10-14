@@ -8,7 +8,7 @@ namespace Backend.Extensions.Startup;
 public static class EmbeddingExtensions {
 
     /// <summary>
-    /// registers the embedding capability, enabled for every database type except SQLite, and the embedding producer
+    /// registers the embedding capability, enabled for every database type except SQLite, the embedding producer and the model guard
     /// </summary>
     /// <param name="services">service collection to add the embedding services to</param>
     /// <param name="configuration">app configuration</param>
@@ -17,6 +17,7 @@ public static class EmbeddingExtensions {
         bool embeddingEnabled = configuration["Database:Type"] != "Sqlite";
         services.AddSingleton<IEmbeddingCapability>(new EmbeddingCapability(embeddingEnabled));
         services.AddSingleton<IEmbeddingProducer, PostgresFunctionEmbeddingProducer>();
+        services.AddTransient<IEmbeddingModelGuard, EmbeddingModelGuard>();
         return services;
     }
 }

@@ -17,12 +17,13 @@ namespace Backend.Services.Embeddings;
 /// Postgres-only: if <see cref="IEmbeddingCapability.IsEnabled"/> is false the method
 /// exits immediately with a log message and no database writes.
 /// </summary>
-public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapability embeddingCapability, ILogger<EmbeddingBackfillService> logger, IEmbeddingProducer embeddingProducer) {
+public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapability embeddingCapability, IEmbeddingModelGuard modelGuard, ILogger<EmbeddingBackfillService> logger, IEmbeddingProducer embeddingProducer) {
 
     const int ProgressInterval = 25;
 
     readonly IEntityManager database = database;
     readonly IEmbeddingCapability embeddingCapability = embeddingCapability;
+    readonly IEmbeddingModelGuard modelGuard = modelGuard;
     readonly ILogger<EmbeddingBackfillService> logger = logger;
     readonly IEmbeddingProducer embeddingProducer = embeddingProducer;
 
@@ -59,6 +60,8 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
             logger.LogInformation("event=backfill.skip reason=capability_disabled message=\"embedding capability is disabled; backfill is a no-op\"");
             return;
         }
+
+        await modelGuard.EnsureAsync(embeddingProducer.Model);
 
         logger.LogInformation("event=backfill.start version=v2 composition=name_plus_content");
         DateTimeOffset started = DateTimeOffset.UtcNow;

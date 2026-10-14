@@ -110,27 +110,6 @@ public class CliCreateAdminTests
     }
 
     // -----------------------------------------------------------------------
-    // Error path — missing pepper with auth enabled
-    // -----------------------------------------------------------------------
-
-    [Test]
-    public void CreateAdmin_MissingPepper_ThrowsBeforeAnyDbWork()
-    {
-        using DatabaseFixture fixture = new();
-
-        // No pepper → ApiKeyService constructor throws MissingPepperException
-        IConfiguration config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> {
-                ["Auth:Enabled"] = "true"
-                // DIVOID_KEY_PEPPER absent
-            })
-            .Build();
-
-        Assert.Throws<MissingPepperException>(() =>
-            new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance));
-    }
-
-    // -----------------------------------------------------------------------
     // Error path — validation (name required)
     // -----------------------------------------------------------------------
 

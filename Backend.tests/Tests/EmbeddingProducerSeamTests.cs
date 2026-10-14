@@ -160,7 +160,7 @@ public class EmbeddingProducerSeamTests
     {
         RecordingEmbeddingProducer producer = new();
         Mock<IDBClient> client = CreateClient(_ => CandidateTable());
-        EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), NullLogger<EmbeddingBackfillService>.Instance, producer);
+        EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), new Mock<IEmbeddingModelGuard>().Object, NullLogger<EmbeddingBackfillService>.Instance, producer);
 
         await backfill.RunAsync();
 

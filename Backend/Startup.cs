@@ -228,6 +228,7 @@ public class Startup
         }
 
         services.AddHostedService<DatabaseModelService>();
+        services.AddHostedService<EmbeddingModelGuardService>();
         services.AddHostedService<StartupWarningService>();
     }
 
