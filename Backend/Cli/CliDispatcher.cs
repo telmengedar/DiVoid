@@ -61,6 +61,7 @@ public static class CliDispatcher {
             (services, configuration) => {
                 bool embeddingEnabled = configuration["Database:Type"] != "Sqlite";
                 services.AddSingleton<IEmbeddingCapability>(new EmbeddingCapability(embeddingEnabled));
+                services.AddTransient<IEmbeddingModelGuard, EmbeddingModelGuard>();
                 services.AddTransient<EmbeddingBackfillService>();
             },
             async provider => {

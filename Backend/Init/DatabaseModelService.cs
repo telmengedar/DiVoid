@@ -1,3 +1,4 @@
+using Backend.Models;
 using Backend.Models.Auth;
 using Backend.Models.Messages;
 using Backend.Models.Nodes;
@@ -42,6 +43,7 @@ public class DatabaseModelService : IHostedService {
         await schemaService.CreateOrUpdateSchema<NodeLink>(transaction);
         await schemaService.CreateOrUpdateSchema<NodeType>(transaction);
         await schemaService.CreateOrUpdateSchema<Message>(transaction);
+        await schemaService.CreateOrUpdateSchema<Metadata>(transaction);
 
         DateTime backfillNow = DateTime.UtcNow;
         await database.Update<Node>()

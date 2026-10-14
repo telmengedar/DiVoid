@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using Pooshit.Http;
 
@@ -20,10 +22,12 @@ public static class TestSetup
     /// auth disabled, in-memory SQLite database, no external dependencies
     /// </summary>
     /// <param name="dbSuffix">optional suffix to distinguish database instances across fixtures</param>
+    /// <param name="databasePath">optional database file, overriding the path derived from <paramref name="dbSuffix"/></param>
+    /// <param name="configureServices">optional replacement of registrations after the application registered its own</param>
     /// <returns>configured factory ready for <see cref="HttpServiceFor"/></returns>
-    public static WebApplicationFactory<Program> CreateTestFactory(string? dbSuffix = null)
+    public static WebApplicationFactory<Program> CreateTestFactory(string? dbSuffix = null, string? databasePath = null, Action<IServiceCollection>? configureServices = null)
     {
-        string dbName = $"/tmp/divoid_http_test_{dbSuffix ?? Guid.NewGuid().ToString("N")}.db3";
+        string dbName = databasePath ?? $"/tmp/divoid_http_test_{dbSuffix ?? Guid.NewGuid().ToString("N")}.db3";
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder => {
             builder.ConfigureAppConfiguration((_, config) => {
                 config.AddInMemoryCollection(new Dictionary<string, string?> {
@@ -32,6 +36,8 @@ public static class TestSetup
                     ["Database:Source"] = dbName
                 });
             });
+            if (configureServices != null)
+                builder.ConfigureTestServices(configureServices);
         });
     }
 

@@ -32,7 +32,7 @@ public class EmbeddingWindowsPostgresManualTests
         using EmbeddingPostgresDatabase database = new();
         await database.Start();
         NodeService service = new(database.Entities, new EmbeddingCapability(true));
-        EmbeddingBackfillService backfill = new(database.Entities, new EmbeddingCapability(true), NullLogger<EmbeddingBackfillService>.Instance);
+        EmbeddingBackfillService backfill = new(database.Entities, new EmbeddingCapability(true), new EmbeddingModelGuard(database.Entities, new EmbeddingCapability(true), NullLogger<EmbeddingModelGuard>.Instance), NullLogger<EmbeddingBackfillService>.Instance);
         byte[] body = "short body"u8.ToArray();
 
         NodeDetails node = await service.CreateNode(new NodeDetails { Type = "documentation", Name = "short node" }, callerId: 0);
