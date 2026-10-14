@@ -15,11 +15,11 @@ namespace Backend.tests.Tests;
 [TestFixture, Parallelizable]
 public class EmbeddingWindowsPostgresManualTests
 {
-    const string OfTextSql = "subvector(embedding(@model, @text)::vector, 1, 768)";
+    const string ProducerEmbeddingSql = "subvector(embedding(@model, @text)::vector, 1, 768)";
 
-    static bool EqualsOfText(EmbeddingPostgresDatabase database, long id, string text)
+    static bool EqualsProducerEmbedding(EmbeddingPostgresDatabase database, long id, string text)
     {
-        return database.Scalar<bool>($"SELECT embedding = {OfTextSql} FROM node WHERE id = @id",
+        return database.Scalar<bool>($"SELECT embedding = {ProducerEmbeddingSql} FROM node WHERE id = @id",
                                      ("id", id), ("model", PostgresFunctionEmbeddingProducer.ModelId), ("text", text));
     }
 
@@ -27,7 +27,7 @@ public class EmbeddingWindowsPostgresManualTests
     [Explicit("Manual Postgres test - requires POSTGRES_CONNECTION to a superuser connection with the pgvector extension available.")]
     [Category("PostgresManual")]
     [Description("DiVoid #16207: a node whose composed input fits stores exactly the single-text vector on create, upload, content patch, name patch and backfill")]
-    public async Task ShortNode_EachWritePath_StoresVectorIdenticalToOfTextOfCompose()
+    public async Task ShortNode_EachWritePath_StoresVectorIdenticalToEmbedOfCompose()
     {
         using EmbeddingPostgresDatabase database = new();
         await database.Start();
@@ -36,15 +36,15 @@ public class EmbeddingWindowsPostgresManualTests
         byte[] body = "short body"u8.ToArray();
 
         NodeDetails node = await service.CreateNode(new NodeDetails { Type = "documentation", Name = "short node" }, callerId: 0);
-        bool afterCreate = EqualsOfText(database, node.Id, "short node");
+        bool afterCreate = EqualsProducerEmbedding(database, node.Id, "short node");
         await service.UploadContent(node.Id, "text/markdown", new MemoryStream(body), callerId: 0, isAdmin: true);
-        bool afterUpload = EqualsOfText(database, node.Id, EmbeddingInputComposer.Compose("short node", body, "text/markdown"));
+        bool afterUpload = EqualsProducerEmbedding(database, node.Id, EmbeddingInputComposer.Compose("short node", body, "text/markdown"));
         await service.PatchContent(node.Id, [new ContentEdit { Unit = ContentEditUnit.Char, Start = 0, Length = 5, Value = "tiny" }], callerId: 0, isAdmin: true, CancellationToken.None);
-        bool afterContentPatch = EqualsOfText(database, node.Id, "short node\n\ntiny body");
+        bool afterContentPatch = EqualsProducerEmbedding(database, node.Id, "short node\n\ntiny body");
         await service.Patch(node.Id, [new PatchOperation { Op = "replace", Path = "/name", Value = "renamed node" }], callerId: 0, isAdmin: true, CancellationToken.None);
-        bool afterNamePatch = EqualsOfText(database, node.Id, "renamed node\n\ntiny body");
+        bool afterNamePatch = EqualsProducerEmbedding(database, node.Id, "renamed node\n\ntiny body");
         await backfill.RunAsync();
-        bool afterBackfill = EqualsOfText(database, node.Id, "renamed node\n\ntiny body");
+        bool afterBackfill = EqualsProducerEmbedding(database, node.Id, "renamed node\n\ntiny body");
 
         Assert.Multiple(() => {
             Assert.That(afterCreate, Is.True, "create");

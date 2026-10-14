@@ -41,7 +41,7 @@ public class EmbeddingExpressionTests
 
     [Test, Parallelizable]
     [Description("DiVoid #16141: the embedding of a text is cut to its leading components with subvector(..., 1, D) so writes and query vectors have the same shape")]
-    public void OfText_RendersSubvectorFromFirstComponentToDimension()
+    public void Embed_Document_RendersSubvectorFromFirstComponentToDimension()
     {
         string sql = RenderResolved();
 
@@ -50,7 +50,7 @@ public class EmbeddingExpressionTests
 
     [Test, Parallelizable]
     [Description("DiVoid #16141: the dimension the expression cuts to equals the dimension the node.embedding column is declared with")]
-    public void OfText_DimensionEqualsNodeEmbeddingColumnDimension()
+    public void Embed_Document_DimensionEqualsNodeEmbeddingColumnDimension()
     {
         VectorAttribute column = typeof(Node).GetProperty(nameof(Node.Embedding))!.GetCustomAttribute<VectorAttribute>()!;
 
@@ -61,7 +61,7 @@ public class EmbeddingExpressionTests
 
     [Test, Parallelizable]
     [Description("DiVoid #16207: a single text renders exactly the single-text expression, without normalisation")]
-    public void OfTexts_SingleText_RendersExactlyOfText()
+    public void OfTexts_SingleText_RendersExactlyProducerEmbed()
     {
         string rendered = RenderResolved(EmbeddingExpression.OfTexts([Text], EmbeddingProducers.Function));
 
