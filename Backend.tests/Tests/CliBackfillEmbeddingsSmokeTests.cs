@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Backend.tests.Fixtures;
 using NUnit.Framework;
 
@@ -10,31 +9,19 @@ namespace Backend.tests.Tests;
 [TestFixture, Parallelizable]
 public class CliBackfillEmbeddingsSmokeTests
 {
-    static async Task<CliResult> Run(params string[] arguments)
-    {
+    static async Task<CliResult> Run(params string[] arguments) {
         string database = Path.Combine(Path.GetTempPath(), $"backfill-cli-{Guid.NewGuid():N}.db3");
-        ProcessStartInfo start = new("dotnet") {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            WorkingDirectory = AppContext.BaseDirectory
-        };
-        start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "Backend.dll"));
-        start.ArgumentList.Add("backfill-embeddings");
-        foreach (string argument in arguments)
-            start.ArgumentList.Add(argument);
-        start.Environment["Database__Type"] = "Sqlite";
-        start.Environment["Database__Source"] = database;
 
         try {
-            using Process process = Process.Start(start)!;
-            Task<string> stdout = process.StandardOutput.ReadToEndAsync();
-            Task<string> stderr = process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            return new CliResult(process.ExitCode, await stdout, await stderr);
+            return await CliProcess.RunAsync(["backfill-embeddings", .. arguments], environment => {
+                environment["Database__Type"] = "Sqlite";
+                environment["Database__Source"] = database;
+            });
         } finally {
             File.Delete(database);
         }
     }
+
 
     [Test, Parallelizable]
     public async Task BackfillEmbeddings_IdsAndLongOnly_AreAccepted()

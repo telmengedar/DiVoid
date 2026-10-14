@@ -141,11 +141,12 @@ public static class CliDispatcher {
                 services.AddTransient<IApiKeyService, ApiKeyService>();
             },
             async provider => {
-                IUserService userService = provider.GetRequiredService<IUserService>();
-                IApiKeyService apiKeyService = provider.GetRequiredService<IApiKeyService>();
                 ILogger logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("CliDispatcher");
 
                 try {
+                    IUserService userService = provider.GetRequiredService<IUserService>();
+                    IApiKeyService apiKeyService = provider.GetRequiredService<IApiKeyService>();
+
                     UserDetails user = await userService.CreateUser(new UserParameters { Name = name, Email = email });
                     ApiKeyDetails key = await apiKeyService.CreateApiKey(new ApiKeyParameters {
                         UserId = user.Id,
