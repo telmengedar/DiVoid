@@ -106,6 +106,7 @@ public class Startup
         bool embeddingEnabled = Configuration["Database:Type"] != "Sqlite";
         services.AddSingleton<IEmbeddingCapability>(new EmbeddingCapability(embeddingEnabled));
 
+        services.AddTransient<IEmbeddingModelGuard, EmbeddingModelGuard>();
         services.AddTransient<INodeService, NodeService>();
         services.AddTransient<IKeyGenerator, KeyGenerator>();
         services.AddTransient<IUserService, UserService>();
@@ -229,6 +230,7 @@ public class Startup
         }
 
         services.AddHostedService<DatabaseModelService>();
+        services.AddHostedService<EmbeddingModelGuardService>();
         services.AddHostedService<StartupWarningService>();
     }
 
