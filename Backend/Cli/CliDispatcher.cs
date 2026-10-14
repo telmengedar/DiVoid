@@ -191,7 +191,7 @@ public static class CliDispatcher {
 
         await using ServiceProvider provider = services.BuildServiceProvider();
 
-        Init.DatabaseModelService schemaSvc = new(provider.GetRequiredService<Pooshit.Ocelot.Entities.IEntityManager>());
+        Init.DatabaseModelService schemaSvc = new(provider.GetRequiredService<Pooshit.Ocelot.Entities.IEntityManager>(), provider.GetRequiredService<ILogger<Init.DatabaseModelService>>());
         try {
             await schemaSvc.StartAsync(default);
         } catch (Exception ex) {

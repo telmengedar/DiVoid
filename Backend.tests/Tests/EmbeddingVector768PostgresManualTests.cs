@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Text;
 using Backend.Init;
 using Backend.Models.Nodes;
@@ -61,7 +62,7 @@ public class EmbeddingVector768PostgresManualTests
             return (T)command.ExecuteScalar()!;
         }
 
-        public Task Start() => new DatabaseModelService(Entities).StartAsync(CancellationToken.None);
+        public Task Start() => new DatabaseModelService(Entities, NullLogger<DatabaseModelService>.Instance).StartAsync(CancellationToken.None);
 
         public void Dispose()
         {

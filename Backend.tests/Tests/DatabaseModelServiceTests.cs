@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using Backend.Init;
 using Backend.Models.Messages;
 using Backend.Models.Users;
@@ -51,7 +52,7 @@ public class DatabaseModelServiceTests
     public async Task StartAsync_CalledTwice_IsIdempotent()
     {
         using DatabaseFixture fixture = new();
-        DatabaseModelService svc = new(fixture.EntityManager);
+        DatabaseModelService svc = new(fixture.EntityManager, NullLogger<DatabaseModelService>.Instance);
 
         // First call is already done by the fixture; call a second time.
         Assert.DoesNotThrowAsync(() => svc.StartAsync(CancellationToken.None));

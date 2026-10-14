@@ -31,7 +31,7 @@ public class ApiKeyLastUsedWriteTests
         connection.Open();
         IDBClient client = UpdateGateClient.Wrap(ClientFactory.Create(connection, new SQLiteInfo()), out UpdateGateClient gate);
         IEntityManager entityManager = new EntityManager(client);
-        await new DatabaseModelService(entityManager).StartAsync(CancellationToken.None);
+        await new DatabaseModelService(entityManager, NullLogger<DatabaseModelService>.Instance).StartAsync(CancellationToken.None);
 
         IConfiguration config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> {
