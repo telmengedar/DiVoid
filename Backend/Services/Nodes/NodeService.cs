@@ -19,10 +19,11 @@ using Pooshit.Ocelot.Tokens;
 namespace Backend.Services.Nodes;
 
 /// <inheritdoc />
-public class NodeService(IEntityManager database, IEmbeddingCapability embeddingCapability) : INodeService
+public class NodeService(IEntityManager database, IEmbeddingCapability embeddingCapability, IEmbeddingProducer embeddingProducer) : INodeService
 {
     readonly IEntityManager database = database;
     readonly IEmbeddingCapability embeddingCapability = embeddingCapability;
+    readonly IEmbeddingProducer embeddingProducer = embeddingProducer;
 
     const int MaxQueries = 10;
 
@@ -143,7 +144,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         }
 
         if (embeddingCapability.IsEnabled && !string.IsNullOrWhiteSpace(node.Name))
-            await EmbeddingWrite.Build(database, nodeId, node.Name, null, null).ExecuteAsync(transaction);
+            await EmbeddingWrite.Build(database, nodeId, node.Name, null, null, embeddingProducer).ExecuteAsync(transaction);
 
         transaction.Commit();
         return await GetNodeById(nodeId, callerId, isAdmin: true);
@@ -820,7 +821,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (string.Equals(filter.Sort, "linkDetails", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("sort=linkDetails is not supported");
 
-        NodeMapper mapper = new(filter);
+        NodeMapper mapper = new(filter, embeddingProducer);
         filter.Fields ??= isSemantic
             ? [.. mapper.DefaultListFields, "similarity"]
             : mapper.DefaultListFields;
@@ -903,7 +904,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (string.Equals(filter.Sort, "linkDetails", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("sort=linkDetails is not supported");
 
-        NodeMapper mapper = new(filter);
+        NodeMapper mapper = new(filter, embeddingProducer);
         filter.Fields ??= isSemantic
             ? [.. mapper.DefaultListFields, "similarity"]
             : mapper.DefaultListFields;
@@ -1056,7 +1057,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         }
 
         ct.ThrowIfCancellationRequested();
-        await EmbeddingWrite.Build(database, nodeId, row.Name, content, row.ContentType).ExecuteAsync(transaction);
+        await EmbeddingWrite.Build(database, nodeId, row.Name, content, row.ContentType, embeddingProducer).ExecuteAsync(transaction);
     }
 
     /// <inheritdoc />
@@ -1136,7 +1137,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                                  .Where(n => n.Id == nodeId)
                                  .ExecuteEntityAsync(transaction);
 
-        await EmbeddingWrite.Build(database, nodeId, row.Name, content, contentType).ExecuteAsync(transaction);
+        await EmbeddingWrite.Build(database, nodeId, row.Name, content, contentType, embeddingProducer).ExecuteAsync(transaction);
     }
 
     /// <inheritdoc />

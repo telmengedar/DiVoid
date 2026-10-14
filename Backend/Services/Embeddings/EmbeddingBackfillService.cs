@@ -17,13 +17,14 @@ namespace Backend.Services.Embeddings;
 /// Postgres-only: if <see cref="IEmbeddingCapability.IsEnabled"/> is false the method
 /// exits immediately with a log message and no database writes.
 /// </summary>
-public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapability embeddingCapability, ILogger<EmbeddingBackfillService> logger) {
+public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapability embeddingCapability, ILogger<EmbeddingBackfillService> logger, IEmbeddingProducer embeddingProducer) {
 
     const int ProgressInterval = 25;
 
     readonly IEntityManager database = database;
     readonly IEmbeddingCapability embeddingCapability = embeddingCapability;
     readonly ILogger<EmbeddingBackfillService> logger = logger;
+    readonly IEmbeddingProducer embeddingProducer = embeddingProducer;
 
     static PredicateExpression<Node> CandidatePredicate(long[] ids, bool longOnly) {
         PredicateExpression<Node> candidates = new PredicateExpression<Node>(n => n.Name != null && n.Name != "") |
@@ -86,7 +87,7 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
             ct.ThrowIfCancellationRequested();
 
             byte[] content = TextContentTypePredicate.IsText(candidate.ContentType) ? await LoadContent(candidate.Id) : null;
-            long written = await EmbeddingWrite.Build(database, candidate.Id, candidate.Name, content, candidate.ContentType, candidate.LastUpdate)
+            long written = await EmbeddingWrite.Build(database, candidate.Id, candidate.Name, content, candidate.ContentType, embeddingProducer, candidate.LastUpdate)
                                               .ExecuteAsync();
 
             if (written == 0)

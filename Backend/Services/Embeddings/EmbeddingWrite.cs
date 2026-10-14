@@ -20,9 +20,10 @@ public static class EmbeddingWrite {
     /// <param name="name">node name</param>
     /// <param name="content">content bytes, null when the node has none</param>
     /// <param name="contentType">MIME type of <paramref name="content"/></param>
+    /// <param name="producer">producer of the window vectors</param>
     /// <param name="lastUpdate">when set, the UPDATE only applies while the row still has this <c>lastUpdate</c></param>
     /// <returns>operation ready to be executed inside the caller's transaction or standalone</returns>
-    public static UpdateValuesOperation<Node> Build(IEntityManager database, long nodeId, string name, byte[] content, string contentType, DateTime? lastUpdate = null) {
+    public static UpdateValuesOperation<Node> Build(IEntityManager database, long nodeId, string name, byte[] content, string contentType, IEmbeddingProducer producer, DateTime? lastUpdate = null) {
         string[] windows = EmbeddingInputComposer.ComposeWindows(name, content, contentType);
         UpdateValuesOperation<Node> update = database.Update<Node>();
 
@@ -30,7 +31,7 @@ public static class EmbeddingWrite {
             return update.Set(n => n.Embedding == (float[]) null)
                          .Where(Target(nodeId, lastUpdate).Content);
 
-        return update.Set(n => n.Embedding == EmbeddingExpression.OfTexts(windows).Type<float[]>())
+        return update.Set(n => n.Embedding == EmbeddingExpression.OfTexts(windows, producer).Type<float[]>())
                      .Where(Target(nodeId, lastUpdate).Content);
     }
 

@@ -169,7 +169,7 @@ public class NodeLinkTypeAndContextTests
     public async Task NodeLink_RowInsertedWithoutNewColumns_ReadsBackAsNoneAndNull()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = new(fixture.EntityManager, new EmbeddingCapability(false));
+        NodeService svc = new(fixture.EntityManager, new EmbeddingCapability(false), EmbeddingProducers.Function);
 
         NodeDetails a = await svc.CreateNode(new NodeDetails { Type = "task", Name = "SchemaLinkA" }, callerId: 0);
         NodeDetails b = await svc.CreateNode(new NodeDetails { Type = "task", Name = "SchemaLinkB" }, callerId: 0);

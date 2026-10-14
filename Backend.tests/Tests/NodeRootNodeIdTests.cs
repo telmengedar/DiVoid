@@ -39,7 +39,7 @@ public class NodeRootNodeIdTests
 {
     static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
 
-    static NodeService MakeService(DatabaseFixture fixture) => new(fixture.EntityManager, DisabledCapability);
+    static NodeService MakeService(DatabaseFixture fixture) => new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
 
     static Task<NodeDetails> Create(NodeService svc, string type = "task", string name = "Test node")
         => svc.CreateNode(new NodeDetails { Type = type, Name = name }, callerId: 0);
@@ -360,10 +360,10 @@ public class NodeRootNodeIdTests
         Mock<IDBClient> clientMock = new();
         clientMock.SetupGet(c => c.DBInfo).Returns(new PostgreInfo());
         IEntityManager em = new EntityManager(clientMock.Object);
-        NodeService svc = new(em, new EmbeddingCapability(true));
+        NodeService svc = new(em, new EmbeddingCapability(true), EmbeddingProducers.Function);
 
         NodeFilter filter = new() { Query = "hivemind protocol", RootNodeId = [42L], Count = 10 };
-        NodeMapper mapper = new(filter);
+        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);

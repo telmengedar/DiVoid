@@ -33,7 +33,7 @@ public class ExcludePostgresManualTests
     {
         using EmbeddingPostgresDatabase database = new();
         await database.Start();
-        NodeService service = new(database.Entities, new EmbeddingCapability(true));
+        NodeService service = new(database.Entities, new EmbeddingCapability(true), EmbeddingProducers.Function);
         const string probe = "processor-run-probe";
         long[] excluded = new long[3];
         for (int i = 0; i < excluded.Length; i++)

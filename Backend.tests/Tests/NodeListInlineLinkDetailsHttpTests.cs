@@ -272,7 +272,7 @@ public class NodeListInlineLinkDetailsHttpTests
     public async Task ListPaged_WithLinkDetailsField_SelfLoopRow_IsExcluded()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = new(fixture.EntityManager, new EmbeddingCapability(false));
+        NodeService svc = new(fixture.EntityManager, new EmbeddingCapability(false), EmbeddingProducers.Function);
 
         NodeDetails self = await svc.CreateNode(new NodeDetails { Type = "task", Name = "SelfLoopLinkDetails" }, callerId: 0);
 

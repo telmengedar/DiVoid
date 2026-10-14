@@ -3,6 +3,7 @@ using Backend.Init;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
 using Backend.Services.Nodes;
+using Backend.tests.Fixtures;
 using Npgsql;
 using NUnit.Framework;
 using Pooshit.AspNetCore.Services.Formatters.DataStream;
@@ -85,7 +86,7 @@ public class EmbeddingVector768PostgresManualTests
     {
         using TestDatabase database = new();
         await database.Start();
-        NodeService service = new(database.Entities, new EmbeddingCapability(true));
+        NodeService service = new(database.Entities, new EmbeddingCapability(true), EmbeddingProducers.Function);
 
         NodeDetails created = await service.CreateNode(new NodeDetails { Type = "documentation", Name = "alpha topic" }, callerId: 0);
         NodeDetails other = await service.CreateNode(new NodeDetails { Type = "documentation", Name = "beta topic" }, callerId: 0);

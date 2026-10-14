@@ -27,8 +27,8 @@ public class NodeSubstanceEmbeddingIsolationTests
     public async Task Patch_ReplaceSubstance_LeavesEmbeddingUntouched()
     {
         using DatabaseFixture fixture = new();
-        NodeService seedSvc = new(fixture.EntityManager, DisabledCapability);
-        NodeService patchSvc = new(fixture.EntityManager, EnabledCapability);
+        NodeService seedSvc = new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
+        NodeService patchSvc = new(fixture.EntityManager, EnabledCapability, EmbeddingProducers.Function);
 
         NodeDetails node = await seedSvc.CreateNode(
             new NodeDetails { Type = "documentation", Name = "S9_Subject", Substance = "S9|before" },
@@ -81,8 +81,8 @@ public class NodeSubstanceEmbeddingIsolationTests
     public async Task UploadContent_WhenEmbeddingRegenerationFails_LeavesSubstanceIntact()
     {
         using DatabaseFixture fixture = new();
-        NodeService seedSvc = new(fixture.EntityManager, DisabledCapability);
-        NodeService uploadSvc = new(fixture.EntityManager, EnabledCapability);
+        NodeService seedSvc = new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
+        NodeService uploadSvc = new(fixture.EntityManager, EnabledCapability, EmbeddingProducers.Function);
 
         NodeDetails node = await seedSvc.CreateNode(
             new NodeDetails { Type = "documentation", Name = "C7_Subject" },

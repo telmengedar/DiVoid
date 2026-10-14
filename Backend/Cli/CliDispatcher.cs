@@ -59,8 +59,7 @@ public static class CliDispatcher {
 
         return RunWithContainerAsync(
             (services, configuration) => {
-                bool embeddingEnabled = configuration["Database:Type"] != "Sqlite";
-                services.AddSingleton<IEmbeddingCapability>(new EmbeddingCapability(embeddingEnabled));
+                services.AddEmbedding(configuration);
                 services.AddTransient<EmbeddingBackfillService>();
             },
             async provider => {

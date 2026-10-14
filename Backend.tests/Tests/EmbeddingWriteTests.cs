@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
+using Backend.tests.Fixtures;
 using Moq;
 using NUnit.Framework;
 using Pooshit.Ocelot.Clients;
@@ -22,7 +23,7 @@ public class EmbeddingWriteTests
         Mock<IDBClient> client = new();
         client.SetupGet(c => c.DBInfo).Returns(new PostgreInfo());
 
-        return EmbeddingWrite.Build(new EntityManager(client.Object), nodeId, name!, content!, contentType!).Prepare();
+        return EmbeddingWrite.Build(new EntityManager(client.Object), nodeId, name!, content!, contentType!, EmbeddingProducers.Function).Prepare();
     }
 
     static string Render(PreparedOperation prepared)

@@ -8,6 +8,7 @@ using Backend.Init;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
 using Backend.Services.Nodes;
+using Backend.tests.Fixtures;
 using Npgsql;
 using Pooshit.AspNetCore.Services.Formatters.DataStream;
 using Pooshit.Ocelot.Clients;
@@ -37,7 +38,7 @@ public class LinkedToPostgresManualTests
         await svc.StartAsync(CancellationToken.None);
     }
 
-    static NodeService MakeService(IEntityManager em) => new(em, DisabledCapability);
+    static NodeService MakeService(IEntityManager em) => new(em, DisabledCapability, EmbeddingProducers.Function);
 
     static async Task<NodeDetails> Create(NodeService svc, string name)
         => await svc.CreateNode(new NodeDetails { Type = "task", Name = name }, callerId: 0);

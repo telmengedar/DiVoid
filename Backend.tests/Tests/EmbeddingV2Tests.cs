@@ -26,7 +26,7 @@ public class EmbeddingV2Tests
     static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
 
     static NodeService MakeService(DatabaseFixture fixture)
-        => new(fixture.EntityManager, DisabledCapability);
+        => new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
 
 
     [Test]

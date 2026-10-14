@@ -20,7 +20,7 @@ public class EmbeddingWindowsPostgresManualTests
     static bool EqualsOfText(EmbeddingPostgresDatabase database, long id, string text)
     {
         return database.Scalar<bool>($"SELECT embedding = {OfTextSql} FROM node WHERE id = @id",
-                                     ("id", id), ("model", TextContentTypePredicate.EmbeddingModel), ("text", text));
+                                     ("id", id), ("model", PostgresFunctionEmbeddingProducer.ModelId), ("text", text));
     }
 
     [Test, Parallelizable]
@@ -31,8 +31,8 @@ public class EmbeddingWindowsPostgresManualTests
     {
         using EmbeddingPostgresDatabase database = new();
         await database.Start();
-        NodeService service = new(database.Entities, new EmbeddingCapability(true));
-        EmbeddingBackfillService backfill = new(database.Entities, new EmbeddingCapability(true), NullLogger<EmbeddingBackfillService>.Instance);
+        NodeService service = new(database.Entities, new EmbeddingCapability(true), EmbeddingProducers.Function);
+        EmbeddingBackfillService backfill = new(database.Entities, new EmbeddingCapability(true), NullLogger<EmbeddingBackfillService>.Instance, EmbeddingProducers.Function);
         byte[] body = "short body"u8.ToArray();
 
         NodeDetails node = await service.CreateNode(new NodeDetails { Type = "documentation", Name = "short node" }, callerId: 0);
@@ -63,7 +63,7 @@ public class EmbeddingWindowsPostgresManualTests
     {
         using EmbeddingPostgresDatabase database = new();
         await database.Start();
-        NodeService service = new(database.Entities, new EmbeddingCapability(true));
+        NodeService service = new(database.Entities, new EmbeddingCapability(true), EmbeddingProducers.Function);
         byte[] body = Encoding.UTF8.GetBytes(string.Concat(Enumerable.Range(0, 5000).Select(i => $"w{i} "))[..20000]);
         string[] windows = EmbeddingInputComposer.ComposeWindows("long node", body, "text/markdown");
 
@@ -72,7 +72,7 @@ public class EmbeddingWindowsPostgresManualTests
 
         double norm = database.Scalar<double>("SELECT vector_norm(embedding) FROM node WHERE id = @id", ("id", node.Id));
         double cosine = database.Scalar<double>("SELECT 1 - (n.embedding <=> (SELECT avg(l2_normalize(subvector(embedding(@model, w)::vector, 1, 768))) FROM unnest(@windows) w)) FROM node n WHERE n.id = @id",
-                                                ("id", node.Id), ("model", TextContentTypePredicate.EmbeddingModel), ("windows", windows));
+                                                ("id", node.Id), ("model", PostgresFunctionEmbeddingProducer.ModelId), ("windows", windows));
         Assert.Multiple(() => {
             Assert.That(windows, Has.Length.EqualTo(5));
             Assert.That(norm, Is.EqualTo(1.0).Within(1e-4));

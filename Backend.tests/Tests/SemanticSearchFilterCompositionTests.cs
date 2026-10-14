@@ -77,7 +77,7 @@ public class SemanticSearchFilterCompositionTests
     /// enabled embedding capability (no real Postgres needed — we only build the
     /// operation tree and render SQL via <see cref="OperationPreparator"/>).
     /// </summary>
-    static NodeService CreateService(IEntityManager em) => new(em, EnabledCapability);
+    static NodeService CreateService(IEntityManager em) => new(em, EnabledCapability, EmbeddingProducers.Function);
 
     /// <summary>
     /// renders a <see cref="LoadOperation{T}"/> to SQL text via
@@ -110,7 +110,7 @@ public class SemanticSearchFilterCompositionTests
         NodeService service = CreateService(em);
 
         NodeFilter filter = new() { Query = "hivemind protocol", Type = ["task"], Count = 10 };
-        NodeMapper mapper = new(filter);
+        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
@@ -157,7 +157,7 @@ public class SemanticSearchFilterCompositionTests
         NodeService service = CreateService(em);
 
         NodeFilter filter = new() { Query = "open tasks", Status = ["open"], Count = 10 };
-        NodeMapper mapper = new(filter);
+        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
@@ -200,7 +200,7 @@ public class SemanticSearchFilterCompositionTests
 
         long[] linkedTo = [42L];
         NodeFilter filter = new() { Query = "auth design", LinkedTo = linkedTo, Count = 10 };
-        NodeMapper mapper = new(filter);
+        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
@@ -248,7 +248,7 @@ public class SemanticSearchFilterCompositionTests
 
         long[] ids = [1L, 2L, 3L];
         NodeFilter filter = new() { Query = "some query", Id = ids, Count = 10 };
-        NodeMapper mapper = new(filter);
+        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
@@ -292,7 +292,7 @@ public class SemanticSearchFilterCompositionTests
 
         string[] names = ["The Hivemind Protocol", "Agents"];
         NodeFilter filter = new() { Query = "protocol", Name = names, Count = 10 };
-        NodeMapper mapper = new(filter);
+        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
@@ -335,7 +335,7 @@ public class SemanticSearchFilterCompositionTests
         NodeService service = CreateService(em);
 
         NodePathFilter filter = new() { Path = "[type:task]", Query = "hivemind", Count = 10 };
-        NodeMapper mapper = new(filter);
+        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         // Construct the terminal operation tree exactly as ComposeHops does for a single-hop
@@ -383,7 +383,7 @@ public class SemanticSearchFilterCompositionTests
     public void SF7a_ListPaged_TypeFilter_WithQuery_OnSqlite_ThrowsCorrectGuardException()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = new(fixture.EntityManager, DisabledCapability);
+        NodeService svc = new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
 
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPaged(new NodeFilter { Query = "hivemind", Type = ["task"], Count = 10 }, callerId: 0, isAdmin: true),
@@ -395,7 +395,7 @@ public class SemanticSearchFilterCompositionTests
     public void SF7b_ListPaged_StatusFilter_WithQuery_OnSqlite_ThrowsCorrectGuardException()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = new(fixture.EntityManager, DisabledCapability);
+        NodeService svc = new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
 
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPaged(new NodeFilter { Query = "open work", Status = ["open"], Count = 10 }, callerId: 0, isAdmin: true),
@@ -406,7 +406,7 @@ public class SemanticSearchFilterCompositionTests
     public void SF7c_ListPaged_LinkedToFilter_WithQuery_OnSqlite_ThrowsCorrectGuardException()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = new(fixture.EntityManager, DisabledCapability);
+        NodeService svc = new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
 
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPaged(new NodeFilter { Query = "linked", LinkedTo = [42L], Count = 10 }, callerId: 0, isAdmin: true),
@@ -417,7 +417,7 @@ public class SemanticSearchFilterCompositionTests
     public void SF7d_ListPagedByPath_WithQuery_OnSqlite_ThrowsCorrectGuardException()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = new(fixture.EntityManager, DisabledCapability);
+        NodeService svc = new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
 
         Assert.ThrowsAsync<SemanticSearchUnavailableException>(
             () => svc.ListPagedByPath(

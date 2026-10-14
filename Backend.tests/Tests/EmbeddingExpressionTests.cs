@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
+using Backend.tests.Fixtures;
 using Moq;
 using NUnit.Framework;
 using Pooshit.Ocelot.Clients;
@@ -20,7 +21,7 @@ public class EmbeddingExpressionTests
 {
     const string Text = "some text";
 
-    static string RenderResolved() => RenderResolved(EmbeddingExpression.OfText(DB.Constant(Text)));
+    static string RenderResolved() => RenderResolved(EmbeddingProducers.Function.Embed(Text, EmbeddingPurpose.Document));
 
     static string RenderResolved(ISqlToken expression)
     {
@@ -62,7 +63,7 @@ public class EmbeddingExpressionTests
     [Description("DiVoid #16207: a single text renders exactly the single-text expression, without normalisation")]
     public void OfTexts_SingleText_RendersExactlyOfText()
     {
-        string rendered = RenderResolved(EmbeddingExpression.OfTexts([Text]));
+        string rendered = RenderResolved(EmbeddingExpression.OfTexts([Text], EmbeddingProducers.Function));
 
         Assert.That(rendered, Is.EqualTo(RenderResolved()));
         Assert.That(rendered, Does.Not.Contain("l2_normalize"));
@@ -73,10 +74,10 @@ public class EmbeddingExpressionTests
     public void OfTexts_ThreeTexts_RendersNormalisedVectorAddFoldWithThreeEmbeddings()
     {
         string[] texts = ["first", "second", "third"];
-        string[] single = texts.Select(text => Single(RenderResolved(EmbeddingExpression.OfText(DB.Constant(text))))).ToArray();
+        string[] single = texts.Select(text => Single(RenderResolved(EmbeddingProducers.Function.Embed(text, EmbeddingPurpose.Document)))).ToArray();
         string expected = $"l2_normalize ( vector_add ( vector_add ( l2_normalize ( {single[0]} ) , l2_normalize ( {single[1]} ) ) , l2_normalize ( {single[2]} ) ) )";
 
-        string rendered = RenderResolved(EmbeddingExpression.OfTexts(texts));
+        string rendered = RenderResolved(EmbeddingExpression.OfTexts(texts, EmbeddingProducers.Function));
 
         Assert.That(rendered, Does.Contain(expected));
         Assert.That(Regex.Matches(rendered, @"embedding \(").Count, Is.EqualTo(3));
@@ -86,7 +87,17 @@ public class EmbeddingExpressionTests
     [Description("DiVoid #16207: an empty text list is rejected because the caller owns the NULL case")]
     public void OfTexts_NoTexts_Throws()
     {
-        Assert.Throws<ArgumentException>(() => EmbeddingExpression.OfTexts([]));
+        Assert.Throws<ArgumentException>(() => EmbeddingExpression.OfTexts([], EmbeddingProducers.Function));
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #17524 unit 1: the Postgres function producer sends raw text, so a query and a document of the same text render identical SQL")]
+    public void Embed_QueryAndDocument_RenderIdenticalSql()
+    {
+        string document = RenderResolved(EmbeddingProducers.Function.Embed(Text, EmbeddingPurpose.Document));
+        string query = RenderResolved(EmbeddingProducers.Function.Embed(Text, EmbeddingPurpose.Query));
+
+        Assert.That(query, Is.EqualTo(document));
     }
 
     static string Single(string rendered) => Regex.Match(rendered, @"subvector \(.*\) , 1 , 768 \)").Value;
