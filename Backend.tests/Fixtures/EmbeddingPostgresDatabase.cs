@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using Backend.Init;
 using Npgsql;
 using Pooshit.Ocelot.Clients;
@@ -66,7 +67,7 @@ public sealed class EmbeddingPostgresDatabase : IDisposable
     /// <summary>
     /// creates the schema of the created database
     /// </summary>
-    public Task Start() => new DatabaseModelService(Entities).StartAsync(CancellationToken.None);
+    public Task Start() => new DatabaseModelService(Entities, NullLogger<DatabaseModelService>.Instance).StartAsync(CancellationToken.None);
 
     /// <inheritdoc />
     public void Dispose()

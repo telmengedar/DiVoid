@@ -287,7 +287,7 @@ public class EmbeddingModelGuardTests
         await using (SqliteConnection connection = new($"Data Source={path}")) {
             await connection.OpenAsync();
             IEntityManager seed = new EntityManager(ClientFactory.Create(connection, new SQLiteInfo()));
-            await new DatabaseModelService(seed).StartAsync(CancellationToken.None);
+            await new DatabaseModelService(seed, NullLogger<DatabaseModelService>.Instance).StartAsync(CancellationToken.None);
             await Record(seed, Gemma);
         }
 

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -33,7 +34,7 @@ public class LinkedToPostgresManualTests
 
     static async Task ApplySchema(IEntityManager em)
     {
-        DatabaseModelService svc = new(em);
+        DatabaseModelService svc = new(em, NullLogger<DatabaseModelService>.Instance);
         await svc.StartAsync(CancellationToken.None);
     }
 
