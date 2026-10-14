@@ -19,4 +19,10 @@ public interface IEmbeddingProducer {
     /// <param name="purpose">whether the vector is stored or compared against stored vectors</param>
     /// <returns>expression evaluating to a vector, never null</returns>
     ISqlToken Embed(string text, EmbeddingPurpose purpose);
+
+    /// <summary>
+    /// makes the producer ready to embed, acquiring and loading what it needs; throws when it can not be made ready
+    /// </summary>
+    /// <param name="cancellationToken">cancels the preparation</param>
+    Task PrepareAsync(CancellationToken cancellationToken);
 }

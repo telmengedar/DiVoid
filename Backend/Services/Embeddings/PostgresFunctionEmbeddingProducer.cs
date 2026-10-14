@@ -23,4 +23,9 @@ public class PostgresFunctionEmbeddingProducer : IEmbeddingProducer {
         ISqlToken vector = DB.Value<object>(v => DB.Cast(embedding, CastType.Vector));
         return DB.CustomFunction("subvector", vector, DB.Constant(1), DB.Constant(EmbeddingExpression.Dimensions));
     }
+
+    /// <inheritdoc />
+    public Task PrepareAsync(CancellationToken cancellationToken) {
+        return Task.CompletedTask;
+    }
 }

@@ -168,6 +168,34 @@ public class EmbeddingProducerSeamTests
     }
 
     [Test, Parallelizable]
+    [Description("DiVoid #17524 unit 4: the backfill prepares the producer once, after the model guard and before the first embedding")]
+    public async Task Backfill_PreparesProducerBeforeEmbedding() {
+        RecordingEmbeddingProducer producer = new();
+        Mock<IDBClient> client = CreateClient(_ => CandidateTable());
+        List<string> order = [];
+        Mock<IEmbeddingModelGuard> guard = new();
+        guard.Setup(g => g.EnsureAsync(It.IsAny<string>())).Callback(() => order.Add("guard")).Returns(Task.CompletedTask);
+        EmbeddingBackfillService backfill = new(new EntityManager(client.Object), new EmbeddingCapability(true), guard.Object, NullLogger<EmbeddingBackfillService>.Instance, producer);
+
+        await backfill.RunAsync();
+
+        Assert.That(order.Concat(producer.Events), Is.EqualTo(new[] { "guard", "prepare", "embed" }));
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #17524 unit 4: a database the guard refuses is never used to prepare the producer, so no model is downloaded for it")]
+    public void Backfill_GuardRefuses_DoesNotPrepareProducer() {
+        RecordingEmbeddingProducer producer = new();
+        Mock<IEmbeddingModelGuard> guard = new();
+        guard.Setup(g => g.EnsureAsync(It.IsAny<string>())).ThrowsAsync(new InvalidOperationException("mismatch"));
+        EmbeddingBackfillService backfill = new(new EntityManager(CreateClient(_ => CandidateTable()).Object), new EmbeddingCapability(true), guard.Object, NullLogger<EmbeddingBackfillService>.Instance, producer);
+
+        Assert.ThrowsAsync<InvalidOperationException>(() => backfill.RunAsync());
+
+        Assert.That(producer.Events, Is.Empty);
+    }
+
+    [Test, Parallelizable]
     [Description("DiVoid #17524 unit 1: every query of a multi-query search is embedded through the producer as a query vector")]
     public void ListPaged_MultiQuery_EmbedsEachQueryAsQuery()
     {
@@ -216,7 +244,7 @@ public class EmbeddingProducerSeamTests
     [TestCase("Sqlite", false)]
     public void AddEmbedding_RegistersFunctionProducerAndCapability(string databaseType, bool enabled)
     {
-        IConfiguration configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Database:Type"] = databaseType }).Build();
+        IConfiguration configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Database:Type"] = databaseType, ["Embedding:Producer"] = "PostgresFunction" }).Build();
         using ServiceProvider provider = new ServiceCollection().AddEmbedding(configuration).BuildServiceProvider();
 
         Assert.Multiple(() => {

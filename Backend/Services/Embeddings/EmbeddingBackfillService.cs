@@ -62,6 +62,7 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
         }
 
         await modelGuard.EnsureAsync(embeddingProducer.Model);
+        await embeddingProducer.PrepareAsync(ct);
 
         logger.LogInformation("event=backfill.start version=v2 composition=name_plus_content");
         DateTimeOffset started = DateTimeOffset.UtcNow;
