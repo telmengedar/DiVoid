@@ -16,6 +16,8 @@ WINDOW_SENTENCES = [
     "Rollback is only possible while the previous schema version is still compatible with the running code.",
 ]
 
+MEDIA_PLACEHOLDERS = ["<|image|>", "<|audio|>", "<|video|>"]
+
 TEXTS = [
     ("english-prose", "Notes on the release process\n\nWe cut a release branch every second Thursday. The branch is frozen for everything except fixes, and the staging environment is rebuilt from it overnight. If the smoke tests pass, the release is promoted on Friday morning; otherwise the on-call engineer decides whether to fix forward or to revert."),
     ("german-prose", "Übersicht der Wartungsfenster\n\nDie Datenbank wird jeden Sonntag zwischen zwei und vier Uhr gewartet. Während dieser Zeit sind Schreibzugriffe nicht möglich; Lesezugriffe über die Schnittstelle bleiben erhalten. Größere Änderungen am Schema werden grundsätzlich vorher angekündigt, damit die Straßenkarten der Teams angepasst werden können."),
@@ -29,8 +31,15 @@ TEXTS = [
     ("repeated-runs", "Separators\n\n==========\n----------\n**********\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n.......................\n"),
     ("urls-and-paths", "See https://example.com/a/b?c=d&e=f#frag and C:\\Users\\max\\file.txt and /var/log/app/error.log and user@example.com"),
     ("mixed-newlines", "line one\r\nline two\rline three\nline four\n\n\nline five"),
-    ("name-and-content", "Quarterly planning\n\nGoals for the next quarter: reduce page load time, migrate the legacy billing job, and document the on-call handover."),
+    ("media-placeholders", "Notes on multimodal input\n\nThe markers <|image|> and <|audio|> and <|video|> stand where media is inserted; <|image|><|audio|> may follow each other."),
+    ("name-and-content","Quarterly planning\n\nGoals for the next quarter: reduce page load time, migrate the legacy billing job, and document the on-call handover."),
 ]
+
+
+def break_up_media_placeholders(text):
+    for placeholder in MEDIA_PLACEHOLDERS:
+        text = text.replace(placeholder, "< " + placeholder[1:])
+    return text
 
 
 def full_window():
@@ -60,7 +69,7 @@ def main():
         for purpose in ("document", "query"):
             if name == "full-window" and purpose == "query":
                 continue
-            prompt = model.prompts[purpose] + text
+            prompt = model.prompts[purpose] + break_up_media_placeholders(text)
             ids = model.tokenize([prompt])["input_ids"][0].tolist()
             if len(ids) > model.max_seq_length:
                 raise SystemExit("%s/%s has %d tokens, more than max_seq_length %d" % (name, purpose, len(ids), model.max_seq_length))
@@ -68,6 +77,7 @@ def main():
             entries.append({
                 "name": name,
                 "purpose": purpose,
+                "text": text,
                 "prompt": prompt,
                 "inputIds": ids,
                 "vector": [round(float(component), 7) for component in vector],

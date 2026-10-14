@@ -10,8 +10,12 @@ namespace Backend.tests.Tests;
 /// </summary>
 [TestFixture, Parallelizable]
 public class LocalModelParityTests {
-    const int ReferenceEntries = 27;
+    const int ReferenceEntries = 29;
     const double MinimumCosine = 0.999;
+
+    static string ProducerPrompt(EmbeddingReferenceEntry entry) {
+        return EmbeddingPrompt.For(entry.Text, entry.Purpose == "query" ? EmbeddingPurpose.Query : EmbeddingPurpose.Document);
+    }
 
     static EmbeddingReference LoadedReference() {
         EmbeddingReference reference = EmbeddingReference.Load();
@@ -23,7 +27,7 @@ public class LocalModelParityTests {
     [Test, Parallelizable]
     [Explicit("LocalModel lane - requires DIVOID_EMBEDDING_MODEL_DIR; runs on the gangolf Docker daemon only.")]
     [Category("LocalModel")]
-    [Description("Every prompt of the reference fixture is split into exactly the token ids the sentence-transformers model received, begin and end tokens included.")]
+    [Description("Every text of the reference fixture, prompted the way the producer prompts it, is split into exactly the token ids the sentence-transformers model received, begin and end tokens included.")]
     public async Task Encode_ReferencePrompts_MatchReferenceIds() {
         EmbeddingReference reference = LoadedReference();
         await using ServiceProvider provider = LocalModelEnvironment.Provider();
@@ -31,8 +35,10 @@ public class LocalModelParityTests {
         using EmbeddingTokenizer tokenizer = new(Path.Combine(LocalModelEnvironment.ModelDirectory, PinnedEmbeddingModel.TokenizerFile));
 
         Assert.Multiple(() => {
-            foreach (EmbeddingReferenceEntry entry in reference.Entries)
-                Assert.That(tokenizer.Encode(entry.Prompt), Is.EqualTo(entry.InputIds), $"{entry.Name}/{entry.Purpose}");
+            foreach (EmbeddingReferenceEntry entry in reference.Entries) {
+                Assert.That(ProducerPrompt(entry), Is.EqualTo(entry.Prompt), $"prompt of {entry.Name}/{entry.Purpose}");
+                Assert.That(tokenizer.Encode(ProducerPrompt(entry)), Is.EqualTo(entry.InputIds), $"{entry.Name}/{entry.Purpose}");
+            }
         });
     }
 
@@ -48,7 +54,7 @@ public class LocalModelParityTests {
 
         Assert.Multiple(() => {
             foreach (EmbeddingReferenceEntry entry in reference.Entries) {
-                double cosine = LocalModelEnvironment.Cosine(model.Embed(entry.Prompt), entry.Vector);
+                double cosine = LocalModelEnvironment.Cosine(model.Embed(ProducerPrompt(entry)), entry.Vector);
                 TestContext.Progress.WriteLine($"cosine {entry.Name}/{entry.Purpose} = {cosine:F6}");
                 Assert.That(cosine, Is.GreaterThanOrEqualTo(MinimumCosine), $"{entry.Name}/{entry.Purpose}");
             }

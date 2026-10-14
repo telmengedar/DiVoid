@@ -21,6 +21,16 @@ public class LocalModelEndToEndTests {
         ("Medieval castle architecture", "Concentric walls, a gatehouse with a portcullis, arrow slits in the curtain wall and a keep on the motte defended the stronghold.", "fortified buildings where knights lived and sieges were endured")
     ];
 
+    static readonly string[][] Needs = [
+        [Topics[0].Paraphrase, "reclaiming disk space taken by outdated row versions in a SQL server", "preventing table bloat caused by deleted and updated records"],
+        [Topics[1].Paraphrase, "baking a loaf from a fermented flour and water culture", "how long should a natural leaven ferment before the dough is shaped"]
+    ];
+
+    static async Task<Dictionary<long, double>> SimilaritiesOf(NodeService service, string query) {
+        NodeDetails[] ranked = await NodeSearch.Ranked(service, new NodeFilter { Query = query, Count = 10 });
+        return ranked.ToDictionary(node => node.Id, node => (double) node.Similarity!.Value);
+    }
+
     static string LongContent() {
         string[] paragraphs = [
             "Coral reefs grow where shallow tropical water is clear and warm, because the algae living inside the polyps need sunlight to photosynthesise.",
@@ -39,7 +49,7 @@ public class LocalModelEndToEndTests {
     [Test, Parallelizable]
     [Explicit("LocalModel lane - requires DIVOID_EMBEDDING_MODEL_DIR and POSTGRES_CONNECTION; runs on the gangolf Docker daemon only.")]
     [Category("LocalModel")]
-    [Description("On plain pgvector without the embedding function, paraphrased queries rank their node first, a multi-query of two topics finds both nodes, and the tail of a windowed node is found.")]
+    [Description("On plain pgvector without the embedding function, paraphrased queries rank their node first, three phrasings of one need sent together rank that node first with the mean of their similarities, and the tail of a windowed node is found.")]
     public async Task PlainPostgres_WritesAndSearches_RankSourceNodeFirst() {
         using PgvectorBareDatabase database = new();
         await PgvectorBareDatabase.Start(database.AdminEntities);
@@ -57,7 +67,14 @@ public class LocalModelEndToEndTests {
         long[][] single = new long[Topics.Length][];
         for (int i = 0; i < Topics.Length; i++)
             single[i] = await NodeSearch.RankedIds(service, new NodeFilter { Query = Topics[i].Paraphrase, Count = 10 });
-        long[] pair = await NodeSearch.RankedIds(service, new NodeFilter { Queries = [Topics[0].Paraphrase, Topics[1].Paraphrase], Count = 10 });
+        NodeDetails[][] needs = new NodeDetails[Needs.Length][];
+        Dictionary<long, double>[][] needSingles = new Dictionary<long, double>[Needs.Length][];
+        for (int need = 0; need < Needs.Length; need++) {
+            needs[need] = await NodeSearch.Ranked(service, new NodeFilter { Queries = Needs[need], Count = 10 });
+            needSingles[need] = new Dictionary<long, double>[Needs[need].Length];
+            for (int phrasing = 0; phrasing < Needs[need].Length; phrasing++)
+                needSingles[need][phrasing] = await SimilaritiesOf(service, Needs[need][phrasing]);
+        }
         NodeDetails[] all = await NodeSearch.Ranked(service, new NodeFilter { Queries = Topics.Select(topic => topic.Paraphrase).ToArray(), Count = 10 });
         TestContext.Progress.WriteLine("five-query ranking: " + string.Join(", ", all.Select(node => $"{node.Name}={node.Similarity:F3}")));
         long[] tail = await NodeSearch.RankedIds(service, new NodeFilter { Query = longContent[^300..], Count = 10 });
@@ -67,7 +84,12 @@ public class LocalModelEndToEndTests {
             Assert.That(database.Scalar<long>("SELECT count(*) FROM node WHERE vector_dims(embedding) = 768"), Is.EqualTo(Topics.Length + 1));
             for (int i = 0; i < Topics.Length; i++)
                 Assert.That(single[i][0], Is.EqualTo(ids[i]), Topics[i].Name);
-            Assert.That(pair.Take(2), Is.EquivalentTo(new[] { ids[0], ids[1] }), "multi query of two topics");
+            for (int need = 0; need < Needs.Length; need++) {
+                Assert.That(needs[need][0].Id, Is.EqualTo(ids[need]), $"three phrasings of the need of {Topics[need].Name}");
+                Assert.That(needs[need], Has.Length.EqualTo(Topics.Length + 1), "every node is listed");
+                foreach (NodeDetails node in needs[need])
+                    Assert.That((double) node.Similarity!.Value, Is.EqualTo(needSingles[need].Average(single => single[node.Id])).Within(1e-5), $"mean similarity of {node.Name} for the need of {Topics[need].Name}");
+            }
             Assert.That(tail.Take(3), Does.Contain(longId), "tail passage of the windowed node");
         });
     }

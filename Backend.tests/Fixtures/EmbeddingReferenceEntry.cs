@@ -15,7 +15,12 @@ public class EmbeddingReferenceEntry {
     public string Purpose { get; set; } = "";
 
     /// <summary>
-    /// text including its task prefix
+    /// text as DiVoid holds it, before the task prefix is added
+    /// </summary>
+    public string Text { get; set; } = "";
+
+    /// <summary>
+    /// text including its task prefix, as the reference model received it
     /// </summary>
     public string Prompt { get; set; } = "";
 
