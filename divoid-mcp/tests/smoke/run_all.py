@@ -114,6 +114,18 @@ def _assert(name: str, condition: bool, detail: str = "") -> None:
     _record(name, condition, detail)
 
 
+async def _adjacent_ids(node_id: int) -> set[int] | None:
+    """Ids linked to node_id, read from node_id's own edges only; None when the request fails."""
+    response = await http_client.get("nodes/links", params={"ids": [node_id]})
+    if not response.ok:
+        return None
+    neighbours: set[int] = set()
+    for lnk in response.json().get("result", []):
+        neighbours.update((lnk.get("sourceId"), lnk.get("targetId")))
+    neighbours.discard(node_id)
+    return neighbours
+
+
 def _registered_tool(module: Any, tool_name: str, config: Any) -> Any:
     """Return a callable dispatching a registered tool through a real FastMCP tool manager."""
     server = fastmcp.FastMCP("divoid-mcp-smoke")
@@ -504,19 +516,13 @@ async def smoke_link_nodes(config: Any) -> None:
     )
 
     # Verify the link appears in the adjacency query.
-    links_result = await http_client.get("nodes/links", params={"ids": [8, 9]})
-    _assert("GET /nodes/links returns 200", links_result.ok, f"status={links_result.status}")
-    if links_result.ok:
-        links_data = links_result.json()
-        pairs = {
-            (lnk.get("sourceId"), lnk.get("targetId"))
-            for lnk in links_data.get("result", [])
-        }
-        has_link = (8, 9) in pairs or (9, 8) in pairs
+    neighbours = await _adjacent_ids(8)
+    _assert("GET /nodes/links returns 200", neighbours is not None)
+    if neighbours is not None:
         _assert(
             "link #8-#9 appears in adjacency result",
-            has_link,
-            f"pair_count={len(pairs)}",
+            9 in neighbours,
+            f"neighbour_count={len(neighbours)}",
         )
 
 
@@ -801,20 +807,12 @@ async def smoke_create_task_happy_path(config: Any) -> None:
     )
 
     # Step 4: Verify the link appears in adjacency.
-    links_check = await http_client.get("nodes/links", params={"ids": [node_id, _DIVOID_TASKS_GROUP_ID]})
-    if links_check.ok:
-        pairs = {
-            (lnk.get("sourceId"), lnk.get("targetId"))
-            for lnk in links_check.json().get("result", [])
-        }
-        has_link = (
-            (node_id, _DIVOID_TASKS_GROUP_ID) in pairs
-            or (_DIVOID_TASKS_GROUP_ID, node_id) in pairs
-        )
+    neighbours = await _adjacent_ids(node_id)
+    if neighbours is not None:
         _assert(
             "link to Tasks group visible in adjacency",
-            has_link,
-            f"pair_count={len(pairs)}",
+            _DIVOID_TASKS_GROUP_ID in neighbours,
+            f"neighbour_count={len(neighbours)}",
         )
 
     # Verify node has expected fields.
@@ -1144,21 +1142,13 @@ async def smoke_create_session_log_happy_path(config: Any) -> None:
 
     # Verify all expected links appear in adjacency.
     all_expected_links = [_DIVOID_DOCS_GROUP_ID, 8, 9]
-    links_check = await http_client.get(
-        "nodes/links",
-        params={"ids": [node_id] + all_expected_links},
-    )
-    if links_check.ok:
-        pairs = {
-            (lnk.get("sourceId"), lnk.get("targetId"))
-            for lnk in links_check.json().get("result", [])
-        }
+    neighbours = await _adjacent_ids(node_id)
+    if neighbours is not None:
         for expected_target in all_expected_links:
-            has_link = (node_id, expected_target) in pairs or (expected_target, node_id) in pairs
             _assert(
                 f"link session-log -> #{expected_target} visible in adjacency",
-                has_link,
-                f"pair_count={len(pairs)}",
+                expected_target in neighbours,
+                f"neighbour_count={len(neighbours)}",
             )
 
     # Cleanup: DELETE the test node.
@@ -3003,17 +2993,12 @@ async def smoke_create_node_happy_path(config: Any) -> None:
                 _assert("content round-trip: decodes as UTF-8", False, "UnicodeDecodeError")
 
         # Step 6: Verify link visible in adjacency.
-        links_check = await http_client.get("nodes/links", params={"ids": [node_id, 499]})
-        if links_check.ok:
-            pairs = {
-                (lnk.get("sourceId"), lnk.get("targetId"))
-                for lnk in links_check.json().get("result", [])
-            }
-            has_link = (node_id, 499) in pairs or (499, node_id) in pairs
+        neighbours = await _adjacent_ids(node_id)
+        if neighbours is not None:
             _assert(
                 "link to Meetings group #499 visible in adjacency",
-                has_link,
-                f"pair_count={len(pairs)}",
+                499 in neighbours,
+                f"neighbour_count={len(neighbours)}",
             )
 
     finally:
