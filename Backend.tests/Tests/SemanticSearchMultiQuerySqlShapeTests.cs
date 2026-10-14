@@ -7,6 +7,7 @@ using System.Threading;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
 using Backend.Services.Nodes;
+using Backend.tests.Fixtures;
 using Moq;
 using NUnit.Framework;
 using Pooshit.Ocelot.Clients;
@@ -65,7 +66,7 @@ public class SemanticSearchMultiQuerySqlShapeTests
         client.SetupGet(c => c.DBInfo).Returns(new PostgreInfo());
         client.Setup(c => c.ReaderAsync(It.IsAny<Transaction>(), It.IsAny<string>(), It.IsAny<IEnumerable<object>>(), It.IsAny<CancellationToken>()))
               .Callback<Transaction, string, IEnumerable<object>, CancellationToken>((_, sql, parameters, _) => throw new StatementCaptured(sql, parameters.ToArray()));
-        return new(new EntityManager(client.Object), new EmbeddingCapability(true));
+        return new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
     }
 
     static Statement CaptureList(NodeFilter filter)

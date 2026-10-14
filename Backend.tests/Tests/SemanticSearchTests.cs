@@ -52,7 +52,7 @@ public class SemanticSearchTests
     static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
 
     static NodeService MakeService(DatabaseFixture fixture, IEmbeddingCapability? capability = null)
-        => new(fixture.EntityManager, capability ?? DisabledCapability);
+        => new(fixture.EntityManager, capability ?? DisabledCapability, EmbeddingProducers.Function);
 
     static Task<NodeDetails> CreateNode(NodeService svc, string type = "task", string name = "node")
         => svc.CreateNode(new NodeDetails { Type = type, Name = name }, callerId: 0);
@@ -194,7 +194,7 @@ public class SemanticSearchTests
     [Test]
     public void NodeMapper_WithQuery_IncludesSimilarityField()
     {
-        NodeMapper mapper = new(new NodeFilter { Query = "some search text" });
+        NodeMapper mapper = new(new NodeFilter { Query = "some search text" }, EmbeddingProducers.Function);
         Assert.DoesNotThrow(() => _ = mapper["similarity"],
             "mapper with Query must expose a 'similarity' field mapping");
     }
@@ -202,7 +202,7 @@ public class SemanticSearchTests
     [Test]
     public void NodeMapper_WithQuery_SimilarityFieldPresent_AllStandardFieldsAlsoPresent()
     {
-        NodeMapper mapper = new(new NodeFilter { Query = "some search text" });
+        NodeMapper mapper = new(new NodeFilter { Query = "some search text" }, EmbeddingProducers.Function);
         // Standard fields must still be accessible alongside the similarity field
         Assert.Multiple(() => {
             Assert.DoesNotThrow(() => _ = mapper["id"]);
@@ -218,8 +218,8 @@ public class SemanticSearchTests
     public void NodeMapper_WithEmptyQuery_DoesNotIncludeSimilarityField()
     {
         // empty-string and whitespace-only queries are treated as absent (IsNullOrWhiteSpace gate)
-        NodeMapper mapperEmpty = new(new NodeFilter { Query = "" });
-        NodeMapper mapperWhitespace = new(new NodeFilter { Query = "   " });
+        NodeMapper mapperEmpty = new(new NodeFilter { Query = "" }, EmbeddingProducers.Function);
+        NodeMapper mapperWhitespace = new(new NodeFilter { Query = "   " }, EmbeddingProducers.Function);
 
         Assert.Throws<UnknownFieldException>(() => _ = mapperEmpty["similarity"],
             "mapper with empty Query must not expose similarity field");
@@ -230,7 +230,7 @@ public class SemanticSearchTests
     [Test]
     public void NodeMapper_NullFilter_DoesNotIncludeSimilarityField()
     {
-        NodeMapper mapper = new(null);
+        NodeMapper mapper = new(null, EmbeddingProducers.Function);
         Assert.Throws<UnknownFieldException>(() => _ = mapper["similarity"],
             "mapper with null filter must not expose similarity field");
     }
@@ -490,7 +490,7 @@ public class SemanticSearchTests
 
         // Construct the mapper exactly as NodeService.ListPaged does, then apply
         // the same defaulting logic under test.
-        NodeMapper mapper = new(filter);
+        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
         bool isSemantic = !string.IsNullOrWhiteSpace(filter.Query);
         filter.Fields ??= isSemantic
             ? [.. mapper.DefaultListFields, "similarity"]
@@ -509,7 +509,7 @@ public class SemanticSearchTests
 
         NodePathFilter filter = new() { Path = "[type:task]", Query = "find something", Count = 10 };
 
-        NodeMapper mapper = new(filter);
+        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
         bool isSemantic = !string.IsNullOrWhiteSpace(filter.Query);
         filter.Fields ??= isSemantic
             ? [.. mapper.DefaultListFields, "similarity"]
@@ -529,7 +529,7 @@ public class SemanticSearchTests
 
         NodeFilter filter = new() { Query = "find something", Count = 10, Fields = ["id", "name"] };
 
-        NodeMapper mapper = new(filter);
+        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
         bool isSemantic = !string.IsNullOrWhiteSpace(filter.Query);
         filter.Fields ??= isSemantic
             ? [.. mapper.DefaultListFields, "similarity"]
@@ -548,7 +548,7 @@ public class SemanticSearchTests
 
         NodeFilter filter = new() { Count = 10 };
 
-        NodeMapper mapper = new(filter);
+        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
         bool isSemantic = !string.IsNullOrWhiteSpace(filter.Query);
         filter.Fields ??= isSemantic
             ? [.. mapper.DefaultListFields, "similarity"]
@@ -640,7 +640,7 @@ public class SemanticSearchTests
     [Description("DiVoid #16138: the mapper exposes the similarity field for several queries")]
     public void NodeMapper_WithTwoQueries_IncludesSimilarityField()
     {
-        NodeMapper mapper = new(new NodeFilter { Queries = ["a", "b"] });
+        NodeMapper mapper = new(new NodeFilter { Queries = ["a", "b"] }, EmbeddingProducers.Function);
 
         Assert.DoesNotThrow(() => _ = mapper["similarity"]);
     }
@@ -649,7 +649,7 @@ public class SemanticSearchTests
     [Description("DiVoid #16138: an empty queries list is not a semantic request")]
     public void NodeMapper_WithEmptyQueriesList_DoesNotIncludeSimilarityField()
     {
-        NodeMapper mapper = new(new NodeFilter { Queries = [] });
+        NodeMapper mapper = new(new NodeFilter { Queries = [] }, EmbeddingProducers.Function);
 
         Assert.Throws<UnknownFieldException>(() => _ = mapper["similarity"]);
     }

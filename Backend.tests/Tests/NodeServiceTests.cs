@@ -20,7 +20,7 @@ public class NodeServiceTests
     /// </summary>
     static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
 
-    static NodeService MakeService(DatabaseFixture fixture) => new(fixture.EntityManager, DisabledCapability);
+    static NodeService MakeService(DatabaseFixture fixture) => new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
 
     // -----------------------------------------------------------------------
     // Helpers
@@ -2021,7 +2021,7 @@ public class NodeServiceTests
         IDBClient spyClient = CancellationTokenRejectingDbClientSpy.Wrap(fixture.EntityManager.DBClient);
         IEntityManager spyManager = new EntityManager(spyClient);
 
-        NodeService spySvc = new(spyManager, DisabledCapability);
+        NodeService spySvc = new(spyManager, DisabledCapability, EmbeddingProducers.Function);
         using CancellationTokenSource cts = new();
 
         AsyncPageResponseWriter<NodeLink> writer = await spySvc.ListLinks(

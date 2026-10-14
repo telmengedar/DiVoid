@@ -24,12 +24,13 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
     const string SumAlias = "qs";
 
     readonly NodeFilter filter;
+    readonly IEmbeddingProducer producer;
 
     /// <summary>
     /// creates a new <see cref="NodeMapper"/> for standard list mode (no semantic search)
     /// </summary>
     public NodeMapper()
-    : this(null) { }
+    : this(null, null) { }
 
     /// <summary>
     /// creates a new <see cref="NodeMapper"/> optionally configured for semantic search.
@@ -37,10 +38,12 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
     /// <c>similarity</c> field-mapping is included in <see cref="Mappings()"/>.
     /// </summary>
     /// <param name="filter">the inbound node filter; null is treated as standard list mode</param>
-    public NodeMapper(NodeFilter filter)
+    /// <param name="producer">producer of the query vectors, not needed unless the filter is semantic</param>
+    public NodeMapper(NodeFilter filter, IEmbeddingProducer producer)
     : base(Mappings(filter).ToArray(), null, PostProcess)
     {
         this.filter = filter;
+        this.producer = producer;
     }
 
     /// <inheritdoc />
@@ -118,9 +121,9 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
 
     static bool IsSemantic(NodeFilter filter) => filter?.GetEffectiveQueries().Length > 0;
 
-    static ISqlToken EmbeddedQuery(string queryText)
+    ISqlToken EmbeddedQuery(string queryText)
     {
-        return EmbeddingExpression.OfText(DB.Constant(queryText));
+        return producer.Embed(queryText, EmbeddingPurpose.Query);
     }
 
     ILoadOperation QueryVectorSubselect(IEntityManager database)

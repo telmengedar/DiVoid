@@ -45,7 +45,7 @@ public class EmbeddingModelGuardTests
 
     static async Task<long> SeedNodeWithVector(DatabaseFixture fixture)
     {
-        NodeService service = new(fixture.EntityManager, Disabled);
+        NodeService service = new(fixture.EntityManager, Disabled, EmbeddingProducers.Function);
         NodeDetails node = await service.CreateNode(new NodeDetails { Type = "doc", Name = "vectored" }, callerId: 0);
         await fixture.EntityManager.DBClient.NonQueryAsync("UPDATE node SET embedding = x'00000000' WHERE id = @1", node.Id);
         return node.Id;
@@ -67,7 +67,7 @@ public class EmbeddingModelGuardTests
     public async Task Absent_NodesWithoutVectors_LocalProducer_InsertsConfigured()
     {
         using DatabaseFixture fixture = new();
-        NodeService service = new(fixture.EntityManager, Disabled);
+        NodeService service = new(fixture.EntityManager, Disabled, EmbeddingProducers.Function);
         await service.CreateNode(new NodeDetails { Type = "doc", Name = "unembedded" }, callerId: 0);
 
         Assert.DoesNotThrowAsync(() => MakeGuard(fixture.EntityManager).EnsureAsync(Gemma));
@@ -240,7 +240,7 @@ public class EmbeddingModelGuardTests
 
         await backfill.RunAsync();
 
-        Assert.That(await RecordedModels(fixture.EntityManager), Is.EqualTo(new[] { TextContentTypePredicate.EmbeddingModel }));
+        Assert.That(await RecordedModels(fixture.EntityManager), Is.EqualTo(new[] { PostgresFunctionEmbeddingProducer.ModelId }));
     }
 
     [Test, Parallelizable]
@@ -248,7 +248,7 @@ public class EmbeddingModelGuardTests
     public async Task Backfill_Mismatch_RefusesBeforeAnyWrite()
     {
         using DatabaseFixture fixture = new();
-        NodeService service = new(fixture.EntityManager, Disabled);
+        NodeService service = new(fixture.EntityManager, Disabled, EmbeddingProducers.Function);
         NodeDetails node = await service.CreateNode(new NodeDetails { Type = "doc", Name = "candidate" }, callerId: 0);
         await Record(fixture.EntityManager, Gemma);
         EmbeddingBackfillService backfill = MakeBackfill(fixture);
@@ -262,10 +262,10 @@ public class EmbeddingModelGuardTests
         });
     }
 
-    static EmbeddingBackfillService MakeBackfill(DatabaseFixture fixture)
+    static EmbeddingBackfillService MakeBackfill(DatabaseFixture fixture, IEmbeddingProducer? producer = null)
     {
         IEntityManager recording = new EntityManager(EmbeddingWriteMarkerClient.Wrap(fixture.EntityManager.DBClient));
-        return new EmbeddingBackfillService(recording, Enabled, MakeGuard(recording), NullLogger<EmbeddingBackfillService>.Instance);
+        return new EmbeddingBackfillService(recording, Enabled, MakeGuard(recording), NullLogger<EmbeddingBackfillService>.Instance, producer ?? EmbeddingProducers.Function);
     }
 
     [Test, Parallelizable]
@@ -276,7 +276,35 @@ public class EmbeddingModelGuardTests
 
         IEntityManager database = factory.Services.GetRequiredService<IEntityManager>();
 
-        Assert.That(await RecordedModels(database), Is.EqualTo(new[] { TextContentTypePredicate.EmbeddingModel }));
+        Assert.That(await RecordedModels(database), Is.EqualTo(new[] { PostgresFunctionEmbeddingProducer.ModelId }));
+    }
+
+    [Test, Parallelizable]
+    [Description("host startup records the model of the registered producer, not a fixed model id")]
+    public async Task Host_Startup_RecordsModelOfRegisteredProducer()
+    {
+        RecordingEmbeddingProducer producer = new();
+        await using WebApplicationFactory<Program> factory = TestSetup.CreateTestFactory(databasePath: TempDatabase(), configureServices: services => {
+            Enable(services);
+            services.AddSingleton<IEmbeddingProducer>(producer);
+        });
+
+        IEntityManager database = factory.Services.GetRequiredService<IEntityManager>();
+
+        Assert.That(await RecordedModels(database), Is.EqualTo(new[] { producer.Model }));
+    }
+
+    [Test, Parallelizable]
+    [Description("the backfill records the model of the producer it writes with, not a fixed model id")]
+    public async Task Backfill_RecordsModelOfItsProducer()
+    {
+        using DatabaseFixture fixture = new();
+        RecordingEmbeddingProducer producer = new();
+        EmbeddingBackfillService backfill = MakeBackfill(fixture, producer);
+
+        await backfill.RunAsync();
+
+        Assert.That(await RecordedModels(fixture.EntityManager), Is.EqualTo(new[] { producer.Model }));
     }
 
     [Test, Parallelizable]

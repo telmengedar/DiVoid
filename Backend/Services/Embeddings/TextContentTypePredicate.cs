@@ -7,12 +7,6 @@ namespace Backend.Services.Embeddings;
 public static class TextContentTypePredicate {
 
     /// <summary>
-    /// the embedding model identifier shared by all call sites in this project.
-    /// centralized here per §13 Decision 1 of the embeddings architecture doc.
-    /// </summary>
-    public const string EmbeddingModel = "gemini-embedding-001";
-
-    /// <summary>
     /// application/* MIME types that qualify as embeddable text.
     /// exposed so callers can build SQL-side IN predicates without
     /// duplicating the allowlist.

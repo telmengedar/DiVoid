@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
 using Backend.Services.Nodes;
+using Backend.tests.Fixtures;
 using Moq;
 using NUnit.Framework;
 using Pooshit.Ocelot.Clients;
@@ -68,7 +69,7 @@ public class LinkedToSqlShapeTests
             .ThrowsAsync(new SqlCapturedException());
 
         IEntityManager em = new EntityManager(clientMock.Object);
-        NodeService service = new(em, DisabledCapability);
+        NodeService service = new(em, DisabledCapability, EmbeddingProducers.Function);
         NodeFilter filter = new() { LinkedTo = [1L, 2L, 3L, 4L, 5L], Count = 20 };
 
         Assert.ThrowsAsync<SqlCapturedException>(() => service.ListPaged(filter, callerId: 0, isAdmin: true));

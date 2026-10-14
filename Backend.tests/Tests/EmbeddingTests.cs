@@ -20,7 +20,7 @@ public class EmbeddingTests
     static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
 
     static NodeService MakeService(DatabaseFixture fixture)
-        => new(fixture.EntityManager, DisabledCapability);
+        => new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
 
     // -----------------------------------------------------------------------
     // 1. Capability flag — DI resolution in the SQLite test factory
@@ -192,7 +192,6 @@ public class EmbeddingTests
     [Test]
     public void EmbeddingModel_Constant_MatchesExpectedValue()
     {
-        // Centralised in TextContentTypePredicate per §13 Decision 1 of the architecture doc.
-        Assert.That(TextContentTypePredicate.EmbeddingModel, Is.EqualTo("gemini-embedding-001"));
+        Assert.That(PostgresFunctionEmbeddingProducer.ModelId, Is.EqualTo("gemini-embedding-001"));
     }
 }

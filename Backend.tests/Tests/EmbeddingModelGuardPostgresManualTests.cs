@@ -49,7 +49,7 @@ public class EmbeddingModelGuardPostgresManualTests
     {
         using EmbeddingPostgresDatabase database = new();
         await database.Start();
-        NodeService service = new(database.Entities, new EmbeddingCapability(false));
+        NodeService service = new(database.Entities, new EmbeddingCapability(false), EmbeddingProducers.Function);
         NodeDetails node = await service.CreateNode(new NodeDetails { Type = "doc", Name = "vectored" }, callerId: 0);
         database.Scalar<object?>($"UPDATE node SET embedding = array_fill(0.1::real, ARRAY[768])::vector WHERE id = {node.Id} RETURNING 1");
 
@@ -72,7 +72,7 @@ public class EmbeddingModelGuardPostgresManualTests
     {
         using EmbeddingPostgresDatabase database = new();
         await database.Start();
-        NodeService service = new(database.Entities, new EmbeddingCapability(false));
+        NodeService service = new(database.Entities, new EmbeddingCapability(false), EmbeddingProducers.Function);
         await service.CreateNode(new NodeDetails { Type = "doc", Name = "unembedded" }, callerId: 0);
 
         Assert.DoesNotThrowAsync(() => MakeGuard(database.Entities).EnsureAsync(Gemma));

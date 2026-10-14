@@ -23,10 +23,10 @@ public class EmbeddingBackfillTests
     static readonly IEmbeddingCapability EnabledCapability  = new EmbeddingCapability(true);
 
     static NodeService MakeNodeService(DatabaseFixture fixture)
-        => new(fixture.EntityManager, DisabledCapability);
+        => new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
 
     static EmbeddingBackfillService MakeBackfill(DatabaseFixture fixture, IEmbeddingCapability capability)
-        => new(fixture.EntityManager, capability, new EmbeddingModelGuard(fixture.EntityManager, capability, NullLogger<EmbeddingModelGuard>.Instance), NullLogger<EmbeddingBackfillService>.Instance);
+        => new(fixture.EntityManager, capability, new EmbeddingModelGuard(fixture.EntityManager, capability, NullLogger<EmbeddingModelGuard>.Instance), NullLogger<EmbeddingBackfillService>.Instance, EmbeddingProducers.Function);
 
     // -----------------------------------------------------------------------
     // 1. Capability disabled (SQLite) — exits immediately, no DB writes
@@ -183,7 +183,7 @@ public class EmbeddingBackfillTests
     static EmbeddingBackfillService MakeRecordingBackfill(DatabaseFixture fixture, Func<Task>? beforeWrite = null, ILogger<EmbeddingBackfillService>? logger = null)
     {
         IEntityManager recording = new EntityManager(EmbeddingWriteMarkerClient.Wrap(fixture.EntityManager.DBClient, beforeWrite));
-        return new EmbeddingBackfillService(recording, EnabledCapability, new EmbeddingModelGuard(recording, EnabledCapability, NullLogger<EmbeddingModelGuard>.Instance), logger ?? NullLogger<EmbeddingBackfillService>.Instance);
+        return new EmbeddingBackfillService(recording, EnabledCapability, new EmbeddingModelGuard(recording, EnabledCapability, NullLogger<EmbeddingModelGuard>.Instance), logger ?? NullLogger<EmbeddingBackfillService>.Instance, EmbeddingProducers.Function);
     }
 
     static async Task<long[]> EmbeddedIds(DatabaseFixture fixture)

@@ -103,10 +103,8 @@ public class Startup
         services.AddDivoidCors(Configuration);
         services.ConfigureDatabaseService(Configuration);
 
-        bool embeddingEnabled = Configuration["Database:Type"] != "Sqlite";
-        services.AddSingleton<IEmbeddingCapability>(new EmbeddingCapability(embeddingEnabled));
+        services.AddEmbedding(Configuration);
 
-        services.AddTransient<IEmbeddingModelGuard, EmbeddingModelGuard>();
         services.AddTransient<INodeService, NodeService>();
         services.AddTransient<IKeyGenerator, KeyGenerator>();
         services.AddTransient<IUserService, UserService>();

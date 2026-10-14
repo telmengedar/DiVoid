@@ -35,7 +35,7 @@ public class NodeLinkAutoPositionTests
 {
     static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
 
-    static NodeService MakeService(DatabaseFixture fixture) => new(fixture.EntityManager, DisabledCapability);
+    static NodeService MakeService(DatabaseFixture fixture) => new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
 
     /// <summary>
     /// computes the expected auto-position — must stay in sync with NodeService.ComputeAutoPosition.

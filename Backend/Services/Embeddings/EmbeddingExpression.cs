@@ -15,30 +15,20 @@ public static class EmbeddingExpression {
     public const int Dimensions = 768;
 
     /// <summary>
-    /// expression yielding the first <see cref="Dimensions"/> components of the embedding of <paramref name="text"/>
-    /// </summary>
-    /// <param name="text">token which resolves to the text to embed</param>
-    /// <returns>vector expression, usable for column writes and as query vector</returns>
-    public static ISqlToken OfText(ISqlToken text) {
-        ISqlToken embedding = DB.CustomFunction("embedding", DB.Constant(TextContentTypePredicate.EmbeddingModel), text);
-        ISqlToken vector = DB.Value<object>(v => DB.Cast(embedding, CastType.Vector));
-        return DB.CustomFunction("subvector", vector, DB.Constant(1), DB.Constant(Dimensions));
-    }
-
-    /// <summary>
-    /// expression yielding the vector stored for a list of texts: <see cref="OfText"/> for one text, the normalised sum of the normalised vectors of all texts otherwise
+    /// expression yielding the vector stored for a list of texts: the producer's vector for one text, the normalised sum of the normalised vectors of all texts otherwise
     /// </summary>
     /// <param name="texts">texts to embed, at least one</param>
+    /// <param name="producer">producer of the per-text vectors</param>
     /// <returns>vector expression usable for column writes</returns>
-    public static ISqlToken OfTexts(string[] texts) {
+    public static ISqlToken OfTexts(string[] texts, IEmbeddingProducer producer) {
         if (texts == null || texts.Length == 0)
             throw new ArgumentException("at least one text is required", nameof(texts));
 
         if (texts.Length == 1)
-            return OfText(DB.Constant(texts[0]));
+            return producer.Embed(texts[0], EmbeddingPurpose.Document);
 
         ISqlToken sum = texts
-                        .Select(text => DB.CustomFunction("l2_normalize", OfText(DB.Constant(text))))
+                        .Select(text => DB.CustomFunction("l2_normalize", producer.Embed(text, EmbeddingPurpose.Document)))
                         .Aggregate((total, next) => DB.CustomFunction("vector_add", total, next));
         return DB.CustomFunction("l2_normalize", sum);
     }
