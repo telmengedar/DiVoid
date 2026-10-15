@@ -546,20 +546,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     );
 
     /// <summary>
-    /// chains N hops into a terminal <see cref="LoadOperation{Node}"/> ready for
-    /// <c>ExecutePagedAsync</c>.
-    ///
-    /// Every hop — including all intermediate hops — is expressed as a server-side
-    /// <c>IN (subquery)</c> predicate.  No intermediate id-sets are materialised; the
-    /// entire chain compiles into a single SQL statement executed once by the database.
-    ///
-    /// Pattern mirrors the existing <c>linkedto</c> filter at <c>NodeService.cs:175-181</c>:
-    /// each hop is a <see cref="LoadOperation{Node}"/> whose predicate wraps the previous
-    /// hop's id-subquery via a Union-of-two-<see cref="NodeLink"/>-directions subquery.
-    ///
-    /// When <paramref name="filter"/> carries a non-empty <c>Query</c> or <c>Queries</c> the terminal
-    /// operation receives the same similarity ordering and predicates as plain-list mode
-    /// (see <see cref="ApplySemanticSearch"/>).
+    /// chains the hops of a path query into a terminal operation; every hop is gated by the caller's read visibility
     /// </summary>
     ComposedPath ComposeHops(PathQuery query, NodePathFilter filter, NodeMapper mapper, bool isSemantic, long callerId, bool isAdmin, CancellationToken ct)
     {
@@ -568,13 +555,19 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         HopSegment[] hops = query.Hops;
         filter.Fields ??= mapper.DefaultListFields;
 
-        // hop[0]: seed — plain filter on Node, no traversal
-        LoadOperation<Node> currentHopOp = database.Load<Node>(n => n.Id);
+        PredicateExpression<Node> gate = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin);
+
+        PredicateExpression<Node> seedPredicate = null;
         Expression<Func<Node, bool>> seedPred = GenerateHopFilter(hops[0]);
         if (seedPred != null)
-            currentHopOp.Where(seedPred);
+            seedPredicate &= new PredicateExpression<Node>(seedPred);
+        if (gate != null)
+            seedPredicate &= gate;
 
-        // hop[1..N-1]: each intermediate hop chains via IN (link-subquery(prevHop))
+        LoadOperation<Node> currentHopOp = database.Load<Node>(n => n.Id);
+        if (seedPredicate != null)
+            currentHopOp.Where(seedPredicate.Content);
+
         for (int i = 1; i < hops.Length; i++)
         {
             ct.ThrowIfCancellationRequested();
@@ -588,6 +581,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             Expression<Func<Node, bool>> hopPred = GenerateHopFilter(hops[i]);
             if (hopPred != null)
                 chainPredicate &= new PredicateExpression<Node>(hopPred);
+            if (gate != null)
+                chainPredicate &= gate;
 
             currentHopOp = database.Load<Node>(n => n.Id).Where(chainPredicate.Content);
         }
