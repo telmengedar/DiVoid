@@ -32,6 +32,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="EmbeddingReference\embedding-reference.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="NUnit.Framework" />
   </ItemGroup>
 

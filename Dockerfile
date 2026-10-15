@@ -83,6 +83,7 @@ EXPOSE 80
 ENV ASPNETCORE_ENVIRONMENT=Production
 ENV Database__Type=Sqlite
 ENV Database__Source=/data/DiVoid.db3
+ENV Embedding__ModelPath=/data/models/embeddinggemma-2
 
 # Create the data directory; in production mount a volume at /data
 RUN mkdir -p /data
