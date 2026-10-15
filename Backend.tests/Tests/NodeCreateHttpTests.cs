@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
 using Backend.Models.Nodes;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using NUnit.Framework;
+using Pooshit.AspNetCore.Services.Data;
 using Pooshit.Http;
 using Pooshit.Json;
 
@@ -137,5 +139,56 @@ public class NodeCreateHttpTests
 
         Assert.That(fetched.Refinement, Is.Null,
             "nodes created without a refinement must have null refinement after GET (no server-side default)");
+    }
+
+    [Test]
+    [Description("DiVoid #22474: skipEmbedding supplied on create is persisted and read back on GET")]
+    public async Task CreateNode_WithSkipEmbedding_ReturnedOnGet()
+    {
+        NodeDetails created = await PostNodeAsync(new NodeDetails { Type = "session-log", Name = "SkipRoundTrip", SkipEmbedding = true });
+
+        NodeDetails fetched = await GetNodeAsync(created.Id);
+
+        Assert.That(fetched.SkipEmbedding, Is.True);
+    }
+
+    [Test]
+    [Description("DiVoid #22474: a node created without skipEmbedding reads back false")]
+    public async Task CreateNode_WithoutSkipEmbedding_ReturnsFalseOnGet()
+    {
+        NodeDetails created = await PostNodeAsync(new NodeDetails { Type = "task", Name = "NoSkip" });
+
+        NodeDetails fetched = await GetNodeAsync(created.Id);
+
+        Assert.That(fetched.SkipEmbedding, Is.False);
+    }
+
+    async Task<NodeDetails> ListSingleAsync(long id, string fields)
+    {
+        HttpResponseMessage resp = await http.Get<HttpResponseMessage>($"{TestSetup.BaseUrl}/api/nodes?id={id}{fields}");
+        Page<NodeDetails> page = Json.Read<Page<NodeDetails>>(await resp.Content.ReadAsStringAsync());
+        return page.Result.Single();
+    }
+
+    [Test]
+    [Description("DiVoid #22474: a list asks for skipEmbedding with ?fields= and gets the stored flag")]
+    public async Task List_WithFieldsSkipEmbedding_ReturnsFlag()
+    {
+        NodeDetails created = await PostNodeAsync(new NodeDetails { Type = "session-log", Name = "SkipListed", SkipEmbedding = true });
+
+        NodeDetails listed = await ListSingleAsync(created.Id, "&fields=id,skipEmbedding");
+
+        Assert.That(listed.SkipEmbedding, Is.True);
+    }
+
+    [Test]
+    [Description("DiVoid #22474: a list without ?fields= does not carry skipEmbedding")]
+    public async Task List_DefaultFields_OmitSkipEmbedding()
+    {
+        NodeDetails created = await PostNodeAsync(new NodeDetails { Type = "session-log", Name = "SkipNotDefault", SkipEmbedding = true });
+
+        NodeDetails listed = await ListSingleAsync(created.Id, string.Empty);
+
+        Assert.That(listed.SkipEmbedding, Is.Null);
     }
 }

@@ -186,4 +186,20 @@ public class NodePatchHttpTests
         Assert.That(fetched.Type, Is.EqualTo("bug"),
             "the retyped node must read back with the new type on a subsequent GET");
     }
+
+    [Test]
+    [Description("DiVoid #22474: skipEmbedding is patchable and reads back on GET")]
+    public async Task Patch_ReplaceSkipEmbedding_ReturnedOnGet()
+    {
+        long id = await CreateNodeAsync();
+        PatchOperation[] ops = [new() { Op = "replace", Path = "/skipEmbedding", Value = true }];
+
+        HttpResponseMessage resp = await PatchAsync($"{TestSetup.BaseUrl}/api/nodes/{id}", ops);
+        NodeDetails fetched = await http.Get<NodeDetails>($"{TestSetup.BaseUrl}/api/nodes/{id}", new HttpOptions());
+
+        Assert.Multiple(() => {
+            Assert.That((int) resp.StatusCode, Is.EqualTo(200));
+            Assert.That(fetched.SkipEmbedding, Is.True);
+        });
+    }
 }

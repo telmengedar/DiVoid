@@ -46,7 +46,7 @@ namespace Backend.Controllers.V1
 
         /// <summary>
         /// creates a new <see cref="Node"/>.
-        /// on Postgres, creates a name-only embedding for the new node if its name is non-empty.
+        /// on Postgres, creates a name-only embedding for the new node if its name is non-empty and <c>skipEmbedding</c> is not true.
         /// </summary>
         /// <param name="node">node to create</param>
         /// <returns>created node</returns>
@@ -155,6 +155,7 @@ namespace Backend.Controllers.V1
         /// patches data of a node.
         /// on Postgres, a patch that touches <c>/name</c> also regenerates the node's embedding
         /// inside the same transaction (new name + current content composition).
+        /// a patch of <c>/skipEmbedding</c> clears the embedding (true) or recomputes it (false) in the same transaction.
         /// </summary>
         /// <param name="nodeId">id of node to patch</param>
         /// <param name="patches">patches to apply</param>
@@ -175,6 +176,7 @@ namespace Backend.Controllers.V1
         /// on Postgres: also (re)generates a vector embedding from the node's name plus the
         /// new content (or name alone if content is non-text/empty; null only if both are empty).
         /// on SQLite: content is written; embedding is not touched.
+        /// a node with <c>skipEmbedding</c> true is never embedded.
         /// </summary>
         /// <param name="nodeId">id of node for which to upload data</param>
         /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
@@ -193,7 +195,7 @@ namespace Backend.Controllers.V1
         /// character, all against the content as read.  a safer alternative to a wholesale
         /// content re-upload via <c>POST /content</c>.
         /// the node's substance is cleared.
-        /// on Postgres the embedding is regenerated in the same transaction.
+        /// on Postgres the embedding is regenerated in the same transaction unless <c>skipEmbedding</c> is true.
         /// </summary>
         /// <param name="nodeId">id of the node whose content is edited</param>
         /// <param name="edits">ordered range replacements to apply</param>

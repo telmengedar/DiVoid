@@ -121,8 +121,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         double insertY = node.Y ?? 0.0;
         DateTime now = DateTime.UtcNow;
         long nodeId = await database.Insert<Node>()
-                              .Columns(n => n.TypeId, n => n.Name, n => n.Status, n => n.Severity, n => n.Refinement, n => n.RootNodeId, n => n.Substance, n => n.X, n => n.Y, n => n.OwnerId, n => n.Access, n => n.Created, n => n.LastUpdate)
-                              .Values(typeId, node.Name, node.Status, node.Severity, node.Refinement, node.RootNodeId, node.Substance, insertX, insertY, callerId, node.Access ?? (NodeAccess.Read | NodeAccess.Write), now, now)
+                              .Columns(n => n.TypeId, n => n.Name, n => n.Status, n => n.Severity, n => n.Refinement, n => n.RootNodeId, n => n.Substance, n => n.X, n => n.Y, n => n.OwnerId, n => n.Access, n => n.SkipEmbedding, n => n.Created, n => n.LastUpdate)
+                              .Values(typeId, node.Name, node.Status, node.Severity, node.Refinement, node.RootNodeId, node.Substance, insertX, insertY, callerId, node.Access ?? (NodeAccess.Read | NodeAccess.Write), node.SkipEmbedding ?? false, now, now)
                               .ReturnID()
                               .ExecuteAsync(transaction);
 
@@ -143,7 +143,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                 await TryAnchorOrphanToPositioned(transaction, nodeId, links);
         }
 
-        if (embeddingCapability.IsEnabled && !string.IsNullOrWhiteSpace(node.Name))
+        if (embeddingCapability.IsEnabled && node.SkipEmbedding != true && !string.IsNullOrWhiteSpace(node.Name))
             await EmbeddingWrite.Build(database, nodeId, node.Name, null, null, embeddingProducer).ExecuteAsync(transaction);
 
         transaction.Commit();
@@ -997,7 +997,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         PatchOperation typeOp = Array.Find(patches, p => string.Equals(p.Path, "/type", StringComparison.OrdinalIgnoreCase));
         PatchOperation[] remainingPatches = typeOp == null ? patches : patches.Where(p => p != typeOp).ToArray();
 
-        bool nameTouched = embeddingCapability.IsEnabled && TouchesName(patches);
+        bool embeddingTouched = embeddingCapability.IsEnabled && (TouchesName(patches) || TouchesPath(patches, "/skipEmbedding"));
         using Transaction transaction = database.Transaction();
 
         if (remainingPatches.Length > 0)
@@ -1028,19 +1028,25 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (touchAffected == 0)
             throw new NotFoundException<Node>(nodeId);
 
-        if (nameTouched)
-            await RegenerateNameEmbedding(transaction, nodeId, ct);
+        if (embeddingTouched)
+            await RegenerateEmbedding(transaction, nodeId, ct);
 
         transaction.Commit();
         return await GetNodeById(nodeId, callerId, isAdmin: true);
     }
 
-    async Task RegenerateNameEmbedding(Transaction transaction, long nodeId, CancellationToken ct)
+    async Task RegenerateEmbedding(Transaction transaction, long nodeId, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        Node row = await database.Load<Node>(n => n.Name, n => n.ContentType)
+        Node row = await database.Load<Node>(n => n.Name, n => n.ContentType, n => n.SkipEmbedding)
                                  .Where(n => n.Id == nodeId)
                                  .ExecuteEntityAsync(transaction);
+
+        if (row.SkipEmbedding)
+        {
+            await EmbeddingWrite.Build(database, nodeId, null, null, null, embeddingProducer).ExecuteAsync(transaction);
+            return;
+        }
 
         byte[] content = null;
         if (TextContentTypePredicate.IsText(row.ContentType))
@@ -1128,9 +1134,11 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             return;
 
         ct.ThrowIfCancellationRequested();
-        Node row = await database.Load<Node>(n => n.Name)
+        Node row = await database.Load<Node>(n => n.Name, n => n.SkipEmbedding)
                                  .Where(n => n.Id == nodeId)
                                  .ExecuteEntityAsync(transaction);
+        if (row.SkipEmbedding)
+            return;
 
         await EmbeddingWrite.Build(database, nodeId, row.Name, content, contentType, embeddingProducer).ExecuteAsync(transaction);
     }

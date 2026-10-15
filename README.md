@@ -1,6 +1,6 @@
 # DiVoid
 
-DiVoid is a shared memory graph for humans and agents: typed nodes with content, connected by links, with keyword and semantic search over everything in it.
+DiVoid is a shared memory graph for humans and agents: typed nodes with content, connected by links, with keyword and semantic search over everything in it except nodes flagged with `skipEmbedding`.
 
 This repository holds the REST API (`Backend/`), the MCP server (`divoid-mcp/`) and the web frontend (`frontend/`).
 
@@ -30,6 +30,8 @@ On start DiVoid enables the `vector` extension in the database. If the database 
 ### Embeddings
 
 Semantic search needs an embedding for every node. With PostgreSQL, DiVoid computes them itself with [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2) (Apache-2.0), in the same process, and needs no embedding provider and no setting.
+
+A node created with `"skipEmbedding": true` (or patched with `replace /skipEmbedding`) is never embedded, so writing it does not pay the embedding cost and it never appears in semantic search results. It is still found by path queries and by plain filter listings. Patching the flag to `false` embeds the node within that request.
 
 | Setting | Default | Meaning |
 |---|---|---|
