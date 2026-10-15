@@ -62,7 +62,9 @@ When project_id is given and root_node_id is omitted, root_node_id defaults to p
 (DiVoid #6857 v1.2 — the node's structural home, not the group link) so the session-log \
 is not left null-rooted; pass root_node_id explicitly to override. The response reports \
 the resulting rootNodeId so a caller can confirm it landed. substance is an \
-optional client-written condensed form of the content, stored verbatim.\
+optional client-written condensed form of the content, stored verbatim. Pass \
+skip_embedding=True to keep the node out of semantic embedding: it is then not found \
+by divoid_search, only by divoid_list, path and link walks.\
 """
 
 
@@ -122,6 +124,7 @@ async def _execute(
     refinement: str | None = None,
     root_node_id: int | None = None,
     substance: str | None = None,
+    skip_embedding: bool = False,
 ) -> dict[str, Any]:
     """
     Core implementation of divoid_create_session_log.
@@ -164,6 +167,8 @@ async def _execute(
         node_body["refinement"] = refinement
     if resolved_root_node_id is not None:
         node_body["rootNodeId"] = resolved_root_node_id
+    if skip_embedding:
+        node_body["skipEmbedding"] = True
     if access is not None:
         node_body["access"] = _canonicalize_access(access)
     try:
@@ -329,6 +334,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         refinement: str | None = None,
         root_node_id: int | None = None,
         substance: str | None = None,
+        skip_embedding: bool = False,
     ) -> dict[str, Any]:
         """
         Create a session-log node in DiVoid atomically.
@@ -397,6 +403,13 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                        carries for human readers. Stored verbatim: no length check,
                        no shape check and no normalisation. When absent the server
                        defaults to NULL.
+            skip_embedding: When True the node is created with skipEmbedding: it gets
+                            no embedding, so content writes stay cheap, and it will
+                            NOT appear in divoid_search results -- only in
+                            divoid_list, path and link walks. DiVoid follows the flag
+                            blindly: no warning, no heuristic. Default False (the key
+                            is not sent). Requires a backend that supports
+                            skipEmbedding.
         """
         try:
             _check_invariants(name, content, project_id, docs_group_id, path=path)
@@ -424,4 +437,5 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             refinement=refinement,
             root_node_id=root_node_id,
             substance=substance,
+            skip_embedding=skip_embedding,
         )
