@@ -57,6 +57,13 @@ public class Node
     public float[] Embedding { get; set; }
 
     /// <summary>
+    /// true when the node is excluded from semantic search and never embedded
+    /// </summary>
+    [AllowPatch]
+    [DefaultValue(false)]
+    public bool SkipEmbedding { get; set; }
+
+    /// <summary>
     /// lifecycle status of the node (e.g. "open", "closed", "in-progress")
     /// </summary>
     [AllowPatch]

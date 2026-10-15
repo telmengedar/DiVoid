@@ -30,6 +30,7 @@ public class EmbeddingBackfillService(IEntityManager database, IEmbeddingCapabil
     static PredicateExpression<Node> CandidatePredicate(long[] ids, bool longOnly) {
         PredicateExpression<Node> candidates = new PredicateExpression<Node>(n => n.Name != null && n.Name != "") |
                                                new PredicateExpression<Node>(n => n.Content != null);
+        candidates &= new PredicateExpression<Node>(n => n.SkipEmbedding == false);
 
         if (ids != null)
             candidates &= new PredicateExpression<Node>(n => n.Id.In(ids));

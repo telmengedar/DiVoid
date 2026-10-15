@@ -105,6 +105,9 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
         yield return new FieldMapping<NodeDetails, NodeAccess>("access",
                                                         DB.Property<Node>(n => n.Access, "node"),
                                                         (n, v) => n.Access = v);
+        yield return new FieldMapping<NodeDetails, bool>("skipEmbedding",
+                                                        DB.Property<Node>(n => n.SkipEmbedding, "node"),
+                                                        (n, v) => n.SkipEmbedding = v);
         yield return new FieldMapping<NodeDetails, DateTime>("created",
                                                         DB.Property<Node>(n => n.Created, "node"),
                                                         (n, v) => n.Created = v);

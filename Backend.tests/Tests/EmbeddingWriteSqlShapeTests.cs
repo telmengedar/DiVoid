@@ -57,9 +57,10 @@ public class EmbeddingWriteSqlShapeTests
         table.Columns.Add("substance", typeof(string));
         table.Columns.Add("ownerid", typeof(long));
         table.Columns.Add("access", typeof(int));
+        table.Columns.Add("skipembedding", typeof(bool));
         table.Columns.Add("created", typeof(DateTime));
         table.Columns.Add("lastupdate", typeof(DateTime));
-        table.Rows.Add(5L, "task", "named", DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, 0.0, 0.0, DBNull.Value, DBNull.Value, 0L, 3, DateTime.UtcNow, DateTime.UtcNow);
+        table.Rows.Add(5L, "task", "named", DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, 0.0, 0.0, DBNull.Value, DBNull.Value, 0L, 3, false, DateTime.UtcNow, DateTime.UtcNow);
         return table;
     }
 

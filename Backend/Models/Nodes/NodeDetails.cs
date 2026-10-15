@@ -65,6 +65,12 @@ public class NodeDetails
     public string Substance { get; set; }
 
     /// <summary>
+    /// true when the node is excluded from semantic search and never embedded; null when not requested via <c>?fields=</c>.
+    /// on <c>POST /api/nodes</c> null (omitted) means false.
+    /// </summary>
+    public bool? SkipEmbedding { get; set; }
+
+    /// <summary>
     /// transient raw bytes populated by the <c>content</c> field-mapping in
     /// <see cref="NodeMapper"/>.  never serialised to JSON.
     /// the post-process callback in <see cref="NodeMapper"/> uses this alongside

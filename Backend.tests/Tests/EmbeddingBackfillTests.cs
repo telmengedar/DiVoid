@@ -274,6 +274,40 @@ public class EmbeddingBackfillTests
         Assert.That(await EmbeddedIds(fixture), Is.EqualTo(new[] { first, third }));
     }
 
+    static async Task<long> SeedSkipEmbedding(DatabaseFixture fixture, string name)
+    {
+        NodeDetails node = await MakeNodeService(fixture).CreateNode(new NodeDetails { Type = "doc", Name = name, SkipEmbedding = true }, callerId: 0);
+        return node.Id;
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #22474: a node flagged with skipEmbedding is not a candidate, so it is never re-embedded")]
+    public async Task SkipEmbeddingNode_NotSelected()
+    {
+        using DatabaseFixture fixture = new();
+        long embedded = await Seed(fixture, "embedded", null, null);
+        await SeedSkipEmbedding(fixture, "skipped");
+        EmbeddingBackfillService backfill = MakeRecordingBackfill(fixture);
+
+        await backfill.RunAsync();
+
+        Assert.That(await EmbeddedIds(fixture), Is.EqualTo(new[] { embedded }));
+    }
+
+    [Test, Parallelizable]
+    [Description("DiVoid #22474: an explicit id of a flagged node does not make it a candidate either")]
+    public async Task Ids_SkipEmbeddingNode_NotSelected()
+    {
+        using DatabaseFixture fixture = new();
+        long embedded = await Seed(fixture, "embedded", null, null);
+        long skipped = await SeedSkipEmbedding(fixture, "skipped");
+        EmbeddingBackfillService backfill = MakeRecordingBackfill(fixture);
+
+        await backfill.RunAsync(ids: [embedded, skipped]);
+
+        Assert.That(await EmbeddedIds(fixture), Is.EqualTo(new[] { embedded }));
+    }
+
     [Test, Parallelizable]
     public async Task IdsAndLongOnly_AreCombined()
     {
