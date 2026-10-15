@@ -99,4 +99,35 @@ public class LinkedToPostgresManualTests
                 "C has no link to A — must not appear");
         });
     }
+
+    [Test]
+    [Explicit("Manual Postgres smoke test — requires POSTGRES_CONNECTION and a running Postgres instance.")]
+    [Category("PostgresManual")]
+    [Description("Not parallelizable — PurgeTestData deletes all Node/NodeLink rows in the shared Postgres connection.")]
+    public async Task LinkedTo_Postgres_StrangerWithOnlyPrivateSeed_ReturnsEmpty()
+    {
+        string connString = Environment.GetEnvironmentVariable("POSTGRES_CONNECTION")!;
+
+        IEntityManager em = CreatePostgresManager(connString);
+        await ApplySchema(em);
+        PurgeTestData(em);
+
+        NodeService svc = MakeService(em);
+
+        NodeDetails seed = await svc.CreateNode(new NodeDetails { Type = "task", Name = "PrivateSeed", Access = NodeAccess.None }, callerId: 1);
+        NodeDetails neighbour = await svc.CreateNode(new NodeDetails { Type = "task", Name = "Neighbour", Access = NodeAccess.Read }, callerId: 1);
+        await svc.LinkNodes(seed.Id, neighbour.Id, callerId: 1, isAdmin: false);
+
+        List<NodeDetails> ownerResults = await CollectPage(await svc.ListPaged(
+            new NodeFilter { LinkedTo = [seed.Id], Count = 100 }, callerId: 1, isAdmin: false));
+        List<NodeDetails> strangerResults = await CollectPage(await svc.ListPaged(
+            new NodeFilter { LinkedTo = [seed.Id], Count = 100 }, callerId: 2, isAdmin: false));
+
+        Assert.Multiple(() => {
+            Assert.That(ownerResults.Select(n => n.Id), Is.EquivalentTo(new[] { neighbour.Id }),
+                "the owner must reach the neighbour through the private seed");
+            Assert.That(strangerResults, Is.Empty,
+                "a stranger with only a private seed must get an empty result");
+        });
+    }
 }

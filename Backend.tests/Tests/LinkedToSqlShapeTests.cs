@@ -57,6 +57,35 @@ public class LinkedToSqlShapeTests
         return sql.Substring(openParen + 1, i - openParen - 2);
     }
 
+    static NodeService CreateCapturingService(out Func<string?> capturedSql)
+    {
+        Mock<IDBClient> clientMock = new();
+        clientMock.SetupGet(c => c.DBInfo).Returns(new PostgreInfo());
+        string? captured = null;
+        clientMock
+            .Setup(c => c.ReaderAsync(It.IsAny<Transaction>(), It.IsAny<string>(), It.IsAny<IEnumerable<object>>(), It.IsAny<CancellationToken>()))
+            .Callback<Transaction, string, IEnumerable<object>, CancellationToken>((_, command, _, _) => captured ??= command)
+            .ThrowsAsync(new SqlCapturedException());
+        clientMock
+            .Setup(c => c.ReaderAsync(It.IsAny<Transaction>(), It.IsAny<string>(), It.IsAny<IEnumerable<object>>()))
+            .Callback<Transaction, string, IEnumerable<object>>((_, command, _) => captured ??= command)
+            .ThrowsAsync(new SqlCapturedException());
+        clientMock
+            .Setup(c => c.ReaderAsync(It.IsAny<Transaction>(), It.IsAny<string>(), It.IsAny<object[]>()))
+            .Callback<Transaction, string, object[]>((_, command, _) => captured ??= command)
+            .ThrowsAsync(new SqlCapturedException());
+        clientMock
+            .Setup(c => c.ReaderAsync(It.IsAny<string>(), It.IsAny<IEnumerable<object>>()))
+            .Callback<string, IEnumerable<object>>((command, _) => captured ??= command)
+            .ThrowsAsync(new SqlCapturedException());
+        clientMock
+            .Setup(c => c.ReaderAsync(It.IsAny<string>(), It.IsAny<object[]>()))
+            .Callback<string, object[]>((command, _) => captured ??= command)
+            .ThrowsAsync(new SqlCapturedException());
+        capturedSql = () => captured;
+        return new NodeService(new EntityManager(clientMock.Object), DisabledCapability, EmbeddingProducers.Function);
+    }
+
     [Test, Parallelizable]
     public void LinkedTo_PostgresDialect_UncorrelatedUnionShape_NoLateral()
     {
@@ -92,5 +121,38 @@ public class LinkedToSqlShapeTests
             Assert.That(linkSubquery, Does.Not.Match(@"\bnode\s*\."),
                 "G2b: the first parenthesised group enclosing FROM nodelink must contain no occurrence of the lowercase token \"node\" immediately followed by \".\" (whitespace allowed between the two), in either operand position of a comparison");
         });
+    }
+
+    [Test, Parallelizable]
+    public void LinkedTo_NonAdminWithLinkedTo_ListPaged_FirstStatementIsSeedLookup()
+    {
+        NodeService service = CreateCapturingService(out Func<string?> capturedSql);
+
+        Assert.ThrowsAsync<SqlCapturedException>(() => service.ListPaged(new NodeFilter { LinkedTo = [1L, 2L], Count = 20 }, callerId: 7, isAdmin: false));
+
+        Assert.That(capturedSql(), Is.Not.Null.And.Not.Contain("nodelink").IgnoreCase.And.Not.Contain("OVER").IgnoreCase,
+            "a non-admin linkedto request must resolve its seeds with a statement of their own before the list statement");
+    }
+
+    [Test, Parallelizable]
+    public void LinkedTo_NonAdminWithoutLinkedTo_ListPaged_FirstStatementIsListStatement()
+    {
+        NodeService service = CreateCapturingService(out Func<string?> capturedSql);
+
+        Assert.ThrowsAsync<SqlCapturedException>(() => service.ListPaged(new NodeFilter { Count = 20 }, callerId: 7, isAdmin: false));
+
+        Assert.That(capturedSql(), Is.Not.Null.And.Contain("OVER").IgnoreCase,
+            "a non-admin request without linkedto must not issue a seed lookup");
+    }
+
+    [Test, Parallelizable]
+    public void LinkedTo_NonAdminWithoutLinkedTo_ListPagedByPath_FirstStatementIsListStatement()
+    {
+        NodeService service = CreateCapturingService(out Func<string?> capturedSql);
+
+        Assert.ThrowsAsync<SqlCapturedException>(() => service.ListPagedByPath(new NodePathFilter { Path = "[id:1]", Count = 20 }, callerId: 7, isAdmin: false, CancellationToken.None));
+
+        Assert.That(capturedSql(), Is.Not.Null.And.Contain("OVER").IgnoreCase,
+            "a non-admin path request without linkedto must not issue a seed lookup");
     }
 }
