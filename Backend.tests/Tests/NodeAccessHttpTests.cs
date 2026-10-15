@@ -700,6 +700,17 @@ public class NodeAccessHttpTests
         return (ids, doc.RootElement.GetProperty("total").GetInt64());
     }
 
+    static async Task<(long[] Ids, long Total)> ListAsync(HttpClient client, string query)
+    {
+        HttpResponseMessage resp = await client.GetAsync($"/api/nodes?{query}");
+        resp.EnsureSuccessStatusCode();
+        JsonDocument doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        long[] ids = doc.RootElement.GetProperty("result").EnumerateArray()
+                        .Select(el => el.GetProperty("id").GetInt64())
+                        .ToArray();
+        return (ids, doc.RootElement.GetProperty("total").GetInt64());
+    }
+
     async Task<(HttpClient Owner, HttpClient Stranger, long A, long P, long B)> BuildPrivateIntermediateGraphAsync(NodeAccess intermediateAccess)
     {
         HttpClient owner = AuthClient(await CreateUserAsync());
@@ -811,5 +822,111 @@ public class NodeAccessHttpTests
             Assert.That(ownerIds, Does.Contain(b), "the route through the write-only node must exist for its owner");
             Assert.That(strangerIds, Does.Not.Contain(b), "traversal needs the Read flag, a Write-only intermediate must not be crossed");
         });
+    }
+
+    [Test]
+    public async Task LinkedTo_Stranger_PrivateSeed_ReturnsEmpty()
+    {
+        (HttpClient owner, HttpClient stranger, long a, long p, long b) = await BuildPrivateIntermediateGraphAsync(NodeAccess.None);
+
+        (long[] ownerIds, _) = await ListAsync(owner, $"linkedto={p}");
+        (long[] strangerIds, long strangerTotal) = await ListAsync(stranger, $"linkedto={p}");
+        (long[] missingIds, long missingTotal) = await ListAsync(stranger, "linkedto=9000000000");
+
+        Assert.Multiple(() => {
+            Assert.That(ownerIds, Is.EquivalentTo(new[] { a, b }), "the private seed must have neighbours for its owner");
+            Assert.That(strangerIds, Is.Empty, "a private seed must contribute no neighbours for a stranger");
+            Assert.That(strangerTotal, Is.EqualTo(0L));
+            Assert.That(strangerIds, Is.EqualTo(missingIds), "a private seed must answer like a seed that does not exist");
+            Assert.That(strangerTotal, Is.EqualTo(missingTotal));
+        });
+    }
+
+    [Test]
+    public async Task LinkedTo_Stranger_PrivateAndPublicSeeds_OnlyPublicSeedNeighbours()
+    {
+        (HttpClient owner, HttpClient stranger, long a, long p, long b) = await BuildPrivateIntermediateGraphAsync(NodeAccess.None);
+        long c = await CreateNodeAsync(owner, $"LinkedToC-{Guid.NewGuid():N}", NodeAccess.Read | NodeAccess.Write);
+        await LinkAsync(owner, a, c);
+
+        (long[] ownerIds, _) = await ListAsync(owner, $"linkedto={p},{a}");
+        (long[] strangerIds, _) = await ListAsync(stranger, $"linkedto={p},{a}");
+
+        Assert.Multiple(() => {
+            Assert.That(ownerIds, Is.EquivalentTo(new[] { b, c }), "both seeds must contribute for the owner");
+            Assert.That(strangerIds, Is.EquivalentTo(new[] { c }), "only the readable seed may contribute for a stranger");
+        });
+    }
+
+    [Test]
+    public async Task LinkedTo_Stranger_PathTerminal_PrivateSeed_Excluded()
+    {
+        (HttpClient owner, HttpClient stranger, _, long p, long b) = await BuildPrivateIntermediateGraphAsync(NodeAccess.None);
+        string query = $"path=[id:{b}]&linkedto={p}";
+
+        (long[] ownerIds, _) = await ListAsync(owner, query);
+        (long[] strangerIds, long strangerTotal) = await ListAsync(stranger, query);
+
+        Assert.Multiple(() => {
+            Assert.That(ownerIds, Is.EquivalentTo(new[] { b }), "the private seed must reach the path terminal for its owner");
+            Assert.That(strangerIds, Is.Empty, "a private seed must not reach the path terminal for a stranger");
+            Assert.That(strangerTotal, Is.EqualTo(0L));
+        });
+    }
+
+    [Test]
+    public async Task LinkedTo_Admin_PathTerminal_PrivateSeed_ReturnsTerminal()
+    {
+        (_, _, _, long p, long b) = await BuildPrivateIntermediateGraphAsync(NodeAccess.None);
+        HttpClient admin = AuthClient(await CreateAdminUserAsync());
+
+        (long[] ids, _) = await ListAsync(admin, $"path=[id:{b}]&linkedto={p}");
+
+        Assert.That(ids, Is.EquivalentTo(new[] { b }), "an admin must reach the path terminal through a private seed");
+    }
+
+    [Test]
+    public async Task LinkedTo_Stranger_WriteOnlySeed_ReturnsEmpty()
+    {
+        (HttpClient owner, HttpClient stranger, long a, long p, long b) = await BuildPrivateIntermediateGraphAsync(NodeAccess.Write);
+
+        (long[] ownerIds, _) = await ListAsync(owner, $"linkedto={p}");
+        (long[] strangerIds, _) = await ListAsync(stranger, $"linkedto={p}");
+
+        Assert.Multiple(() => {
+            Assert.That(ownerIds, Is.EquivalentTo(new[] { a, b }), "the write-only seed must have neighbours for its owner");
+            Assert.That(strangerIds, Is.Empty, "a Write-only seed must not contribute for a stranger");
+        });
+    }
+
+    [Test]
+    public async Task LinkedTo_Stranger_ReadFlagSeed_ReturnsNeighbours()
+    {
+        (_, HttpClient stranger, long a, long p, long b) = await BuildPrivateIntermediateGraphAsync(NodeAccess.Read);
+
+        (long[] ids, _) = await ListAsync(stranger, $"linkedto={p}");
+
+        Assert.That(ids, Is.EquivalentTo(new[] { a, b }), "a seed with the Read flag must contribute for a stranger");
+    }
+
+    [Test]
+    public async Task LinkedTo_Admin_PrivateSeed_ReturnsNeighbours()
+    {
+        (_, _, long a, long p, long b) = await BuildPrivateIntermediateGraphAsync(NodeAccess.None);
+        HttpClient admin = AuthClient(await CreateAdminUserAsync());
+
+        (long[] ids, _) = await ListAsync(admin, $"linkedto={p}");
+
+        Assert.That(ids, Is.EquivalentTo(new[] { a, b }), "an admin must see the neighbours of a private seed");
+    }
+
+    [Test]
+    public async Task LinkedTo_Stranger_PrivateSeed_UnknownField_Returns400()
+    {
+        (_, HttpClient stranger, _, long p, _) = await BuildPrivateIntermediateGraphAsync(NodeAccess.None);
+
+        HttpResponseMessage resp = await stranger.GetAsync($"/api/nodes?linkedto={p}&fields=bogus");
+
+        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
     }
 }

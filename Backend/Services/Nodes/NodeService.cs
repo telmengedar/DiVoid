@@ -509,6 +509,27 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     }
 
     /// <summary>
+    /// reduces the requested linkedto seeds to the ids the caller may read; an admin or auth-disabled caller gets them unchanged
+    /// </summary>
+    async Task<long[]> ReadableSeeds(long[] requested, long callerId, bool isAdmin, CancellationToken ct)
+    {
+        PredicateExpression<Node> gate = NodeAuthorization.BuildVisibilityPredicate(callerId, isAdmin, write: false);
+        if (gate == null || requested == null || requested.Length == 0)
+            return requested;
+
+        PredicateExpression<Node> predicate = new(n => n.Id.In(requested));
+        predicate &= gate;
+
+        List<long> readable = [];
+        await foreach (Node node in database.Load<Node>(n => n.Id)
+                                            .Where(predicate.Content)
+                                            .ExecuteEntitiesAsync()
+                                            .WithCancellation(ct))
+            readable.Add(node.Id);
+        return [.. readable];
+    }
+
+    /// <summary>
     /// builds the linkedto predicate: nodes with at least one link to any id in
     /// <paramref name="linkedTo"/>, excluding the seeds themselves.
     /// </summary>
@@ -548,7 +569,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <summary>
     /// chains the hops of a path query into a terminal operation; every hop is gated by the caller's read visibility
     /// </summary>
-    ComposedPath ComposeHops(PathQuery query, NodePathFilter filter, NodeMapper mapper, bool isSemantic, long callerId, bool isAdmin, CancellationToken ct)
+    ComposedPath ComposeHops(PathQuery query, NodePathFilter filter, long[] linkedToSeeds, NodeMapper mapper, bool isSemantic, long callerId, bool isAdmin, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -606,10 +627,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         LoadOperation<Node> terminal = mapper.CreateOperation(database, filter.Fields);
         terminal.ApplyFilter(filter, mapper);
         if (filter.LinkedTo?.Length > 0)
-            combined &= BuildLinkedToFilter(filter.LinkedTo);
+            combined &= BuildLinkedToFilter(linkedToSeeds);
 
-        // semantic predicates ANDed into combined BEFORE the single Where() call —
-        // mirrors the fix applied to ListPaged: type/status/linkedto filters survive.
         if (isSemantic)
             ApplySemanticSearch(terminal, filter, mapper, ref combined);
 
@@ -839,18 +858,13 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (generatedFilter != null)
             listPredicate &= new PredicateExpression<Node>(generatedFilter);
         if (filter.LinkedTo?.Length > 0)
-            listPredicate &= BuildLinkedToFilter(filter.LinkedTo);
+            listPredicate &= BuildLinkedToFilter(await ReadableSeeds(filter.LinkedTo, callerId, isAdmin, ct));
 
-        // semantic predicates (Embedding IS NOT NULL, MinSimilarity floor) are ANDed into
-        // listPredicate here — BEFORE the single Where() call — so that type/status/linkedto
-        // filters are not wiped by a second Where() call inside ApplySemanticSearch.
         if (isSemantic)
             ApplySemanticSearch(operation, filter, mapper, ref listPredicate);
 
         operation.Where(listPredicate?.Content);
 
-        // Single query: COUNT(*) OVER () window function — ApplyFilter already clamps count ≤500
-        // and applies limit/offset; WindowedFromOperation decorates with the window column.
         WindowResult<NodeDetails, long> windowed =
             await mapper.WindowedFromOperation<long, Node>(operation, DB.CountOver(), ct, filter.Fields);
 
@@ -920,12 +934,12 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         ct.ThrowIfCancellationRequested();
 
-        ComposedPath composed = ComposeHops(query, filter, mapper, isSemantic, callerId, isAdmin, ct);
+        long[] linkedToSeeds = await ReadableSeeds(filter.LinkedTo, callerId, isAdmin, ct);
+
+        ComposedPath composed = ComposeHops(query, filter, linkedToSeeds, mapper, isSemantic, callerId, isAdmin, ct);
 
         ct.ThrowIfCancellationRequested();
 
-        // Single query: COUNT(*) OVER () window function — ApplyFilter (inside ComposeHops) already
-        // clamps count ≤500 and applies limit/offset; WindowedFromOperation decorates with the window column.
         WindowResult<NodeDetails, long> windowed =
             await mapper.WindowedFromOperation<long, Node>(composed.Terminal, DB.CountOver(), ct, filter.Fields);
 
