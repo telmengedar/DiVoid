@@ -27,7 +27,7 @@ public class ValueProducerPostgresManualTests {
     [Explicit("Manual Postgres test - requires POSTGRES_CONNECTION to a superuser connection with the pgvector extension available.")]
     [Category("PostgresManual")]
     [Description("Constant vectors bind through Ocelot and Npgsql, combine in SQL for windowed and multi-query searches, and rank on a database without the embedding function.")]
-    public async Task WritePathsAndSearch_PlainPgvector_WorkWithoutEmbeddingFunction() {
+    public async Task ListPaged_ConstantVectorsOnPlainPgvector_RanksWithoutEmbeddingFunction() {
         using PgvectorBareDatabase database = new();
         NodeService service = await StartedService(database);
         byte[] longBody = Encoding.UTF8.GetBytes(Filler("tailword", 3000) + "fjord glacier avalanche");

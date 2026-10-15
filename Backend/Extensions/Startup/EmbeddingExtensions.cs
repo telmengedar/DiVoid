@@ -14,9 +14,7 @@ public static class EmbeddingExtensions {
     static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(30);
 
     /// <summary>
-    /// registers the embedding capability, enabled for every database type except SQLite, the embedding producer and the model guard.
-    /// the producer is selected by <c>Embedding:Producer</c> (<c>Local</c> or <c>PostgresFunction</c>, defaulting to <c>Local</c>) and the local model lives in <c>Embedding:ModelPath</c>.
-    /// both settings are only read while the capability is enabled.
+    /// registers the embedding capability, enabled for every database type except SQLite, the embedding producer and the model guard
     /// </summary>
     /// <param name="services">service collection to add the embedding services to</param>
     /// <param name="configuration">app configuration</param>

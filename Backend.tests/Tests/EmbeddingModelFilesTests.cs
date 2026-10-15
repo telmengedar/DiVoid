@@ -258,6 +258,23 @@ public class EmbeddingModelFilesTests {
 
 
     [Test, Parallelizable]
+    [Description("A token cancelled while the answer is being copied ends the download with a cancellation and leaves no file.")]
+    public void EnsureAsync_CancelledDuringDownload_ThrowsCancellationAndLeavesNoFile() {
+        using TemporaryDirectory directory = new();
+        using CancellationTokenSource source = new();
+        Mock<IHttpService> http = new();
+        Serve(http, FirstUrl, () => {
+            source.Cancel();
+            return Ok("first content");
+        });
+
+        Assert.ThrowsAsync<TaskCanceledException>(() => FilesOf(http, directory.Path, File("first.bin", FirstUrl, "first content")).EnsureAsync(source.Token));
+
+        Assert.That(Directory.GetFileSystemEntries(directory.Path), Is.Empty);
+    }
+
+
+    [Test, Parallelizable]
     [Description("Cancelling the startup surfaces as a cancellation, not as a failed download.")]
     public void EnsureAsync_Cancelled_PropagatesCancellation() {
         using TemporaryDirectory directory = new();

@@ -63,7 +63,7 @@ public class EmbeddingModelGuardServiceTests {
 
 
     [Test, Parallelizable]
-    [Description("The cancellation token of the host reaches the preparation, so a stopping host can end a download.")]
+    [Description("The cancellation token of the host is the token the producer is prepared with.")]
     public async Task StartAsync_Enabled_PassesCancellationTokenToPreparation() {
         (EmbeddingModelGuardService service, _, Mock<IEmbeddingProducer> producer, _) = Create(true);
         using CancellationTokenSource source = new();

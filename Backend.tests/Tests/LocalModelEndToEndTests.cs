@@ -50,7 +50,7 @@ public class LocalModelEndToEndTests {
     [Explicit("LocalModel lane - requires DIVOID_EMBEDDING_MODEL_DIR and POSTGRES_CONNECTION; runs on the gangolf Docker daemon only.")]
     [Category("LocalModel")]
     [Description("On plain pgvector without the embedding function, paraphrased queries rank their node first, three phrasings of one need sent together rank that node first with the mean of their similarities, and the tail of a windowed node is found.")]
-    public async Task PlainPostgres_WritesAndSearches_RankSourceNodeFirst() {
+    public async Task ListPaged_PlainPostgresWithLocalModel_RanksSourceNodeFirst() {
         using PgvectorBareDatabase database = new();
         await PgvectorBareDatabase.Start(database.AdminEntities);
         await using ServiceProvider provider = await LocalModelEnvironment.PreparedProvider();

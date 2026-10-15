@@ -121,6 +121,18 @@ public class LocalEmbeddingProducerTests {
 
 
     [Test, Parallelizable]
+    [Description("The token the producer is prepared with is the token the file acquisition runs with.")]
+    public async Task PrepareAsync_CancellationToken_ReachesFileAcquisition() {
+        Mock<IEmbeddingModelFiles> files = new();
+        using CancellationTokenSource source = new();
+
+        await ProducerOf(ModelAnswering(ModelVector).Object, files.Object).PrepareAsync(source.Token);
+
+        files.Verify(f => f.EnsureAsync(source.Token), Times.Once);
+    }
+
+
+    [Test, Parallelizable]
     [Description("Files which can not be provided stop the preparation before the model is touched.")]
     public void PrepareAsync_FilesFail_LeavesModelUntouched() {
         Mock<IEmbeddingModelFiles> files = new();

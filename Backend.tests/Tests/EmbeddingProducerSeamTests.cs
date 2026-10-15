@@ -156,7 +156,7 @@ public class EmbeddingProducerSeamTests
 
     [Test, Parallelizable]
     [Description("DiVoid #17524 unit 1: the backfill embeds a candidate through the producer")]
-    public async Task Backfill_EmbedsCandidateThroughProducer()
+    public async Task RunAsync_Candidate_EmbedsComposedTextThroughProducer()
     {
         RecordingEmbeddingProducer producer = new();
         Mock<IDBClient> client = CreateClient(_ => CandidateTable());
@@ -169,7 +169,7 @@ public class EmbeddingProducerSeamTests
 
     [Test, Parallelizable]
     [Description("DiVoid #17524 unit 4: the backfill prepares the producer once, after the model guard and before the first embedding")]
-    public async Task Backfill_PreparesProducerBeforeEmbedding() {
+    public async Task RunAsync_Enabled_PreparesProducerAfterGuardAndBeforeEmbedding() {
         RecordingEmbeddingProducer producer = new();
         Mock<IDBClient> client = CreateClient(_ => CandidateTable());
         List<string> order = [];
@@ -184,7 +184,7 @@ public class EmbeddingProducerSeamTests
 
     [Test, Parallelizable]
     [Description("DiVoid #17524 unit 4: a database the guard refuses is never used to prepare the producer, so no model is downloaded for it")]
-    public void Backfill_GuardRefuses_DoesNotPrepareProducer() {
+    public void RunAsync_GuardRefuses_DoesNotPrepareProducer() {
         RecordingEmbeddingProducer producer = new();
         Mock<IEmbeddingModelGuard> guard = new();
         guard.Setup(g => g.EnsureAsync(It.IsAny<string>())).ThrowsAsync(new InvalidOperationException("mismatch"));
