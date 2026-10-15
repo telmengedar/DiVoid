@@ -22,6 +22,8 @@ Supported paths per DiVoid #8:
                  to ungroup (set NULL).
   /substance  -- client-written condensed form of the content (string); use
                  clear_substance=True to set NULL.
+  /skipEmbedding -- embedding opt-out (bool); True drops the node's embedding at once,
+                 False re-embeds it within the call (as slow as a content write).
 
 At least one of the supported fields must be provided — the invariant guard fires
 before any HTTP call with code 'no_fields_to_patch'.
@@ -77,7 +79,11 @@ root_node_id assigns a structural group pointer (set/reassign group); to ungroup
 /rootNodeId null op internally. substance is the client-written condensed form of \
 the node's content, stored verbatim as an opaque string with no length or shape \
 check; to clear it, pass clear_substance=True — the tool composes a replace \
-/substance null op internally.\
+/substance null op internally. skip_embedding is the embedding opt-out: True clears \
+the node's embedding at once so it is no longer found by divoid_search (only by \
+divoid_list, path and link walks); False opts back in and the server re-embeds the \
+node within this call, which on a large node can take as long as a large content \
+write. None (the default) leaves the flag untouched.\
 """
 
 _ACCESS_STRING_MAP: dict[str, int] = {
@@ -117,6 +123,7 @@ def _check_invariants(
     clear_root_node_id: bool = False,
     substance: str | None = None,
     clear_substance: bool = False,
+    skip_embedding: bool | None = None,
 ) -> None:
     """
     Check runtime invariants before making any HTTP call.
@@ -132,11 +139,13 @@ def _check_invariants(
     has_substance_op = substance is not None or clear_substance
     if (name is None and status is None and x is None and y is None
             and access is None and owner_id is None and not has_severity_op
-            and not has_refinement_op and not has_root_node_id_op and not has_substance_op):
+            and not has_refinement_op and not has_root_node_id_op and not has_substance_op
+            and skip_embedding is None):
         raise InvariantViolation(
             "no_fields_to_patch",
             "At least one of name, status, severity, refinement, root_node_id, substance, "
-            "x, y, access, or owner_id must be provided. A PATCH with no fields is a no-op.",
+            "skip_embedding, x, y, access, or owner_id must be provided. "
+            "A PATCH with no fields is a no-op.",
         )
     if access is not None:
         _canonicalize_access(access)
@@ -159,6 +168,7 @@ async def _execute(
     clear_root_node_id: bool = False,
     substance: str | None = None,
     clear_substance: bool = False,
+    skip_embedding: bool | None = None,
 ) -> dict[str, Any]:
     """
     Core implementation of divoid_patch_node.
@@ -198,6 +208,8 @@ async def _execute(
         ops.append({"op": "replace", "path": "/substance", "value": substance})
     elif clear_substance:
         ops.append({"op": "replace", "path": "/substance", "value": None})
+    if skip_embedding is not None:
+        ops.append({"op": "replace", "path": "/skipEmbedding", "value": skip_embedding})
 
     logger.info(
         "divoid_patch_node id=%d ops=%s",
@@ -252,6 +264,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         clear_root_node_id: bool = False,
         substance: str | None = None,
         clear_substance: bool = False,
+        skip_embedding: bool | None = None,
     ) -> dict[str, Any]:
         """
         Patch one or more properties of a DiVoid node.
@@ -309,16 +322,25 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             clear_substance: If True, sets substance to NULL on the server. Mutually
                              implied exclusive with substance — if both are set, the
                              explicit substance value wins.
+            skip_embedding: Embedding opt-out. True clears the node's embedding at
+                            once: it is no longer found by divoid_search, only by
+                            divoid_list, path and link walks. False opts back in and
+                            the server re-embeds the node within this call, so a large
+                            node can take as long as a large content write. None (the
+                            default) leaves the flag untouched. Requires a backend that
+                            supports skipEmbedding.
 
         At least one of name, status, severity, clear_severity, refinement,
         clear_refinement, root_node_id, clear_root_node_id, substance, clear_substance,
-        x, y, access, or owner_id must be provided (invariant guard: no_fields_to_patch).
+        skip_embedding, x, y, access, or owner_id must be provided (invariant guard:
+        no_fields_to_patch).
         """
         try:
             _check_invariants(
                 name, status, x, y, access, owner_id, severity, clear_severity,
                 refinement, clear_refinement,
                 root_node_id, clear_root_node_id, substance, clear_substance,
+                skip_embedding,
             )
         except InvariantViolation as exc:
             logger.debug("divoid_patch_node invariant violation: %s", exc.code)
@@ -341,4 +363,5 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             clear_root_node_id=clear_root_node_id,
             substance=substance,
             clear_substance=clear_substance,
+            skip_embedding=skip_embedding,
         )

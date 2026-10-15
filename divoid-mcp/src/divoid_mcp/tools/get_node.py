@@ -2,7 +2,7 @@
 divoid_get_node — fetch a single node's properties by id.
 
 Wraps GET /api/nodes/{id}. Returns id, type, name, status, contentType,
-substance, x, y, access, ownerId, created, lastUpdate. Does NOT return the
+substance, x, y, access, ownerId, created, lastUpdate, skipEmbedding. Does NOT return the
 content body — use divoid_get_content for that.
 
 Architecture reference: §8.2
@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 
 _TOOL_DESCRIPTION = """\
 Fetch a single node's properties (id, type, name, status, severity, refinement, \
-rootNodeId, contentType, substance, position, access, ownerId, created, lastUpdate). Use this \
+rootNodeId, contentType, substance, position, access, ownerId, created, lastUpdate, \
+skipEmbedding). Use this \
 when you have a node id (from search results, a link, a memory pointer) and need \
 its metadata. For the content body, use divoid_get_content separately — properties \
 and content are intentionally split because content can be large and is not \
@@ -43,8 +44,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         Args:
             id: The node id. Must be a positive integer. Returns id, type, name,
                 status, severity, refinement, rootNodeId, contentType, substance, x, y, access,
-                ownerId, created, lastUpdate. rootNodeId is null for ungrouped nodes.
-                substance is null when no client has written one.
+                ownerId, created, lastUpdate, skipEmbedding. rootNodeId is null for
+                ungrouped nodes. substance is null when no client has written one.
+                skipEmbedding is true when the node is opted out of semantic search,
+                and null when the backend does not report it.
         """
         if id < 1:
             return {
@@ -85,4 +88,5 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             "ownerId": data.get("ownerId"),
             "created": data.get("created"),
             "lastUpdate": data.get("lastUpdate"),
+            "skipEmbedding": data.get("skipEmbedding"),
         }

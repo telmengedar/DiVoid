@@ -60,7 +60,9 @@ fails) the \
 tool returns isError with code=partial_state naming the surviving node id so the \
 caller can repair manually. The response reports the resulting rootNodeId so a \
 caller can confirm it landed. substance is an \
-optional client-written condensed form of the content, stored verbatim.\
+optional client-written condensed form of the content, stored verbatim. Pass \
+skip_embedding=True to keep the node out of semantic embedding: it is then not found \
+by divoid_search, only by divoid_list, path and link walks.\
 """
 
 
@@ -106,6 +108,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         extra_links: list[int] | None = None,
         root_node_id: int | None = None,
         substance: str | None = None,
+        skip_embedding: bool = False,
     ) -> dict[str, Any]:
         """
         Create a DiVoid node of any type atomically.
@@ -163,6 +166,13 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                        carries for human readers. Stored verbatim: no length check,
                        no shape check and no normalisation. When absent the server
                        defaults to NULL.
+            skip_embedding: When True the node is created with skipEmbedding: it gets
+                            no embedding, so content writes stay cheap, and it will
+                            NOT appear in divoid_search results -- only in
+                            divoid_list, path and link walks. DiVoid follows the flag
+                            blindly: no warning, no heuristic. Default False (the key
+                            is not sent). Requires a backend that supports
+                            skipEmbedding.
         """
         if extra_links is None:
             extra_links = []
@@ -193,6 +203,8 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             node_body["refinement"] = refinement
         if root_node_id is not None:
             node_body["rootNodeId"] = root_node_id
+        if skip_embedding:
+            node_body["skipEmbedding"] = True
         if access is not None:
             try:
                 node_body["access"] = _canonicalize_access(access)
