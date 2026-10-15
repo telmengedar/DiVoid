@@ -678,4 +678,138 @@ public class NodeAccessHttpTests
         Assert.That(fetched.Access, Is.EqualTo(NodeAccess.None),
             "GET after explicit-None POST must return Access=None from database");
     }
+
+    static async Task LinkAsync(HttpClient client, long sourceId, long targetId)
+    {
+        using StringContent body = new(targetId.ToString(), Encoding.UTF8, "application/json");
+        HttpResponseMessage resp = await client.PostAsync($"/api/nodes/{sourceId}/links", body);
+        resp.EnsureSuccessStatusCode();
+    }
+
+    static async Task<long> CreateNodeAsync(HttpClient client, string name, NodeAccess access)
+        => (await PostNodeAsync(client, new NodeDetails { Type = "task", Name = name, Access = access })).Id;
+
+    static async Task<(long[] Ids, long Total)> PathAsync(HttpClient client, string path)
+    {
+        HttpResponseMessage resp = await client.GetAsync($"/api/nodes?path={path}");
+        resp.EnsureSuccessStatusCode();
+        JsonDocument doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        long[] ids = doc.RootElement.GetProperty("result").EnumerateArray()
+                        .Select(el => el.GetProperty("id").GetInt64())
+                        .ToArray();
+        return (ids, doc.RootElement.GetProperty("total").GetInt64());
+    }
+
+    async Task<(HttpClient Owner, HttpClient Stranger, long A, long P, long B)> BuildPrivateIntermediateGraphAsync(NodeAccess intermediateAccess)
+    {
+        HttpClient owner = AuthClient(await CreateUserAsync());
+        HttpClient stranger = AuthClient(await CreateUserAsync());
+        long a = await CreateNodeAsync(owner, $"PathA-{Guid.NewGuid():N}", NodeAccess.Read | NodeAccess.Write);
+        long p = await CreateNodeAsync(owner, $"PathP-{Guid.NewGuid():N}", intermediateAccess);
+        long b = await CreateNodeAsync(owner, $"PathB-{Guid.NewGuid():N}", NodeAccess.Read | NodeAccess.Write);
+        await LinkAsync(owner, a, p);
+        await LinkAsync(owner, p, b);
+        return (owner, stranger, a, p, b);
+    }
+
+    [Test]
+    public async Task PathQuery_Stranger_PrivateIntermediate_NotTraversed()
+    {
+        (HttpClient owner, HttpClient stranger, long a, long p, long b) = await BuildPrivateIntermediateGraphAsync(NodeAccess.None);
+        string path = $"[id:{a}]/[]/[]";
+
+        (long[] ownerIds, _) = await PathAsync(owner, path);
+        (long[] strangerIds, _) = await PathAsync(stranger, path);
+
+        Assert.Multiple(() => {
+            Assert.That(ownerIds, Does.Contain(b), "the route through the private node must exist for its owner");
+            Assert.That(strangerIds, Does.Not.Contain(b), "a stranger must not reach B through a private intermediate");
+            Assert.That(strangerIds, Does.Not.Contain(p), "the private intermediate must not be listed");
+        });
+    }
+
+    [Test]
+    public async Task PathQuery_Stranger_PrivateSeed_ReturnsEmpty()
+    {
+        (HttpClient owner, HttpClient stranger, long a, long p, long b) = await BuildPrivateIntermediateGraphAsync(NodeAccess.None);
+        string path = $"[id:{p}]/[]";
+
+        (long[] ownerIds, _) = await PathAsync(owner, path);
+        (long[] strangerIds, long strangerTotal) = await PathAsync(stranger, path);
+
+        Assert.Multiple(() => {
+            Assert.That(ownerIds, Is.EquivalentTo(new[] { a, b }), "the private seed must have neighbours for its owner");
+            Assert.That(strangerIds, Is.Empty, "a private seed must yield no rows for a stranger");
+            Assert.That(strangerTotal, Is.EqualTo(0L));
+        });
+    }
+
+    [Test]
+    public async Task PathQuery_Stranger_PrivateSecondIntermediate_NotTraversed()
+    {
+        HttpClient owner = AuthClient(await CreateUserAsync());
+        HttpClient stranger = AuthClient(await CreateUserAsync());
+        long a = await CreateNodeAsync(owner, $"PathA-{Guid.NewGuid():N}", NodeAccess.Read | NodeAccess.Write);
+        long q = await CreateNodeAsync(owner, $"PathQ-{Guid.NewGuid():N}", NodeAccess.Read | NodeAccess.Write);
+        long p = await CreateNodeAsync(owner, $"PathP-{Guid.NewGuid():N}", NodeAccess.None);
+        long b = await CreateNodeAsync(owner, $"PathB-{Guid.NewGuid():N}", NodeAccess.Read | NodeAccess.Write);
+        await LinkAsync(owner, a, q);
+        await LinkAsync(owner, q, p);
+        await LinkAsync(owner, p, b);
+        string path = $"[id:{a}]/[]/[]/[]";
+
+        (long[] ownerIds, _) = await PathAsync(owner, path);
+        (long[] strangerIds, _) = await PathAsync(stranger, path);
+
+        Assert.Multiple(() => {
+            Assert.That(ownerIds, Does.Contain(b), "the route through the private second intermediate must exist for its owner");
+            Assert.That(strangerIds, Does.Not.Contain(b), "a stranger must not reach B through a private second intermediate");
+        });
+    }
+
+    [Test]
+    public async Task PathQuery_Admin_PrivateIntermediate_Traversed()
+    {
+        (_, _, long a, _, long b) = await BuildPrivateIntermediateGraphAsync(NodeAccess.None);
+        HttpClient admin = AuthClient(await CreateAdminUserAsync());
+
+        (long[] ids, _) = await PathAsync(admin, $"[id:{a}]/[]/[]");
+
+        Assert.That(ids, Does.Contain(b), "an admin must traverse private intermediates");
+    }
+
+    [Test]
+    public async Task PathQuery_Owner_PrivateIntermediate_Traversed()
+    {
+        (HttpClient owner, _, long a, _, long b) = await BuildPrivateIntermediateGraphAsync(NodeAccess.None);
+
+        (long[] ids, _) = await PathAsync(owner, $"[id:{a}]/[]/[]");
+
+        Assert.That(ids, Does.Contain(b), "the owner of a private intermediate must traverse it");
+    }
+
+    [Test]
+    public async Task PathQuery_Stranger_ReadFlagIntermediate_Traversed()
+    {
+        (_, HttpClient stranger, long a, _, long b) = await BuildPrivateIntermediateGraphAsync(NodeAccess.Read);
+
+        (long[] ids, _) = await PathAsync(stranger, $"[id:{a}]/[]/[]");
+
+        Assert.That(ids, Does.Contain(b), "an intermediate with the Read flag must be traversable by a stranger");
+    }
+
+    [Test]
+    public async Task PathQuery_Stranger_WriteOnlyIntermediate_NotTraversed()
+    {
+        (HttpClient owner, HttpClient stranger, long a, _, long b) = await BuildPrivateIntermediateGraphAsync(NodeAccess.Write);
+        string path = $"[id:{a}]/[]/[]";
+
+        (long[] ownerIds, _) = await PathAsync(owner, path);
+        (long[] strangerIds, _) = await PathAsync(stranger, path);
+
+        Assert.Multiple(() => {
+            Assert.That(ownerIds, Does.Contain(b), "the route through the write-only node must exist for its owner");
+            Assert.That(strangerIds, Does.Not.Contain(b), "traversal needs the Read flag, a Write-only intermediate must not be crossed");
+        });
+    }
 }
