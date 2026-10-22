@@ -40,6 +40,9 @@ public class EmbeddingWriteMarkerClient : DispatchProxy
         if (targetMethod!.Name == "get_DBInfo")
             return postgres;
 
+        if (targetMethod.Name == "NonQuery" && args!.OfType<string>().Any(sql => sql == "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"))
+            return 0;
+
         args = ExpandArrayParameters(args);
         string? sql = targetMethod.Name.StartsWith("NonQueryAsync") ? args!.OfType<string>().FirstOrDefault() : null;
         Match match = sql == null ? Match.Empty : EmbeddingSet.Match(sql);

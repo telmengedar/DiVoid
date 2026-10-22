@@ -187,13 +187,13 @@ async def patch_json(path: str, body: Any) -> HttpResult:
     )
 
 
-async def delete(path: str) -> HttpResult:
+async def delete(path: str, body: Any = None) -> HttpResult:
     """DELETE {base_url}/{path}."""
     client = _assert_ready()
     url = f"{_base_url}/{path.lstrip('/')}"
     logger.debug("DELETE %s", url)
     try:
-        resp = await client.delete(url)
+        resp = await client.request("DELETE", url, json=body) if body is not None else await client.delete(url)
     except httpx.ConnectTimeout as exc:
         raise DiVoidUnreachable(f"Connect timeout reaching DiVoid: {exc}") from exc
     except httpx.TimeoutException as exc:
