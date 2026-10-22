@@ -187,4 +187,32 @@ public interface INodeService
     /// maps to HTTP 404 via the existing error-handler middleware.
     /// </exception>
     Task<long> GetUserIdForNode(long nodeId);
+
+    /// <summary>registers a node subscription</summary>
+    /// <param name="hook">subscription tuple</param>
+    /// <param name="callerId">authenticated user id</param>
+    /// <param name="isAdmin">admin permission</param>
+    /// <returns>registered subscription</returns>
+    Task<NodeHook> RegisterHook(NodeHook hook, long callerId, bool isAdmin);
+
+    /// <summary>lists a user's subscriptions</summary>
+    /// <param name="nodeId">optional watched node filter</param>
+    /// <param name="userId">optional recipient; defaults to caller</param>
+    /// <param name="callerId">authenticated user id</param>
+    /// <param name="isAdmin">admin permission</param>
+    /// <returns>subscriptions</returns>
+    Task<NodeHook[]> ListHooks(long? nodeId, long? userId, long callerId, bool isAdmin);
+
+    /// <summary>removes a subscription</summary>
+    /// <param name="hook">subscription tuple</param>
+    /// <param name="callerId">authenticated user id</param>
+    /// <param name="isAdmin">admin permission</param>
+    Task DeleteHook(NodeHook hook, long callerId, bool isAdmin);
+
+    /// <summary>positions a node still at the origin</summary>
+    /// <param name="nodeId">node id</param>
+    /// <param name="x">new horizontal position</param>
+    /// <param name="y">new vertical position</param>
+    /// <param name="ct">cancellation token</param>
+    Task PositionUnpositionedNode(long nodeId, double x, double y, CancellationToken ct);
 }

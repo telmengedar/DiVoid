@@ -13,7 +13,7 @@ public class MessageDetails {
     public long Id { get; set; }
 
     /// <summary>
-    /// id of the user who sent this message
+    /// sender user id; 0 identifies the system author
     /// </summary>
     public long AuthorId { get; set; }
 

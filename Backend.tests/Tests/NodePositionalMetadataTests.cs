@@ -425,7 +425,7 @@ public class LayoutNodesCliTests
     {
         using DatabaseFixture fixture = new();
         NodeService svc = new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
-        LayoutNodesService layoutSvc = new(fixture.EntityManager, Microsoft.Extensions.Logging.Abstractions.NullLogger<LayoutNodesService>.Instance);
+        LayoutNodesService layoutSvc = new(fixture.EntityManager, Microsoft.Extensions.Logging.Abstractions.NullLogger<LayoutNodesService>.Instance, svc);
 
         // Create three unpositioned nodes and link them
         NodeDetails a = await svc.CreateNode(new NodeDetails { Type = "task", Name = "LayoutA" }, callerId: 0);
@@ -455,7 +455,7 @@ public class LayoutNodesCliTests
     {
         using DatabaseFixture fixture = new();
         NodeService svc = new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
-        LayoutNodesService layoutSvc = new(fixture.EntityManager, Microsoft.Extensions.Logging.Abstractions.NullLogger<LayoutNodesService>.Instance);
+        LayoutNodesService layoutSvc = new(fixture.EntityManager, Microsoft.Extensions.Logging.Abstractions.NullLogger<LayoutNodesService>.Instance, svc);
 
         NodeDetails a = await svc.CreateNode(new NodeDetails { Type = "task", Name = "IdempotentA" }, callerId: 0);
         NodeDetails b = await svc.CreateNode(new NodeDetails { Type = "task", Name = "IdempotentB" }, callerId: 0);
@@ -496,7 +496,7 @@ public class LayoutNodesCliTests
     {
         using DatabaseFixture fixture = new();
         NodeService svc = new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
-        LayoutNodesService layoutSvc = new(fixture.EntityManager, Microsoft.Extensions.Logging.Abstractions.NullLogger<LayoutNodesService>.Instance);
+        LayoutNodesService layoutSvc = new(fixture.EntityManager, Microsoft.Extensions.Logging.Abstractions.NullLogger<LayoutNodesService>.Instance, svc);
 
         // Create a node and manually set its position to a known non-zero value
         NodeDetails node = await svc.CreateNode(new NodeDetails { Type = "task", Name = "PrePositioned" }, callerId: 0);

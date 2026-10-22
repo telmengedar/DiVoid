@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 def register_tools(mcp_server: fastmcp.FastMCP) -> None:
     """Register all tools with the MCP server."""
+    from .node_hooks import register as register_node_hooks
     from .search import register as register_search
     from .get_node import register as register_get_node
     from .get_content import register as register_get_content
@@ -39,6 +40,7 @@ def register_tools(mcp_server: fastmcp.FastMCP) -> None:
     from .edit_content import register as register_edit_content
     from .download_content import register as register_download_content
 
+    register_node_hooks(mcp_server)
     register_search(mcp_server)
     register_get_node(mcp_server)
     register_get_content(mcp_server)
@@ -62,4 +64,4 @@ def register_tools(mcp_server: fastmcp.FastMCP) -> None:
     register_edit_content(mcp_server)
     register_download_content(mcp_server)
 
-    logger.info("Registered 22 MCP tools: read-side + link/unlink/patch-link + composite writes + messaging + list + primitives + content-edit + delete-node + download-content.")
+    logger.info("Registered 25 MCP tools: read-side + link/unlink/patch-link + composite writes + messaging + list + primitives + content-edit + delete-node + download-content + node-hooks.")

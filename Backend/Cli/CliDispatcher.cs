@@ -6,6 +6,7 @@ using Backend.Models.Users;
 using Backend.Services.Auth;
 using Backend.Services.Embeddings;
 using Backend.Services.Layout;
+using Backend.Services.Nodes;
 using Backend.Services.Users;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -94,7 +95,12 @@ public static class CliDispatcher {
 
     static Task<int> LayoutNodesAsync() {
         return RunWithContainerAsync(
-            (services, _) => services.AddTransient<LayoutNodesService>(),
+            (services, _) => {
+                services.AddSingleton<IEmbeddingCapability>(new EmbeddingCapability(false));
+                services.AddSingleton<IEmbeddingProducer, PostgresFunctionEmbeddingProducer>();
+                services.AddTransient<INodeService, NodeService>();
+                services.AddTransient<LayoutNodesService>();
+            },
             async provider => {
                 LayoutNodesService layoutService = provider.GetRequiredService<LayoutNodesService>();
                 ILogger logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("CliDispatcher");

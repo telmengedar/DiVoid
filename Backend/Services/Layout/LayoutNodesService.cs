@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Backend.Models.Nodes;
+using Backend.Services.Nodes;
 using Microsoft.Extensions.Logging;
 using Pooshit.Ocelot.Clients;
 using Pooshit.Ocelot.Entities;
@@ -23,7 +24,7 @@ namespace Backend.Services.Layout;
 /// Parameters: 50 iterations, 1000×1000 world-unit canvas, linear temperature cooling,
 /// RNG seeded from the XOR of all candidate node ids (deterministic across runs).
 /// </summary>
-public class LayoutNodesService(IEntityManager database, ILogger<LayoutNodesService> logger)
+public class LayoutNodesService(IEntityManager database, ILogger<LayoutNodesService> logger, INodeService nodeService)
 {
 
     const double CanvasSize = 1000.0;
@@ -183,10 +184,7 @@ public class LayoutNodesService(IEntityManager database, ILogger<LayoutNodesServ
             double newX = Math.Round(px[i], 4);
             double newY = Math.Round(py[i], 4);
 
-            await database.Update<Node>()
-                          .Set(node => node.X == newX, node => node.Y == newY)
-                          .Where(node => node.Id == nodeId)
-                          .ExecuteAsync();
+            await nodeService.PositionUnpositionedNode(nodeId, newX, newY, ct);
 
             updated++;
 
