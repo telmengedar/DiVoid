@@ -115,3 +115,15 @@ def test_unresolvable_working_directory_exits_naming_the_root_variable(
     assert "Initialising the filesystem path roots failed" in text
     assert "DIVOID_MCP_FILE_ROOT" in text
     assert "claude mcp add" not in text
+
+
+async def test_create_server_unknown_parameter_raises_for_production_server():
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    http_client.init("http://divoid.test", "dummy-key")
+    config = DivoidConfig(base_url="http://divoid.test", api_key="dummy-key", source="env")
+
+    production_server = server._create_server(config)
+
+    with pytest.raises(ToolError, match="Unknown parameter"):
+        await production_server.call_tool("divoid_get_node", {"id": 1, "link_to": 2})
