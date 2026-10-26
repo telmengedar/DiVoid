@@ -42,6 +42,8 @@ from .patch_node import _canonicalize_access
 
 logger = logging.getLogger(__name__)
 
+_SKIP_EMBEDDING_DEFAULT = True
+
 _TOOL_DESCRIPTION = """\
 Create a session-log node atomically: creates the node, sets its content, links it to \
 the project's Docs group, and sets substance when given — all in one call. Use this to \
@@ -62,9 +64,10 @@ When project_id is given and root_node_id is omitted, root_node_id defaults to p
 (DiVoid #6857 v1.2 — the node's structural home, not the group link) so the session-log \
 is not left null-rooted; pass root_node_id explicitly to override. The response reports \
 the resulting rootNodeId so a caller can confirm it landed. substance is an \
-optional client-written condensed form of the content, stored verbatim. Pass \
-skip_embedding=True to keep the node out of semantic embedding: it is then not found \
-by divoid_search, only by divoid_list, path and link walks.\
+optional client-written condensed form of the content, stored verbatim. \
+Session-logs are created with skip_embedding=True by default: the node is kept out \
+of semantic embedding, so it is not found by divoid_search, only by divoid_list, \
+path and link walks. Pass skip_embedding=False to embed it.\
 """
 
 
@@ -124,7 +127,7 @@ async def _execute(
     refinement: str | None = None,
     root_node_id: int | None = None,
     substance: str | None = None,
-    skip_embedding: bool = False,
+    skip_embedding: bool = _SKIP_EMBEDDING_DEFAULT,
 ) -> dict[str, Any]:
     """
     Core implementation of divoid_create_session_log.
@@ -334,7 +337,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         refinement: str | None = None,
         root_node_id: int | None = None,
         substance: str | None = None,
-        skip_embedding: bool = False,
+        skip_embedding: bool = _SKIP_EMBEDDING_DEFAULT,
     ) -> dict[str, Any]:
         """
         Create a session-log node in DiVoid atomically.
@@ -407,9 +410,9 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                             no embedding, so content writes stay cheap, and it will
                             NOT appear in divoid_search results -- only in
                             divoid_list, path and link walks. DiVoid follows the flag
-                            blindly: no warning, no heuristic. Default False (the key
-                            is not sent). Requires a backend that supports
-                            skipEmbedding.
+                            blindly: no warning, no heuristic. Default True (an explicit
+                            False omits the key and embeds the node). Requires a
+                            backend that supports skipEmbedding.
         """
         try:
             _check_invariants(name, content, project_id, docs_group_id, path=path)
