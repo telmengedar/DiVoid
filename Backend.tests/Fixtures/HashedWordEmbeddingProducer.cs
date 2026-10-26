@@ -34,5 +34,9 @@ public class HashedWordEmbeddingProducer : IEmbeddingProducer {
     public ISqlToken Embed(string text, EmbeddingPurpose purpose) => EmbeddingVector.ToExpression(Vector(text));
 
     /// <inheritdoc />
+    public Task<ISqlToken[]> EmbedManyAsync(IReadOnlyList<string> texts, EmbeddingPurpose purpose, CancellationToken cancellationToken) =>
+        Task.FromResult(texts.Select(text => Embed(text, purpose)).ToArray());
+
+    /// <inheritdoc />
     public Task PrepareAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }

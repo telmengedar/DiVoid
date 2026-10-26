@@ -25,6 +25,12 @@ public class PostgresFunctionEmbeddingProducer : IEmbeddingProducer {
     }
 
     /// <inheritdoc />
+    public Task<ISqlToken[]> EmbedManyAsync(IReadOnlyList<string> texts, EmbeddingPurpose purpose, CancellationToken cancellationToken) {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(texts.Select(text => Embed(text, purpose)).ToArray());
+    }
+
+    /// <inheritdoc />
     public Task PrepareAsync(CancellationToken cancellationToken) {
         return Task.CompletedTask;
     }

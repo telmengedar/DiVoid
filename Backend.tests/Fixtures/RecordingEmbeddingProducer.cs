@@ -11,6 +11,7 @@ public class RecordingEmbeddingProducer : IEmbeddingProducer
 {
     readonly List<(string Text, EmbeddingPurpose Purpose)> calls = [];
     readonly List<string> events = [];
+    readonly List<(string[] Texts, EmbeddingPurpose Purpose)> manyCalls = [];
 
     /// <summary>
     /// name of the function the produced expressions call
@@ -32,7 +33,17 @@ public class RecordingEmbeddingProducer : IEmbeddingProducer
     }
 
     /// <summary>
-    /// <c>prepare</c> and <c>embed</c> in the order they were requested
+    /// several-texts requests received so far, in order
+    /// </summary>
+    public (string[] Texts, EmbeddingPurpose Purpose)[] ManyCalls {
+        get {
+            lock (calls)
+                return manyCalls.ToArray();
+        }
+    }
+
+    /// <summary>
+    /// <c>prepare</c>, <c>embed</c> and <c>embed-many</c> in the order they were requested
     /// </summary>
     public string[] Events {
         get {
@@ -49,6 +60,16 @@ public class RecordingEmbeddingProducer : IEmbeddingProducer
             events.Add("embed");
         }
         return DB.CustomFunction(MarkerFunction, DB.Constant(text));
+    }
+
+    /// <inheritdoc />
+    public Task<ISqlToken[]> EmbedManyAsync(IReadOnlyList<string> texts, EmbeddingPurpose purpose, CancellationToken cancellationToken)
+    {
+        lock (calls) {
+            manyCalls.Add((texts.ToArray(), purpose));
+            events.Add("embed-many");
+        }
+        return Task.FromResult(texts.Select(text => (ISqlToken) DB.CustomFunction(MarkerFunction, DB.Constant(text))).ToArray());
     }
 
     /// <inheritdoc />

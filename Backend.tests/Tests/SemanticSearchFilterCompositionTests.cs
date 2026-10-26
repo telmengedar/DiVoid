@@ -110,7 +110,7 @@ public class SemanticSearchFilterCompositionTests
         NodeService service = CreateService(em);
 
         NodeFilter filter = new() { Query = "hivemind protocol", Type = ["task"], Count = 10 };
-        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
+        NodeMapper mapper = new NodeMapper(filter);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
@@ -123,6 +123,7 @@ public class SemanticSearchFilterCompositionTests
             : null;
 
         // invoke the production method under test — must AND embedding IS NOT NULL into predicate
+        operation = mapper.ApplyQueryVectors(operation, em, EmbeddingProducers.QueryVectorsOf(filter));
         service.ApplySemanticSearch(operation, filter, mapper, ref predicate);
 
         // single Where() call — mirrors the ListPaged caller contract
@@ -157,7 +158,7 @@ public class SemanticSearchFilterCompositionTests
         NodeService service = CreateService(em);
 
         NodeFilter filter = new() { Query = "open tasks", Status = ["open"], Count = 10 };
-        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
+        NodeMapper mapper = new NodeMapper(filter);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
@@ -167,6 +168,8 @@ public class SemanticSearchFilterCompositionTests
         PredicateExpression<Node>? predicate = generated != null
             ? new PredicateExpression<Node>(generated)
             : null;
+
+        operation = mapper.ApplyQueryVectors(operation, em, EmbeddingProducers.QueryVectorsOf(filter));
 
         service.ApplySemanticSearch(operation, filter, mapper, ref predicate);
         operation.Where(predicate?.Content);
@@ -200,7 +203,7 @@ public class SemanticSearchFilterCompositionTests
 
         long[] linkedTo = [42L];
         NodeFilter filter = new() { Query = "auth design", LinkedTo = linkedTo, Count = 10 };
-        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
+        NodeMapper mapper = new NodeMapper(filter);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
@@ -215,6 +218,8 @@ public class SemanticSearchFilterCompositionTests
                                             .Union(em.Load<NodeLink>(n => n.TargetId)
                                                      .Where(l => l.SourceId.In(linkedTo) || l.TargetId.In(linkedTo)));
         PredicateExpression<Node> predicate = new PredicateExpression<Node>(n => n.Id.In(linkOp) && !n.Id.In(linkedTo));
+
+        operation = mapper.ApplyQueryVectors(operation, em, EmbeddingProducers.QueryVectorsOf(filter));
 
         service.ApplySemanticSearch(operation, filter, mapper, ref predicate);
         operation.Where(predicate?.Content);
@@ -248,7 +253,7 @@ public class SemanticSearchFilterCompositionTests
 
         long[] ids = [1L, 2L, 3L];
         NodeFilter filter = new() { Query = "some query", Id = ids, Count = 10 };
-        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
+        NodeMapper mapper = new NodeMapper(filter);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
@@ -258,6 +263,8 @@ public class SemanticSearchFilterCompositionTests
         PredicateExpression<Node>? predicate = generated != null
             ? new PredicateExpression<Node>(generated)
             : null;
+
+        operation = mapper.ApplyQueryVectors(operation, em, EmbeddingProducers.QueryVectorsOf(filter));
 
         service.ApplySemanticSearch(operation, filter, mapper, ref predicate);
         operation.Where(predicate?.Content);
@@ -292,7 +299,7 @@ public class SemanticSearchFilterCompositionTests
 
         string[] names = ["The Hivemind Protocol", "Agents"];
         NodeFilter filter = new() { Query = "protocol", Name = names, Count = 10 };
-        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
+        NodeMapper mapper = new NodeMapper(filter);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
@@ -302,6 +309,8 @@ public class SemanticSearchFilterCompositionTests
         PredicateExpression<Node>? predicate = generated != null
             ? new PredicateExpression<Node>(generated)
             : null;
+
+        operation = mapper.ApplyQueryVectors(operation, em, EmbeddingProducers.QueryVectorsOf(filter));
 
         service.ApplySemanticSearch(operation, filter, mapper, ref predicate);
         operation.Where(predicate?.Content);
@@ -335,7 +344,7 @@ public class SemanticSearchFilterCompositionTests
         NodeService service = CreateService(em);
 
         NodePathFilter filter = new() { Path = "[type:task]", Query = "hivemind", Count = 10 };
-        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
+        NodeMapper mapper = new NodeMapper(filter);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         // Construct the terminal operation tree exactly as ComposeHops does for a single-hop
@@ -349,6 +358,7 @@ public class SemanticSearchFilterCompositionTests
         terminal.ApplyFilter(filter, mapper);
 
         // invoke the production method — must AND embedding IS NOT NULL into combined
+        terminal = mapper.ApplyQueryVectors(terminal, em, EmbeddingProducers.QueryVectorsOf(filter));
         service.ApplySemanticSearch(terminal, filter, mapper, ref combined);
         terminal.Where(combined?.Content);
 

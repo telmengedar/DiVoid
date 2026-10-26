@@ -2,6 +2,7 @@ using Backend.Services.Embeddings;
 using Backend.tests.Fixtures;
 using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
+using Pooshit.Ocelot.Tokens;
 
 namespace Backend.tests.Tests;
 
@@ -78,6 +79,30 @@ public class LocalModelParityTests {
         Assert.Multiple(() => {
             for (int i = 0; i < concurrent.Length; i++)
                 Assert.That(LocalModelEnvironment.Cosine(concurrent[i], sequential[i % entries.Length]), Is.GreaterThan(0.99999), $"{entries[i % entries.Length].Name}/{entries[i % entries.Length].Purpose}");
+        });
+    }
+
+
+    [Test, Parallelizable]
+    [Explicit("LocalModel lane - requires DIVOID_EMBEDDING_MODEL_DIR; runs on the gangolf Docker daemon only.")]
+    [Category("LocalModel")]
+    [Description("The vectors of several texts embedded together lie within 1e-5 of the vectors the same texts get one after another.")]
+    public async Task EmbedManyAsync_ReferenceTexts_MatchSequentialEmbedWithinSimilarityBound() {
+        EmbeddingReference reference = LoadedReference();
+        await using ServiceProvider provider = await LocalModelEnvironment.PreparedProvider();
+        IEmbeddingProducer producer = provider.GetRequiredService<IEmbeddingProducer>();
+        string[] texts = reference.Entries.Where(entry => entry.Name != "full-window").Select(entry => entry.Text).Distinct().Take(10).ToArray();
+        float[][] sequential = texts.Select(text => (float[]) ExpressionPreparer.Prepare(producer.Embed(text, EmbeddingPurpose.Query)).ConstantParameters[0]).ToArray();
+
+        ISqlToken[] together = await producer.EmbedManyAsync(texts, EmbeddingPurpose.Query, CancellationToken.None);
+
+        Assert.Multiple(() => {
+            Assert.That(together, Has.Length.EqualTo(texts.Length));
+            for (int i = 0; i < texts.Length; i++) {
+                float[] vector = (float[]) ExpressionPreparer.Prepare(together[i]).ConstantParameters[0];
+                double distance = Math.Sqrt(vector.Zip(sequential[i], (a, b) => (double) (a - b) * (a - b)).Sum());
+                Assert.That(distance, Is.LessThan(1e-5), texts[i]);
+            }
         });
     }
 

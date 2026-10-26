@@ -1,12 +1,10 @@
-using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
+using Backend.tests.Fixtures;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using NUnit.Framework;
-using Pooshit.Ocelot.Clients;
-using Pooshit.Ocelot.Entities;
 using Pooshit.Ocelot.Entities.Operations.Prepared;
-using Pooshit.Ocelot.Info;
+using Pooshit.Ocelot.Tokens;
 
 namespace Backend.tests.Tests;
 
@@ -25,15 +23,6 @@ public class LocalEmbeddingProducerTests {
 
     static LocalEmbeddingProducer ProducerOf(ILocalEmbeddingModel model, IEmbeddingModelFiles? files = null) {
         return new LocalEmbeddingProducer(files ?? Mock.Of<IEmbeddingModelFiles>(), model, NullLogger<LocalEmbeddingProducer>.Instance);
-    }
-
-    static PreparedOperation Prepare(Pooshit.Ocelot.Tokens.ISqlToken expression) {
-        Mock<IDBClient> client = new();
-        client.SetupGet(c => c.DBInfo).Returns(new PostgreInfo());
-        return new EntityManager(client.Object).Update<Node>()
-                                               .Set(n => n.Embedding == expression.Type<float[]>())
-                                               .Where(n => n.Id == 1)
-                                               .Prepare();
     }
 
 
@@ -87,13 +76,70 @@ public class LocalEmbeddingProducerTests {
     [Test, Parallelizable]
     [Description("The vector of the model reaches SQL as one bound constant cast to vector, in component order.")]
     public void Embed_ModelVector_RendersCastOfOneBoundParameter() {
-        PreparedOperation prepared = Prepare(ProducerOf(ModelAnswering(ModelVector).Object).Embed("some text", EmbeddingPurpose.Document));
+        PreparedOperation prepared = ExpressionPreparer.Prepare(ProducerOf(ModelAnswering(ModelVector).Object).Embed("some text", EmbeddingPurpose.Document));
 
         Assert.Multiple(() => {
             Assert.That(System.Text.RegularExpressions.Regex.Replace(prepared.CommandText, @"\s+", " "), Does.Contain("SET \"embedding\" = ( @1 ::vector ) WHERE"));
             Assert.That(prepared.ConstantParameters, Has.Length.EqualTo(2));
             Assert.That(prepared.ConstantParameters[0], Is.EqualTo(ModelVector));
         });
+    }
+
+
+    [Test, Parallelizable]
+    [Description("The model runs for all texts at the same time, which a sequential loop can not satisfy.")]
+    public async Task EmbedManyAsync_SeveralTexts_RunsModelCallsConcurrently() {
+        const int count = 4;
+        using CountdownEvent inFlight = new(count);
+        int allArrived = 0;
+        Mock<ILocalEmbeddingModel> model = new();
+        model.Setup(m => m.Embed(It.IsAny<string>())).Returns(() => {
+            inFlight.Signal();
+            if (inFlight.Wait(TimeSpan.FromSeconds(10)))
+                Interlocked.Increment(ref allArrived);
+            return ModelVector;
+        });
+
+        await ProducerOf(model.Object).EmbedManyAsync(["a", "b", "c", "d"], EmbeddingPurpose.Query, CancellationToken.None);
+
+        Assert.That(allArrived, Is.EqualTo(count));
+    }
+
+
+    [Test, Parallelizable]
+    [Description("The vectors come back in the order of the texts with the prompt of the purpose, also when later texts finish first.")]
+    public async Task EmbedManyAsync_LaterTextsFinishFirst_ReturnsVectorsInTextOrderWithPurposePrompt() {
+        string[] texts = ["first", "second", "third"];
+        Mock<ILocalEmbeddingModel> model = new();
+        model.Setup(m => m.Embed(It.IsAny<string>())).Returns((string prompt) => {
+            int index = Array.FindIndex(texts, text => prompt.EndsWith(text));
+            Thread.Sleep((texts.Length - index) * 100);
+            float[] vector = new float[EmbeddingExpression.Dimensions];
+            vector[0] = index + 1;
+            return vector;
+        });
+
+        ISqlToken[] expressions = await ProducerOf(model.Object).EmbedManyAsync(texts, EmbeddingPurpose.Query, CancellationToken.None);
+
+        Assert.Multiple(() => {
+            Assert.That(expressions, Has.Length.EqualTo(3));
+            for (int i = 0; i < texts.Length; i++)
+                Assert.That(((float[]) ExpressionPreparer.Prepare(expressions[i]).ConstantParameters[0])[0], Is.EqualTo(i + 1f), texts[i]);
+            model.Verify(m => m.Embed(It.Is<string>(prompt => prompt.StartsWith("task: search result | query: "))), Times.Exactly(3));
+        });
+    }
+
+
+    [Test, Parallelizable]
+    [Description("A cancelled token stops the call before any text reaches the model.")]
+    public void EmbedManyAsync_CancelledToken_ThrowsWithoutCallingModel() {
+        Mock<ILocalEmbeddingModel> model = ModelAnswering(ModelVector);
+        using CancellationTokenSource source = new();
+        source.Cancel();
+
+        Assert.ThrowsAsync<OperationCanceledException>(() => ProducerOf(model.Object).EmbedManyAsync(["a", "b"], EmbeddingPurpose.Query, source.Token));
+
+        model.Verify(m => m.Embed(It.IsAny<string>()), Times.Never);
     }
 
 

@@ -25,6 +25,12 @@ public class LocalEmbeddingProducer(IEmbeddingModelFiles files, ILocalEmbeddingM
     }
 
     /// <inheritdoc />
+    public async Task<ISqlToken[]> EmbedManyAsync(IReadOnlyList<string> texts, EmbeddingPurpose purpose, CancellationToken cancellationToken) {
+        cancellationToken.ThrowIfCancellationRequested();
+        return await Task.WhenAll(texts.Select(text => Task.Run(() => Embed(text, purpose), CancellationToken.None)));
+    }
+
+    /// <inheritdoc />
     public async Task PrepareAsync(CancellationToken cancellationToken) {
         await files.EnsureAsync(cancellationToken);
 

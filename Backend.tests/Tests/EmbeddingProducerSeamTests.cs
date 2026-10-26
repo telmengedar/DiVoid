@@ -3,6 +3,8 @@ using System.Data.Common;
 using System.Text;
 using Backend.Extensions.Startup;
 using Backend.Models.Nodes;
+using Backend.Query;
+using Pooshit.Ocelot.Errors;
 using Backend.Services.Embeddings;
 using Backend.Services.Nodes;
 using Backend.tests.Fixtures;
@@ -197,15 +199,37 @@ public class EmbeddingProducerSeamTests
     }
 
     [Test, Parallelizable]
-    [Description("DiVoid #17524 unit 1: every query of a multi-query search is embedded through the producer as a query vector")]
-    public void ListPaged_MultiQuery_EmbedsEachQueryAsQuery()
+    [Description("A multi-query search hands all its queries to the producer in one several-texts request as query vectors, without single-text requests.")]
+    public void ListPaged_MultiQuery_EmbedsAllQueriesInOneEmbedManyCall()
     {
         RecordingEmbeddingProducer producer = new();
         NodeService service = ServiceThrowingOnRead(producer);
 
         Assert.ThrowsAsync<QueryExecuted>(() => service.ListPaged(new NodeFilter { Queries = ["alpha", "beta"] }, callerId: 0, isAdmin: true));
 
-        Assert.That(producer.Calls, Is.EqualTo(new[] { ("alpha", EmbeddingPurpose.Query), ("beta", EmbeddingPurpose.Query) }));
+        Assert.Multiple(() => {
+            Assert.That(producer.ManyCalls, Has.Length.EqualTo(1));
+            Assert.That(producer.ManyCalls[0].Texts, Is.EqualTo(new[] { "alpha", "beta" }));
+            Assert.That(producer.ManyCalls[0].Purpose, Is.EqualTo(EmbeddingPurpose.Query));
+            Assert.That(producer.Calls, Is.Empty);
+        });
+    }
+
+    [Test, Parallelizable]
+    [Description("A multi-query path-mode search hands all its queries to the producer in one several-texts request as query vectors, without single-text requests.")]
+    public void ListPagedByPath_MultiQuery_EmbedsAllQueriesInOneEmbedManyCall()
+    {
+        RecordingEmbeddingProducer producer = new();
+        NodeService service = ServiceThrowingOnRead(producer);
+
+        Assert.ThrowsAsync<QueryExecuted>(() => service.ListPagedByPath(new NodePathFilter { Path = "[type:task]", Queries = ["alpha", "beta", "gamma"] }, callerId: 0, isAdmin: true, CancellationToken.None));
+
+        Assert.Multiple(() => {
+            Assert.That(producer.ManyCalls, Has.Length.EqualTo(1));
+            Assert.That(producer.ManyCalls[0].Texts, Is.EqualTo(new[] { "alpha", "beta", "gamma" }));
+            Assert.That(producer.ManyCalls[0].Purpose, Is.EqualTo(EmbeddingPurpose.Query));
+            Assert.That(producer.Calls, Is.Empty);
+        });
     }
 
     [Test, Parallelizable]
@@ -217,7 +241,10 @@ public class EmbeddingProducerSeamTests
 
         Assert.ThrowsAsync<QueryExecuted>(() => service.ListPaged(new NodeFilter { Query = "alpha" }, callerId: 0, isAdmin: true));
 
-        Assert.That(producer.Calls, Is.EqualTo(new[] { ("alpha", EmbeddingPurpose.Query) }));
+        Assert.Multiple(() => {
+            Assert.That(producer.Calls, Is.EqualTo(new[] { ("alpha", EmbeddingPurpose.Query) }));
+            Assert.That(producer.ManyCalls, Is.Empty);
+        });
     }
 
     [Test, Parallelizable]
@@ -229,7 +256,45 @@ public class EmbeddingProducerSeamTests
 
         Assert.ThrowsAsync<QueryExecuted>(() => service.ListPagedByPath(new NodePathFilter { Path = "[type:task]", Query = "alpha" }, callerId: 0, isAdmin: true, CancellationToken.None));
 
-        Assert.That(producer.Calls, Is.EqualTo(new[] { ("alpha", EmbeddingPurpose.Query) }));
+        Assert.Multiple(() => {
+            Assert.That(producer.Calls, Is.EqualTo(new[] { ("alpha", EmbeddingPurpose.Query) }));
+            Assert.That(producer.ManyCalls, Is.Empty);
+        });
+    }
+
+    [Test, Parallelizable]
+    [Description("A search which fails validation on its sort field never reaches the producer, for one query and for several.")]
+    [TestCase(1)]
+    [TestCase(3)]
+    public void ListPaged_UnknownSort_RejectsWithoutEmbedding(int queryCount)
+    {
+        RecordingEmbeddingProducer producer = new();
+        NodeService service = ServiceThrowingOnRead(producer);
+        NodeFilter filter = new() { Queries = Enumerable.Range(0, queryCount).Select(i => $"q{i}").ToArray(), Sort = "bogus" };
+
+        Assert.ThrowsAsync<UnknownFieldException>(() => service.ListPaged(filter, callerId: 0, isAdmin: true));
+
+        Assert.That(producer.Events, Is.Empty);
+    }
+
+    [Test, Parallelizable]
+    [Description("A path search which fails validation on its path or its sort field never reaches the producer, for one query and for several.")]
+    [TestCase("[", null, 1)]
+    [TestCase("[", null, 3)]
+    [TestCase("[type:task]", "bogus", 1)]
+    [TestCase("[type:task]", "bogus", 3)]
+    public void ListPagedByPath_InvalidRequest_RejectsWithoutEmbedding(string path, string? sort, int queryCount)
+    {
+        RecordingEmbeddingProducer producer = new();
+        NodeService service = ServiceThrowingOnRead(producer);
+        NodePathFilter filter = new() { Path = path, Sort = sort, Queries = Enumerable.Range(0, queryCount).Select(i => $"q{i}").ToArray() };
+
+        Exception? rejected = Assert.CatchAsync<Exception>(() => service.ListPagedByPath(filter, callerId: 0, isAdmin: true, CancellationToken.None));
+
+        Assert.Multiple(() => {
+            Assert.That(rejected, Is.InstanceOf<PathQueryParseException>().Or.InstanceOf<UnknownFieldException>());
+            Assert.That(producer.Events, Is.Empty);
+        });
     }
 
     [Test, Parallelizable]
