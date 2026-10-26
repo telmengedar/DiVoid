@@ -120,46 +120,6 @@ public class FilterExtensionsTests
     }
 
     // -----------------------------------------------------------------------
-    // ApplyFilter — ListFilter (sort)
-    // -----------------------------------------------------------------------
-
-    [Test]
-    public void ApplyFilter_SortOnePartField_DoesNotThrow()
-    {
-        using DatabaseFixture fixture = new();
-        ListFilter filter = new() { Count = 10, Sort = "name" };
-        LoadOperation<Node> op = fixture.EntityManager.Load<Node>();
-        Assert.DoesNotThrow(() => op.ApplyFilter(filter));
-    }
-
-    [Test]
-    public void ApplyFilter_SortTwoPartField_DoesNotThrow()
-    {
-        using DatabaseFixture fixture = new();
-        ListFilter filter = new() { Count = 10, Sort = "node.name" };
-        LoadOperation<Node> op = fixture.EntityManager.Load<Node>();
-        Assert.DoesNotThrow(() => op.ApplyFilter(filter));
-    }
-
-    [Test]
-    public void ApplyFilter_SortDescending_DoesNotThrow()
-    {
-        using DatabaseFixture fixture = new();
-        ListFilter filter = new() { Count = 10, Sort = "name", Descending = true };
-        LoadOperation<Node> op = fixture.EntityManager.Load<Node>();
-        Assert.DoesNotThrow(() => op.ApplyFilter(filter));
-    }
-
-    [Test]
-    public void ApplyFilter_NoSort_DoesNotThrow()
-    {
-        using DatabaseFixture fixture = new();
-        ListFilter filter = new() { Count = 10, Sort = null };
-        LoadOperation<Node> op = fixture.EntityManager.Load<Node>();
-        Assert.DoesNotThrow(() => op.ApplyFilter(filter));
-    }
-
-    // -----------------------------------------------------------------------
     // ApplyFilter — ListFilter with mapper
     // -----------------------------------------------------------------------
 

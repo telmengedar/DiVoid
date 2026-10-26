@@ -1266,15 +1266,16 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (filter.Count is null or > 500)
             filter.Count = 500;
 
-        LoadOperation<NodeLink> operation = database.Load<NodeLink>(l => l.SourceId, l => l.TargetId, l => l.LinkType, l => l.Context)
-                                                    .Where(l => l.SourceId.In(ids) || l.TargetId.In(ids));
-        operation.ApplyFilter(filter);
+        NodeLinkMapper mapper = new();
+        LoadOperation<NodeLink> operation = mapper.CreateOperation(database)
+                                                  .Where(l => l.SourceId.In(ids) || l.TargetId.In(ids));
+        operation.ApplyFilter(filter, mapper);
 
         LoadOperation<NodeLink> countOp = database.Load<NodeLink>(DB.Count())
                                                   .Where(l => l.SourceId.In(ids) || l.TargetId.In(ids));
 
         return Task.FromResult(new AsyncPageResponseWriter<NodeLink>(
-            operation.ExecuteEntitiesAsync(),
+            mapper.EntitiesFromOperation(operation),
             () => countOp.ExecuteScalarAsync<long>(),
             filter.Continue
         ));

@@ -6,12 +6,11 @@ csharp_preserve_static_implicitly_typed_out_parameters = true
 csharp_indent_case_contents = true
 csharp_indent_switch_labels = true
 # The nuclear option for K&R:
-csharp_new_line_before_open_brace = accessors, anonymous_methods, anonymous_types, control_blocks, events, indexers, lambdas, local_functions, methods, object_collection_array_initializers, properties, types
 csharp_new_line_before_else = false
 csharp_new_line_before_catch = false
 csharp_new_line_before_finally = false
 # Specifically for Fluent APIs/Chained calls
-csharp_new_line_before_open_brace = all
+csharp_new_line_before_open_brace = none
 csharp_indent_labels = one_less_than_current
 # Add these specifically to override the 'New Line' engine
 csharp_style_expression_bodied_methods = when_on_single_line:suggestion
