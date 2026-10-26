@@ -363,7 +363,7 @@ public class NodeRootNodeIdTests
         NodeService svc = new(em, new EmbeddingCapability(true), EmbeddingProducers.Function);
 
         NodeFilter filter = new() { Query = "hivemind protocol", RootNodeId = [42L], Count = 10 };
-        NodeMapper mapper = new(filter, EmbeddingProducers.Function);
+        NodeMapper mapper = new NodeMapper(filter);
         filter.Fields = [.. mapper.DefaultListFields, "similarity"];
 
         LoadOperation<Node> operation = mapper.CreateOperation(em, filter.Fields);
@@ -373,6 +373,8 @@ public class NodeRootNodeIdTests
         PredicateExpression<Node>? predicate = generated != null
             ? new PredicateExpression<Node>(generated)
             : null;
+
+        operation = mapper.ApplyQueryVectors(operation, em, EmbeddingProducers.QueryVectorsOf(filter));
 
         svc.ApplySemanticSearch(operation, filter, mapper, ref predicate);
         operation.Where(predicate?.Content);

@@ -596,7 +596,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <summary>
     /// chains the hops of a path query into a terminal operation; every hop is gated by the caller's read visibility
     /// </summary>
-    ComposedPath ComposeHops(PathQuery query, NodePathFilter filter, long[] linkedToSeeds, NodeMapper mapper, bool isSemantic, long callerId, bool isAdmin, CancellationToken ct)
+    async Task<ComposedPath> ComposeHops(PathQuery query, NodePathFilter filter, long[] linkedToSeeds, NodeMapper mapper, bool isSemantic, long callerId, bool isAdmin, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -656,8 +656,10 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (filter.LinkedTo?.Length > 0)
             combined &= BuildLinkedToFilter(linkedToSeeds);
 
-        if (isSemantic)
+        if (isSemantic) {
+            terminal = mapper.ApplyQueryVectors(terminal, database, await QueryVectorsOf(filter, ct));
             ApplySemanticSearch(terminal, filter, mapper, ref combined);
+        }
 
         terminal.Where(combined?.Content);
 
@@ -830,6 +832,16 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         return rows;
     }
 
+    async Task<ISqlToken[]> QueryVectorsOf(NodeFilter filter, CancellationToken ct)
+    {
+        string[] queries = filter.GetEffectiveQueries();
+        return queries.Length switch {
+            0 => [],
+            1 => [embeddingProducer.Embed(queries[0], EmbeddingPurpose.Query)],
+            _ => await embeddingProducer.EmbedManyAsync(queries, EmbeddingPurpose.Query, ct)
+        };
+    }
+
     /// <inheritdoc />
     public async Task<AsyncPageResponseWriter<NodeDetails>> ListPaged(NodeFilter filter, long callerId, bool isAdmin, CancellationToken ct = default)
     {
@@ -862,7 +874,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (string.Equals(filter.Sort, "linkDetails", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("sort=linkDetails is not supported");
 
-        NodeMapper mapper = new(filter, embeddingProducer);
+        NodeMapper mapper = new(filter);
         filter.Fields ??= isSemantic
             ? [.. mapper.DefaultListFields, "similarity"]
             : mapper.DefaultListFields;
@@ -887,8 +899,10 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (filter.LinkedTo?.Length > 0)
             listPredicate &= BuildLinkedToFilter(await ReadableSeeds(filter.LinkedTo, callerId, isAdmin, ct));
 
-        if (isSemantic)
+        if (isSemantic) {
+            operation = mapper.ApplyQueryVectors(operation, database, await QueryVectorsOf(filter, ct));
             ApplySemanticSearch(operation, filter, mapper, ref listPredicate);
+        }
 
         operation.Where(listPredicate?.Content);
 
@@ -940,7 +954,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (string.Equals(filter.Sort, "linkDetails", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("sort=linkDetails is not supported");
 
-        NodeMapper mapper = new(filter, embeddingProducer);
+        NodeMapper mapper = new(filter);
         filter.Fields ??= isSemantic
             ? [.. mapper.DefaultListFields, "similarity"]
             : mapper.DefaultListFields;
@@ -963,7 +977,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
         long[] linkedToSeeds = await ReadableSeeds(filter.LinkedTo, callerId, isAdmin, ct);
 
-        ComposedPath composed = ComposeHops(query, filter, linkedToSeeds, mapper, isSemantic, callerId, isAdmin, ct);
+        ComposedPath composed = await ComposeHops(query, filter, linkedToSeeds, mapper, isSemantic, callerId, isAdmin, ct);
 
         ct.ThrowIfCancellationRequested();
 

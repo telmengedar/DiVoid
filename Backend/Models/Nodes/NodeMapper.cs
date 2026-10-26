@@ -23,14 +23,11 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
     const string ScaleColumn = "scale";
     const string SumAlias = "qs";
 
-    readonly NodeFilter filter;
-    readonly IEmbeddingProducer producer;
-
     /// <summary>
     /// creates a new <see cref="NodeMapper"/> for standard list mode (no semantic search)
     /// </summary>
     public NodeMapper()
-    : this(null, null) { }
+    : this(null) { }
 
     /// <summary>
     /// creates a new <see cref="NodeMapper"/> optionally configured for semantic search.
@@ -38,12 +35,9 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
     /// <c>similarity</c> field-mapping is included in <see cref="Mappings()"/>.
     /// </summary>
     /// <param name="filter">the inbound node filter; null is treated as standard list mode</param>
-    /// <param name="producer">producer of the query vectors, not needed unless the filter is semantic</param>
-    public NodeMapper(NodeFilter filter, IEmbeddingProducer producer)
+    public NodeMapper(NodeFilter filter)
     : base(Mappings(filter).ToArray(), null, PostProcess)
     {
-        this.filter = filter;
-        this.producer = producer;
     }
 
     /// <inheritdoc />
@@ -124,23 +118,17 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
 
     static bool IsSemantic(NodeFilter filter) => filter?.GetEffectiveQueries().Length > 0;
 
-    ISqlToken EmbeddedQuery(string queryText)
+    ILoadOperation QueryVectorSubselect(IEntityManager database, ISqlToken[] queryVectors)
     {
-        return producer.Embed(queryText, EmbeddingPurpose.Query);
-    }
-
-    ILoadOperation QueryVectorSubselect(IEntityManager database)
-    {
-        string[] queries = filter.GetEffectiveQueries();
-        if (queries.Length == 1)
-            return database.Load(DB.As(EmbeddedQuery(queries[0]), QueryVectorColumn))
+        if (queryVectors.Length == 1)
+            return database.Load(DB.As(queryVectors[0], QueryVectorColumn))
                            .Offset(0);
 
-        ISqlToken sum = queries
-                        .Select(query => DB.CustomFunction("l2_normalize", EmbeddedQuery(query)))
+        ISqlToken sum = queryVectors
+                        .Select(vector => DB.CustomFunction("l2_normalize", vector))
                         .Aggregate((total, next) => DB.CustomFunction("vector_add", total, next));
         ILoadOperation summed = database.Load(DB.As(sum, QueryVectorColumn)).Offset(0);
-        float queryCount = queries.Length;
+        float queryCount = queryVectors.Length;
         return database.Load(DB.As(DB.Column(SumAlias, QueryVectorColumn), QueryVectorColumn),
                              DB.As(DB.Value<object>(v => DB.Cast(DB.CustomFunction("vector_norm", DB.Column(SumAlias, QueryVectorColumn)), CastType.Float).Single / queryCount), ScaleColumn))
                        .From(summed)
@@ -148,9 +136,9 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
                        .Offset(0);
     }
 
-    ILoadOperation SimilaritySubselect(IEntityManager database)
+    ILoadOperation SimilaritySubselect(IEntityManager database, int queryCount)
     {
-        if (filter.GetEffectiveQueries().Length > 1)
+        if (queryCount > 1)
             return database.Load(DB.As(DB.Value<object>(v => (1.0f - DB.Cast(
                                             DB.VCos(
                                                 DB.Column(QueryVectorAlias, QueryVectorColumn),
@@ -169,13 +157,21 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
     /// <inheritdoc />
     public override LoadOperation<Node> CreateOperation(IEntityManager database, params IDBField[] fields)
     {
-        LoadOperation<Node> operation = database.Load<Node>(fields)
-                                                .Alias("node")
-                                                .Join<NodeType>((n, t) => n.TypeId == t.Id, "type");
-        if (!IsSemantic(filter))
-            return operation;
+        return database.Load<Node>(fields)
+                       .Alias("node")
+                       .Join<NodeType>((n, t) => n.TypeId == t.Id, "type");
+    }
 
-        return operation.LateralJoin(QueryVectorSubselect(database), null, QueryVectorAlias)
-                        .LateralJoin(SimilaritySubselect(database), null, SimilarityAlias);
+    /// <summary>
+    /// joins the query vector and the similarity of each row to an operation created by <see cref="CreateOperation"/>
+    /// </summary>
+    /// <param name="operation">operation to extend</param>
+    /// <param name="database">entity manager the sub-selects are built with</param>
+    /// <param name="queryVectors">vector expression of each effective query of the filter, in order, not empty</param>
+    /// <returns>the extended operation</returns>
+    public LoadOperation<Node> ApplyQueryVectors(LoadOperation<Node> operation, IEntityManager database, ISqlToken[] queryVectors)
+    {
+        return operation.LateralJoin(QueryVectorSubselect(database, queryVectors), null, QueryVectorAlias)
+                        .LateralJoin(SimilaritySubselect(database, queryVectors.Length), null, SimilarityAlias);
     }
 }
