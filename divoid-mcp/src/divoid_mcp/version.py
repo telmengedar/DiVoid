@@ -13,8 +13,8 @@ To update after verifying an API change is intentional:
 See docs/drift-policy.md for the full procedure.
 """
 
-__version__ = "0.17.0"
+__version__ = "0.18.0"
 
-# SHA-256 of node #8 content as of 2026-05-27; fields=content documented (PR #119 / DiVoid #1181).
+# SHA-256 of node #8 content as of 2026-10-26; fields=content documented (PR #119 / DiVoid #1181).
 # Hash verified after PR #122 (backend fields=links) merged — node #8 not yet updated for links.
-PINNED_API_REF_HASH = "0c0ea79ad07c226f69d0efca0f5c364177155f5c0c1cc00e56754dd3d4fdc602"
+PINNED_API_REF_HASH = "ae701b92ef44da0cf3a0e6e4a9ca583adfd11a887078700f3706cf83813d9dd6"

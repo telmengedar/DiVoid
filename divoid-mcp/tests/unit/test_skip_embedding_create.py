@@ -15,6 +15,7 @@ from divoid_mcp import http_client
 from divoid_mcp.config import DivoidConfig
 from divoid_mcp.tools.create_documentation import register as register_documentation
 from divoid_mcp.tools.create_node import register as register_node
+from divoid_mcp.tools.create_session_log import _execute as _execute_session_log
 from divoid_mcp.tools.create_session_log import register as register_session_log
 from divoid_mcp.tools.create_task import register as register_task
 
@@ -93,7 +94,14 @@ async def test_skip_embedding_true_sends_skipEmbedding_true(
     assert body.get("skipEmbedding") is True, f"body was {body}"
 
 
-@pytest.mark.parametrize("tool_name,register,args", _TOOLS, ids=[t[0] for t in _TOOLS])
+_SESSION_LOG = "divoid_create_session_log"
+_FOCUSED_TOOLS = [t for t in _TOOLS if t[0] != _SESSION_LOG]
+_SESSION_LOG_TOOL = next(t for t in _TOOLS if t[0] == _SESSION_LOG)
+
+
+@pytest.mark.parametrize(
+    "tool_name,register,args", _FOCUSED_TOOLS, ids=[t[0] for t in _FOCUSED_TOOLS]
+)
 @pytest.mark.asyncio
 async def test_skip_embedding_omitted_leaves_key_out(
     tool_name: str, register: Callable[[FastMCP], None], args: dict[str, Any]
@@ -102,6 +110,15 @@ async def test_skip_embedding_omitted_leaves_key_out(
     body = await _create_and_capture_node_body(tool_name, register, args)
 
     assert "skipEmbedding" not in body, f"body was {body}"
+
+
+@pytest.mark.asyncio
+async def test_session_log_skip_embedding_omitted_sends_true() -> None:
+    """Session logs are unfocused dumps: omitting the flag skips the embedding."""
+    _, register, args = _SESSION_LOG_TOOL
+    body = await _create_and_capture_node_body(_SESSION_LOG, register, args)
+
+    assert body.get("skipEmbedding") is True, f"body was {body}"
 
 
 @pytest.mark.parametrize("tool_name,register,args", _TOOLS, ids=[t[0] for t in _TOOLS])
@@ -123,9 +140,32 @@ async def test_skip_embedding_does_not_disturb_other_body_fields(
     tool_name: str, register: Callable[[FastMCP], None], args: dict[str, Any]
 ) -> None:
     """Setting the flag changes the body by exactly one key."""
-    plain = await _create_and_capture_node_body(tool_name, register, args)
+    plain = await _create_and_capture_node_body(
+        tool_name, register, {**args, "skip_embedding": False}
+    )
     flagged = await _create_and_capture_node_body(
         tool_name, register, {**args, "skip_embedding": True}
     )
 
     assert {k: v for k, v in flagged.items() if k != "skipEmbedding"} == plain
+
+
+@pytest.mark.asyncio
+async def test_session_log_core_default_sends_true() -> None:
+    """Direct callers of the core function get the same default as the tool."""
+    _server_for(register_session_log)
+    config = DivoidConfig(base_url=_DUMMY_BASE, api_key=_DUMMY_KEY, source="env")
+    captured: list[httpx.Request] = []
+
+    def create(req: httpx.Request) -> httpx.Response:
+        captured.append(req)
+        return httpx.Response(200, json={"id": _NEW_NODE_ID, **json.loads(req.content)})
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_NODES_URL).mock(side_effect=create)
+        mock.post(_CONTENT_URL).mock(return_value=httpx.Response(200, json={}))
+        mock.post(_LINKS_URL).mock(return_value=httpx.Response(200, json={}))
+        await _execute_session_log("n", "body", config, docs_group_id=_GROUP_ID)
+
+    assert len(captured) == 1
+    assert json.loads(captured[0].content).get("skipEmbedding") is True
