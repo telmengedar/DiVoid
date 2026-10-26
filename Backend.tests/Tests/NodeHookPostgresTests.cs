@@ -5,9 +5,12 @@ using Backend.Services.Embeddings;
 using Backend.Services.Nodes;
 using Backend.tests.Fixtures;
 using Npgsql;
+using System.Text;
 using NUnit.Framework;
 using Pooshit.AspNetCore.Services.Patches;
+using Pooshit.Ocelot.Clients;
 using Pooshit.Ocelot.Entities;
+using Pooshit.Ocelot.Schemas;
 using Pooshit.Ocelot.Tokens;
 
 namespace Backend.tests.Tests;
@@ -160,5 +163,24 @@ public class NodeHookPostgresTests {
         long expected = database.Scalar<long>("SELECT COALESCE(sum(expected), 0)::bigint FROM expected_hook_delivery");
         Assert.That((await Messages()).LongLength, Is.EqualTo(expected));
         Assert.That(database.Scalar<long>("SELECT count(*) FROM expected_hook_delivery"), Is.EqualTo(8));
+    }
+
+    /// <summary>existing hook rows gain all events and a status filter then ignores content writes</summary>
+    [Test]
+    public async Task CreateOrUpdateSchema_ExistingHookRows_GainEventsAllAndFilterSelects() {
+        await db.DBClient.NonQueryAsync("DROP TABLE nodehook");
+        await db.DBClient.NonQueryAsync("CREATE TABLE nodehook (nodeid bigint NOT NULL, userid bigint NOT NULL, tag character varying(128) NOT NULL)");
+        await db.DBClient.NonQueryAsync($"INSERT INTO nodehook (nodeid, userid, tag) VALUES ({nodeId}, {userId}, 'old')");
+        using (Transaction transaction = db.Transaction()) {
+            await new SchemaService(db.DBClient).CreateOrUpdateSchema<NodeHook>(transaction);
+            transaction.Commit();
+        }
+        Assert.That((await db.Load<NodeHook>().ExecuteEntityAsync()).Events, Is.EqualTo(NodeHookEvents.All));
+        await service.RegisterHook(new NodeHook { NodeId = nodeId, UserId = userId, Tag = "old", Events = NodeHookEvents.Status }, userId, false);
+        using MemoryStream data = new(Encoding.UTF8.GetBytes("body"));
+        await service.UploadContent(nodeId, "text/plain", data, userId, false);
+        Assert.That(await Messages(), Is.Empty);
+        await service.Patch(nodeId, [new PatchOperation { Op = "replace", Path = "/status", Value = "closed" }], userId, false, default);
+        Assert.That(await Messages(), Has.Length.EqualTo(1));
     }
 }

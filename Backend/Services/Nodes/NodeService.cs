@@ -1333,34 +1333,37 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     static string StatusText(string status) => status == null ? "(unset)" : status.Length > 128 ? status[..127] + "…" : status;
 
 
-    static List<string> Changes(Node before, Node after) {
-        List<string> changes = [];
-        if (after == null) return [$"Node #{before.Id} deleted"];
-        if (before.Status != after.Status) changes.Add($"Status changed: {StatusText(before.Status)} → {StatusText(after.Status)}");
-        if (before.Name != after.Name) changes.Add("Name changed");
-        if (before.TypeId != after.TypeId) changes.Add("Type changed");
-        if (before.Severity != after.Severity) changes.Add("Severity changed");
-        if (before.Refinement != after.Refinement) changes.Add("Refinement changed");
-        if (before.RootNodeId != after.RootNodeId) changes.Add("Root node changed");
-        if (before.Substance != after.Substance) changes.Add("Substance changed");
-        if (before.SkipEmbedding != after.SkipEmbedding) changes.Add("Embedding preference changed");
-        if (before.OwnerId != after.OwnerId) changes.Add("Owner changed");
-        if (before.Access != after.Access) changes.Add("Access changed");
-        if (before.X != after.X || before.Y != after.Y) changes.Add("Position changed");
+    static List<(NodeHookEvents Kind, string Text)> Changes(Node before, Node after) {
+        List<(NodeHookEvents Kind, string Text)> changes = [];
+        if (after == null) return [(0, $"Node #{before.Id} deleted")];
+        if (before.Status != after.Status) changes.Add((NodeHookEvents.Status, $"Status changed: {StatusText(before.Status)} → {StatusText(after.Status)}"));
+        if (before.Name != after.Name) changes.Add((NodeHookEvents.Metadata, "Name changed"));
+        if (before.TypeId != after.TypeId) changes.Add((NodeHookEvents.Metadata, "Type changed"));
+        if (before.Severity != after.Severity) changes.Add((NodeHookEvents.Metadata, "Severity changed"));
+        if (before.Refinement != after.Refinement) changes.Add((NodeHookEvents.Metadata, "Refinement changed"));
+        if (before.RootNodeId != after.RootNodeId) changes.Add((NodeHookEvents.Metadata, "Root node changed"));
+        if (before.Substance != after.Substance) changes.Add((NodeHookEvents.Metadata, "Substance changed"));
+        if (before.SkipEmbedding != after.SkipEmbedding) changes.Add((NodeHookEvents.Metadata, "Embedding preference changed"));
+        if (before.OwnerId != after.OwnerId) changes.Add((NodeHookEvents.Metadata, "Owner changed"));
+        if (before.Access != after.Access) changes.Add((NodeHookEvents.Metadata, "Access changed"));
+        if (before.X != after.X || before.Y != after.Y) changes.Add((NodeHookEvents.Metadata, "Position changed"));
         if (before.ContentType != after.ContentType || !(before.Content ?? []).SequenceEqual(after.Content ?? []) ||
-            (before.Content == null) != (after.Content == null)) changes.Add("Content changed");
+            (before.Content == null) != (after.Content == null)) changes.Add((NodeHookEvents.Content, "Content changed"));
         return changes;
     }
 
 
     async Task Notify(Transaction transaction, Node before, Node after, string edgeChange = null) {
         if (before == null) return;
-        List<string> changes = Changes(before, after);
-        if (edgeChange != null) changes.Add(edgeChange);
+        List<(NodeHookEvents Kind, string Text)> changes = Changes(before, after);
+        if (edgeChange != null) changes.Add((NodeHookEvents.Links, edgeChange));
         if (changes.Count == 0) return;
+        NodeHookEvents kinds = changes.Aggregate((NodeHookEvents)0, (mask, change) => mask | change.Kind);
+        bool endsSubscription = after == null || before.OwnerId != after.OwnerId || before.Access != after.Access;
+        NodeHookEvents selection = endsSubscription ? NodeHookEvents.All : kinds;
         long nodeId = before.Id;
         List<NodeHook> hooks = [];
-        await foreach (NodeHook hook in database.Load<NodeHook>().Where(h => h.NodeId == nodeId).ExecuteEntitiesAsync(transaction))
+        await foreach (NodeHook hook in database.Load<NodeHook>().Where(h => h.NodeId == nodeId && (h.Events & selection) != 0).ExecuteEntitiesAsync(transaction))
             hooks.Add(hook);
         foreach (NodeHook hook in hooks) {
             User user = await database.Load<User>(u => u.Id, u => u.Enabled, u => u.Permissions)
@@ -1368,9 +1371,10 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             bool readableBefore = CanRead(before, user);
             bool readableAfter = CanRead(after, user);
             if (!readableBefore && !readableAfter) continue;
+            if ((hook.Events & kinds) == 0 && !(readableBefore && !readableAfter)) continue;
             string body = after != null && !readableAfter
                 ? $"Access changed for node #{nodeId}."
-                : $"Node #{nodeId}:\n" + string.Join("\n", changes);
+                : $"Node #{nodeId}:\n" + string.Join("\n", changes.Select(change => change.Text));
             await database.Insert<Message>()
                           .Columns(m => m.AuthorId, m => m.RecipientId, m => m.Subject, m => m.Body, m => m.CreatedAt)
                           .Values(0L, hook.UserId, $"[{hook.Tag}] Node #{nodeId} changed", body, DateTime.UtcNow)
@@ -1392,6 +1396,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <inheritdoc />
     public async Task<NodeHook> RegisterHook(NodeHook hook, long callerId, bool isAdmin) {
         ValidateHook(hook, callerId, isAdmin);
+        if (((int)hook.Events & ~(int)NodeHookEvents.All) != 0) throw new ArgumentException("events contains unknown flags");
+        if (hook.Events == 0) hook.Events = NodeHookEvents.All;
         using Transaction transaction = MutationTransaction();
         await LockNodes(transaction, hook.NodeId);
         Node node = await Snapshot(transaction, hook.NodeId);
@@ -1400,8 +1406,11 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (!CanRead(node, recipient)) throw new NotFoundException<Node>(hook.NodeId);
         if (await database.Load<NodeHook>(DB.Count()).Where(h => h.NodeId == hook.NodeId && h.UserId == hook.UserId && h.Tag == hook.Tag)
                           .ExecuteScalarAsync<long>(transaction) == 0)
-            await database.Insert<NodeHook>().Columns(h => h.NodeId, h => h.UserId, h => h.Tag)
-                          .Values(hook.NodeId, hook.UserId, hook.Tag).ExecuteAsync(transaction);
+            await database.Insert<NodeHook>().Columns(h => h.NodeId, h => h.UserId, h => h.Tag, h => h.Events)
+                          .Values(hook.NodeId, hook.UserId, hook.Tag, hook.Events).ExecuteAsync(transaction);
+        else
+            await database.Update<NodeHook>().Set(h => h.Events == hook.Events)
+                          .Where(h => h.NodeId == hook.NodeId && h.UserId == hook.UserId && h.Tag == hook.Tag).ExecuteAsync(transaction);
         transaction.Commit();
         return hook;
     }

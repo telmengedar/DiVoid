@@ -11,6 +11,20 @@ from ..config import DivoidConfig
 from ..errors import make_error_content, map_http_error, map_unreachable
 
 
+_EVENT_FLAGS = {"status": 1, "content": 2, "links": 4, "metadata": 8}
+
+
+def _encode_events(events: list[str] | None) -> tuple[int | None, str | None]:
+    if events is None:
+        return None, None
+    if not events or any(name.strip().lower() not in _EVENT_FLAGS for name in events):
+        return None, "events must be a non-empty list of: Status, Content, Links, Metadata."
+    mask = 0
+    for name in events:
+        mask |= _EVENT_FLAGS[name.strip().lower()]
+    return mask, None
+
+
 def _validate(node_id: int | None, user_id: int | None, tag: str | None) -> str | None:
     for name, value in (("node_id", node_id), ("user_id", user_id)):
         if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
@@ -28,8 +42,11 @@ async def _execute(
     user_id: int | None,
     tag: str | None,
     config: DivoidConfig,
+    events: list[str] | None = None,
 ) -> dict[str, Any]:
     invalid = _validate(node_id, user_id, tag)
+    mask, invalid_events = _encode_events(events)
+    invalid = invalid or invalid_events
     if invalid:
         return {"isError": True, "content": make_error_content("invalid_hook", invalid)}
     payload: dict[str, Any] = {}
@@ -39,6 +56,8 @@ async def _execute(
         payload["userId"] = user_id
     if tag is not None:
         payload["tag"] = tag.strip()
+    if mask is not None:
+        payload["events"] = mask
     operation = f"{method.lower()} node hook"
     try:
         if method == "GET":
@@ -63,12 +82,18 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
     config: DivoidConfig = mcp_server.config  # type: ignore[attr-defined]
 
     @mcp_server.tool(description=(
-        "Subscribe a user to all changes of a readable node. Idempotent for node_id/user_id/tag. "
+        "Subscribe a user to changes of a readable node. Idempotent for node_id/user_id/tag. "
+        "events optionally limits notifications to a list of Status, Content, Links, Metadata "
+        "(Metadata is every other node field); omitted means all changes. "
+        "Re-registering the same node_id/user_id/tag replaces its events. "
+        "Deletion and loss of read access are always delivered. "
         "Messages use system authorId 0 and '[tag] Node #N changed' subjects. "
         "Non-admin callers may subscribe only themselves; tag is opaque routing text."
     ))
-    async def divoid_register_node_hook(node_id: int, user_id: int, tag: str) -> dict[str, Any]:
-        return await _execute("POST", node_id, user_id, tag, config)
+    async def divoid_register_node_hook(
+        node_id: int, user_id: int, tag: str, events: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return await _execute("POST", node_id, user_id, tag, config, events)
 
     @mcp_server.tool(description=(
         "List node subscriptions. Optional node_id narrows the list; user_id defaults to caller. "

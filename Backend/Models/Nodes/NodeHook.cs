@@ -15,4 +15,8 @@ public class NodeHook {
     /// <summary>message routing tag</summary>
     [Unique("subscription"), Size(128)]
     public string Tag { get; set; }
+
+    /// <summary>change kinds which notify this subscription</summary>
+    [DefaultValue((int)NodeHookEvents.All)]
+    public NodeHookEvents Events { get; set; }
 }
