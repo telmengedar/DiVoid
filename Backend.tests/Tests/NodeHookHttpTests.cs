@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Backend.Models.Messages;
 using Backend.Models.Nodes;
 using Backend.Models.Users;
@@ -21,6 +22,8 @@ namespace Backend.tests.Tests;
 /// <summary>node hook API and transactional mutation tests</summary>
 [TestFixture]
 public class NodeHookHttpTests {
+    static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { Converters = { new JsonStringEnumConverter() } };
+
     JwtAuthFixture fixture = null!;
     IEntityManager db = null!;
     NodeService service = null!;
@@ -66,8 +69,8 @@ public class NodeHookHttpTests {
         return client;
     }
 
-    Task<NodeHook> Hook(long? userId = null, string tag = "route", long? watched = null) =>
-        service.RegisterHook(new NodeHook { NodeId = watched ?? nodeId, UserId = userId ?? readerId, Tag = tag }, adminId, true);
+    Task<NodeHook> Hook(long? userId = null, string tag = "route", long? watched = null, NodeHookEvents events = NodeHookEvents.All) =>
+        service.RegisterHook(new NodeHook { NodeId = watched ?? nodeId, UserId = userId ?? readerId, Tag = tag, Events = events }, adminId, true);
 
     async Task<Message[]> Messages(long? recipient = null) {
         long id = recipient ?? readerId;
@@ -93,7 +96,7 @@ public class NodeHookHttpTests {
         await AssertStatus(await reader.PostAsJsonAsync("/api/nodehooks", payload), HttpStatusCode.OK);
         await Hook(tag: "Route");
         await Hook(ownerId);
-        NodeHook[] hooks = (await reader.GetFromJsonAsync<NodeHook[]>("/api/nodehooks"))!;
+        NodeHook[] hooks = (await reader.GetFromJsonAsync<NodeHook[]>("/api/nodehooks", Json))!;
         Assert.That(hooks.Select(h => h.Tag), Is.EquivalentTo(new[] { "route", "Route" }));
         await Patch("/status", "closed");
         Assert.That(await Messages(), Has.Length.EqualTo(2));
@@ -117,7 +120,7 @@ public class NodeHookHttpTests {
         await AssertStatus(await reader.GetAsync($"/api/nodehooks?userId={ownerId}"), HttpStatusCode.NotFound);
         await AssertStatus(await reader.SendAsync(new HttpRequestMessage(HttpMethod.Delete, "/api/nodehooks") { Content = JsonContent.Create(other) }), HttpStatusCode.NotFound);
         await AssertStatus(await admin.PostAsJsonAsync("/api/nodehooks", other), HttpStatusCode.OK);
-        Assert.That((await admin.GetFromJsonAsync<NodeHook[]>($"/api/nodehooks?userId={ownerId}"))!, Has.Length.EqualTo(1));
+        Assert.That((await admin.GetFromJsonAsync<NodeHook[]>($"/api/nodehooks?userId={ownerId}", Json))!, Has.Length.EqualTo(1));
     }
 
     /// <summary>registration rejects invalid tags</summary>
@@ -223,11 +226,11 @@ public class NodeHookHttpTests {
         await Clear();
         await Patch("/status", "more-secret");
         Assert.That(await Messages(), Is.Empty);
-        Assert.That((await reader.GetFromJsonAsync<NodeHook[]>("/api/nodehooks"))!, Has.Length.EqualTo(1));
+        Assert.That((await reader.GetFromJsonAsync<NodeHook[]>("/api/nodehooks", Json))!, Has.Length.EqualTo(1));
         await Patch("/access", "Read, Write");
         Assert.That((await Messages()).Single().Body, Does.Contain("Access changed").And.Not.Contain("secret"));
         await reader.SendAsync(new HttpRequestMessage(HttpMethod.Delete, "/api/nodehooks") { Content = JsonContent.Create(new { nodeId, userId = readerId, tag = "route" }) });
-        Assert.That((await reader.GetFromJsonAsync<NodeHook[]>("/api/nodehooks"))!, Is.Empty);
+        Assert.That((await reader.GetFromJsonAsync<NodeHook[]>("/api/nodehooks", Json))!, Is.Empty);
     }
 
     /// <summary>disabled recipient is skipped</summary>
@@ -315,7 +318,7 @@ public class NodeHookHttpTests {
         object payload = new { nodeId, userId = readerId, tag = "route" };
         await AssertStatus(await reader.SendAsync(new HttpRequestMessage(HttpMethod.Delete, "/api/nodehooks") { Content = JsonContent.Create(payload) }), HttpStatusCode.OK);
         await AssertStatus(await reader.SendAsync(new HttpRequestMessage(HttpMethod.Delete, "/api/nodehooks") { Content = JsonContent.Create(payload) }), HttpStatusCode.OK);
-        Assert.That((await reader.GetFromJsonAsync<NodeHook[]>("/api/nodehooks"))!, Is.Empty);
+        Assert.That((await reader.GetFromJsonAsync<NodeHook[]>("/api/nodehooks", Json))!, Is.Empty);
     }
 
     /// <summary>derived timestamp backfill does not notify</summary>
@@ -351,5 +354,120 @@ public class NodeHookHttpTests {
         data.Position = 0;
         await service.UploadContent(nodeId, "text/markdown", data, ownerId, false);
         Assert.That((await Messages()).Single().Body, Does.Contain("Content changed"));
+    }
+
+    async Task<Message[]> ExerciseEveryKind(long target, string tag, NodeHookEvents? events) {
+        await Patch("/x", 5.0);
+        if (events != null) await Hook(tag: tag, events: events.Value);
+        await Hook(ownerId, tag: "control");
+        using MemoryStream data = new(Encoding.UTF8.GetBytes("body"));
+        await service.UploadContent(nodeId, "text/plain", data, ownerId, false);
+        await service.LinkNodes(nodeId, target, ownerId, false);
+        await Patch("/name", "renamed");
+        await Patch("/status", "closed");
+        await Patch("/x", 9.0);
+        await service.Patch(nodeId, [new() { Op = "replace", Path = "/ownerId", Value = adminId }], adminId, true, default);
+        Assert.That(await Messages(ownerId), Has.Length.EqualTo(6));
+        return await Messages();
+    }
+
+    async Task<long> PositionedTarget() =>
+        (await service.CreateNode(new NodeDetails { Name = "target", X = 100, Y = 100 }, ownerId)).Id;
+
+    /// <summary>omitted or zero events are stored as all and notify every kind</summary>
+    /// <param name="events">events value sent or null when omitted</param>
+    [TestCase(null)]
+    [TestCase(0)]
+    public async Task RegisterHook_OmittedOrZeroEvents_StoresAllAndNotifiesEveryKind(int? events) {
+        object payload = events == null
+            ? new { nodeId, userId = readerId, tag = "route" }
+            : new { nodeId, userId = readerId, tag = "route", events };
+        await AssertStatus(await reader.PostAsJsonAsync("/api/nodehooks", payload), HttpStatusCode.OK);
+        Assert.That((await service.ListHooks(nodeId, readerId, readerId, false)).Single().Events, Is.EqualTo(NodeHookEvents.All));
+        Message[] messages = await ExerciseEveryKind(await PositionedTarget(), "unused", null);
+        Assert.That(messages.Count(m => m.Subject.StartsWith("[route]")), Is.EqualTo(7));
+    }
+
+    /// <summary>status only hook ignores other changes and fires once on status</summary>
+    [Test]
+    public async Task Patch_StatusOnlyHook_NotifiesOnlyOnStatusChange() {
+        Message[] messages = await ExerciseEveryKind(await PositionedTarget(), "waiter", NodeHookEvents.Status);
+        Assert.That(messages.Where(m => m.Subject.StartsWith("[waiter]")).Single().Body, Does.Contain("Status changed: open → closed"));
+        Assert.That(messages.Count(m => m.Subject.StartsWith("[waiter]")), Is.EqualTo(1));
+    }
+
+    /// <summary>each kind selects only its own changes</summary>
+    /// <param name="events">subscribed kind</param>
+    /// <param name="count">number of delivered messages</param>
+    /// <param name="expected">text a delivered message contains</param>
+    [TestCase(NodeHookEvents.Content, 1, "Content changed")]
+    [TestCase(NodeHookEvents.Links, 1, "Link added")]
+    [TestCase(NodeHookEvents.Metadata, 3, "Name changed")]
+    public async Task Patch_EachKindFilter_SelectsOnlyItsChanges(NodeHookEvents events, int count, string expected) {
+        Message[] messages = (await ExerciseEveryKind(await PositionedTarget(), "waiter", events)).Where(m => m.Subject.StartsWith("[waiter]")).ToArray();
+        Assert.That(messages, Has.Length.EqualTo(count));
+        Assert.That(messages.Any(m => m.Body.Contains(expected)), Is.True);
+    }
+
+    /// <summary>matched operation delivers the full consolidated body</summary>
+    [Test]
+    public async Task Patch_FilteredHookMatchedOperation_BodyListsAllChanges() {
+        await Hook(events: NodeHookEvents.Status);
+        await service.Patch(nodeId, [new() { Op = "replace", Path = "/status", Value = "closed" }, new() { Op = "replace", Path = "/name", Value = "renamed" }], ownerId, false, default);
+        Assert.That((await Messages()).Single().Body, Does.Contain("Status changed: open → closed").And.Contain("Name changed"));
+    }
+
+    /// <summary>deletion reaches a filtered hook</summary>
+    [Test]
+    public async Task Delete_FilteredHook_AlwaysSendsFinalNotice() {
+        await Hook(events: NodeHookEvents.Content);
+        await service.Delete(nodeId, ownerId, false);
+        Assert.That((await Messages()).Single().Body, Does.Contain($"Node #{nodeId} deleted"));
+    }
+
+    /// <summary>read loss reaches a filtered hook while a readable access change does not</summary>
+    [Test]
+    public async Task Patch_StatusOnlyHookAccessChange_NotifiesOnlyOnReadLoss() {
+        await Hook(events: NodeHookEvents.Status);
+        await Hook(ownerId, tag: "control");
+        await Patch("/access", "Read");
+        Assert.That(await Messages(ownerId), Has.Length.EqualTo(1));
+        Assert.That(await Messages(), Is.Empty);
+        await Patch("/access", "None");
+        Assert.That((await Messages()).Single().Body, Is.EqualTo($"Access changed for node #{nodeId}."));
+    }
+
+    /// <summary>owner change that removes read access reaches a status only hook</summary>
+    [Test]
+    public async Task Patch_StatusOnlyHookOwnerChange_NotifiesOnReadLoss() {
+        await service.Patch(nodeId, [new() { Op = "replace", Path = "/ownerId", Value = readerId }, new() { Op = "replace", Path = "/access", Value = "None" }], adminId, true, default);
+        await Hook(events: NodeHookEvents.Status);
+        await service.Patch(nodeId, [new() { Op = "replace", Path = "/ownerId", Value = adminId }], adminId, true, default);
+        Assert.That((await Messages()).Single().Body, Is.EqualTo($"Access changed for node #{nodeId}."));
+    }
+
+    /// <summary>re-registering a tuple replaces its filter without a duplicate row</summary>
+    [Test]
+    public async Task RegisterHook_ReRegisterWithNewEvents_UpdatesFilterInPlace() {
+        await Hook(events: NodeHookEvents.Content);
+        NodeHook stored = await Hook(events: NodeHookEvents.Status);
+        NodeHook[] hooks = await service.ListHooks(nodeId, readerId, readerId, false);
+        Assert.That(hooks, Has.Length.EqualTo(1));
+        Assert.That(hooks.Single().Events, Is.EqualTo(NodeHookEvents.Status));
+        Assert.That(stored.Events, Is.EqualTo(NodeHookEvents.Status));
+        using MemoryStream data = new(Encoding.UTF8.GetBytes("body"));
+        await service.UploadContent(nodeId, "text/plain", data, ownerId, false);
+        Assert.That(await Messages(), Is.Empty);
+        await Patch("/status", "closed");
+        Assert.That(await Messages(), Has.Length.EqualTo(1));
+    }
+
+    /// <summary>unknown event flags are rejected</summary>
+    /// <param name="events">invalid mask</param>
+    [TestCase(16)]
+    [TestCase(-1)]
+    public async Task RegisterHook_UnknownEventFlags_Returns400(int events) {
+        await AssertStatus(await reader.PostAsJsonAsync("/api/nodehooks", new { nodeId, userId = readerId, tag = "route", events }), HttpStatusCode.BadRequest);
+        Assert.That(await service.ListHooks(nodeId, readerId, readerId, false), Is.Empty);
     }
 }

@@ -6,6 +6,7 @@ import httpx
 import pytest
 import respx
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 
 from divoid_mcp import http_client
 from divoid_mcp.config import DivoidConfig
@@ -74,3 +75,41 @@ async def test_network_failure_is_not_retried(server):
     result = await server._tool_manager.call_tool("divoid_list_node_hooks", {})
     assert result["isError"] is True
     assert route.call_count == 1
+
+
+@respx.mock
+async def test_register_events_maps_names_to_flags(server):
+    route = respx.post("http://divoid.test/nodehooks").mock(return_value=httpx.Response(200, json={}))
+    result = await server._tool_manager.call_tool(
+        "divoid_register_node_hook", {"node_id": 7, "user_id": 3, "tag": "route", "events": ["status", "Links"]}
+    )
+    assert not result.get("isError")
+    assert json.loads(route.calls[0].request.content)["events"] == 5
+
+
+@respx.mock
+async def test_register_without_events_omits_field(server):
+    route = respx.post("http://divoid.test/nodehooks").mock(return_value=httpx.Response(200, json={}))
+    await server._tool_manager.call_tool("divoid_register_node_hook", {"node_id": 7, "user_id": 3, "tag": "route"})
+    assert route.call_count == 1
+    assert "events" not in json.loads(route.calls[0].request.content)
+
+
+@pytest.mark.parametrize("events", [[], ["bogus"]])
+@respx.mock
+async def test_invalid_events_makes_no_http_call(server, events):
+    result = await server._tool_manager.call_tool(
+        "divoid_register_node_hook", {"node_id": 7, "user_id": 3, "tag": "route", "events": events}
+    )
+    assert result["isError"] is True
+    assert not respx.calls
+
+
+@pytest.mark.parametrize("events", ["status", [3]])
+@respx.mock
+async def test_malformed_events_rejected_by_schema_without_http_call(server, events):
+    with pytest.raises(ToolError):
+        await server._tool_manager.call_tool(
+            "divoid_register_node_hook", {"node_id": 7, "user_id": 3, "tag": "route", "events": events}
+        )
+    assert not respx.calls
