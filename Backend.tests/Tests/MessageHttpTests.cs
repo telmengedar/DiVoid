@@ -13,6 +13,8 @@ using Backend.Models.Users;
 using Backend.Services.Messages;
 using Backend.tests.Fixtures;
 using NUnit.Framework;
+using Pooshit.AspNetCore.Services.Errors;
+using Pooshit.Http.Paths;
 using Pooshit.Json;
 using Pooshit.Ocelot.Entities;
 
@@ -403,6 +405,23 @@ public class MessageHttpTests
     }
 
     // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task List_NegativeContinue_Returns400BadParameter()
+    {
+        string suffix = Guid.NewGuid().ToString("N")[..8];
+        long userId = await InsertUserAsync($"negcont-{suffix}", Json.WriteString(new[] { "read" }));
+        HttpClient client = ClientWithToken(fixture.MintToken(userId: userId));
+
+        HttpResponseMessage control = await client.GetAsync(Rest.PathQuery(new QueryParameters("continue", 0L), "/api", "messages"));
+        HttpResponseMessage response = await client.GetAsync(Rest.PathQuery(new QueryParameters("continue", -1L), "/api", "messages"));
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.That((int)control.StatusCode, Is.EqualTo(200), "scenario: continue=0 is accepted");
+        Assert.That((int)response.StatusCode, Is.EqualTo(400), body);
+        ErrorResponse error = Json.Read<ErrorResponse>(body);
+        Assert.That(error.Code, Is.EqualTo("badparameter"));
+    }
 
     [Test]
     public async Task T7_List_Admin_DefaultScope_RecipientOnly_NotAllMessages()
