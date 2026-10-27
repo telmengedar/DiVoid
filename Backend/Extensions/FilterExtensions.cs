@@ -30,6 +30,9 @@ public static class FilterExtensions
         if (filter.Count <= 0)
             throw new ArgumentException($"A count of '{filter.Count}' makes no sense", nameof(filter.Count));
 
+        if (filter.Continue < 0)
+            throw new ArgumentException($"A continue of '{filter.Continue}' makes no sense", nameof(filter.Continue));
+
         if (filter.Count.HasValue)
             operation.Limit(filter.Count.Value);
         if (filter.Continue.HasValue)
