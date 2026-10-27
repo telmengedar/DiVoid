@@ -14,6 +14,7 @@ using Backend.Services.Messages;
 using Backend.tests.Fixtures;
 using NUnit.Framework;
 using Pooshit.AspNetCore.Services.Errors;
+using Pooshit.Http.Paths;
 using Pooshit.Json;
 using Pooshit.Ocelot.Entities;
 
@@ -412,8 +413,8 @@ public class MessageHttpTests
         long userId = await InsertUserAsync($"negcont-{suffix}", Json.WriteString(new[] { "read" }));
         HttpClient client = ClientWithToken(fixture.MintToken(userId: userId));
 
-        HttpResponseMessage control = await client.GetAsync("/api/messages?continue=0");
-        HttpResponseMessage response = await client.GetAsync("/api/messages?continue=-1");
+        HttpResponseMessage control = await client.GetAsync(Rest.PathQuery(new QueryParameters("continue", 0L), "/api", "messages"));
+        HttpResponseMessage response = await client.GetAsync(Rest.PathQuery(new QueryParameters("continue", -1L), "/api", "messages"));
         string body = await response.Content.ReadAsStringAsync();
 
         Assert.That((int)control.StatusCode, Is.EqualTo(200), "scenario: continue=0 is accepted");
