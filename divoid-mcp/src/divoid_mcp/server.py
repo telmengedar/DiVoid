@@ -28,6 +28,7 @@ from . import http_client, paths
 from .config import DivoidConfig, _fail, load_secret
 from .drift import run_canary
 from .resources import register_resources
+from .strict_fastmcp import StrictFastMCP
 from .tools import register_tools
 from .version import __version__
 
@@ -117,30 +118,29 @@ def _build_instructions(config: DivoidConfig) -> str:
     return instructions
 
 
-async def _async_main(config: DivoidConfig) -> None:
-    # Step 4: drift canary
-    await run_canary()
-
-    # Step 5: create MCP server, register tools and resources
-    from mcp.server.fastmcp import FastMCP
-
-    mcp_server = FastMCP(
+def _create_server(config: DivoidConfig) -> StrictFastMCP:
+    """Creates the MCP server with config attached and all tools and resources registered."""
+    mcp_server = StrictFastMCP(
         "divoid-mcp",
         instructions=_build_instructions(config),
     )
 
-    # Attach config so tool dispatchers can access the api_key for redaction.
     mcp_server.config = config  # type: ignore[attr-defined]
 
     register_tools(mcp_server)
     register_resources(mcp_server)
+    return mcp_server
+
+
+async def _async_main(config: DivoidConfig) -> None:
+    await run_canary()
+
+    mcp_server = _create_server(config)
 
     logger.info("divoid-mcp ready; entering stdio loop.")
 
-    # Step 6: enter the stdio event loop
     try:
         await mcp_server.run_stdio_async()
     finally:
-        # Step 7: clean shutdown
         await http_client.close()
         logger.info("divoid-mcp shut down cleanly.")
