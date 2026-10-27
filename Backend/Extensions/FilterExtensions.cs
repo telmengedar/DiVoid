@@ -2,7 +2,6 @@ using Pooshit.AspNetCore.Services.Data;
 using Pooshit.Ocelot.Entities.Operations;
 using Pooshit.Ocelot.Errors;
 using Pooshit.Ocelot.Fields;
-using Pooshit.Ocelot.Tokens;
 
 namespace Backend.Extensions;
 
@@ -35,26 +34,6 @@ public static class FilterExtensions
             operation.Limit(filter.Count.Value);
         if (filter.Continue.HasValue)
             operation.Offset(filter.Continue.Value);
-        return operation;
-    }
-
-    /// <summary>
-    /// applies a standard list filter to a load operation
-    /// </summary>
-    /// <typeparam name="T">type of entities to load</typeparam>
-    /// <param name="operation">operation to modify</param>
-    /// <param name="filter">filter to apply</param>
-    /// <param name="ignoreLimits">determines whether to ignore limit fields in filter</param>
-    /// <returns>load operation for fluent behavior</returns>
-    public static LoadOperation<T> ApplyFilter<T>(this LoadOperation<T> operation, ListFilter filter, bool ignoreLimits = false)
-    {
-        ApplyFilter(operation, (PageFilter)filter, ignoreLimits);
-        if (string.IsNullOrEmpty(filter.Sort)) return operation;
-
-        string[] split = filter.Sort.Split('.');
-        ISqlToken field = split.Length == 1 ? DB.Column(split[0]) : DB.Column(split[0], split[1]);
-        operation.OrderBy(new OrderByCriteria(field, !filter.Descending));
-
         return operation;
     }
 
