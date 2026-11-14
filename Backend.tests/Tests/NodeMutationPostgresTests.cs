@@ -1,4 +1,9 @@
 using System.Text;
+using System.Data;
+using System.Linq.Expressions;
+using Moq;
+using Pooshit.Ocelot.Clients;
+using Pooshit.Ocelot.Entities;
 using Backend.Models.Nodes;
 using Backend.Models.Messages;
 using Backend.Models.Users;
@@ -172,4 +177,48 @@ public class NodeMutationPostgresTests {
 
         Assert.That(database.Scalar<bool>("SELECT content IS NULL FROM node WHERE id = @id", ("id", nodeId)), Is.True);
     }
+
+    /// <summary>Completed transaction cleanup preserves the original failure and closes its connection.</summary>
+    /// <param name="committed">Whether the transaction committed before the failure.</param>
+    /// <returns>The asynchronous check.</returns>
+    [TestCase(false), TestCase(true), Parallelizable]
+    [Description("A completed transaction closes its connection and preserves the primary failure without replay.")]
+    public async Task UploadContent_CompletedTransactionFailure_ClosesConnectionAndPreservesPrimary(bool committed) {
+        using EmbeddingPostgresDatabase database = await CreateDatabase();
+        NodeService setup = new(database.Entities, new EmbeddingCapability(false), EmbeddingProducers.Function);
+        long nodeId = (await setup.CreateNode(new NodeDetails { Name = "cleanup guard" }, 0)).Id;
+        Transaction? transaction = null;
+        NpgsqlConnection? connection = null;
+        Mock<IEntityManager> entities = new();
+        entities.SetupGet(manager => manager.DBClient).Returns(database.Entities.DBClient);
+        entities.Setup(manager => manager.Transaction()).Returns(() => {
+            transaction = database.Entities.Transaction();
+            connection = (NpgsqlConnection)transaction.DbTransaction.Connection!;
+            return transaction;
+        });
+        entities.Setup(manager => manager.Update<Node>()).Returns(() => database.Entities.Update<Node>());
+        entities.Setup(manager => manager.Load<Node>(It.IsAny<Expression<Func<Node, object>>[]>()))
+            .Returns((Expression<Func<Node, object>>[] fields) => database.Entities.Load<Node>(fields));
+        Exception primary = committed
+            ? new NpgsqlException("simulated lost commit acknowledgement", new IOException("simulated transport failure"))
+            : new InvalidOperationException("original operation failure");
+        Mock<IEmbeddingProducer> producer = new();
+        producer.Setup(value => value.Embed(It.IsAny<string>(), EmbeddingPurpose.Document)).Returns((string text, EmbeddingPurpose purpose) => {
+            if (committed) transaction!.DbTransaction.Commit();
+            else transaction!.DbTransaction.Rollback();
+            throw primary;
+        });
+        NodeService service = new(entities.Object, new EmbeddingCapability(true), producer.Object);
+        using MemoryStream data = new("cleanup body"u8.ToArray());
+
+        Exception observed = Assert.CatchAsync(() => service.UploadContent(nodeId, "text/plain", data, 0, true))!;
+
+        Assert.That(observed.InnerException, Is.SameAs(primary));
+        entities.Verify(manager => manager.Transaction(), Times.Once);
+        producer.Verify(value => value.Embed(It.IsAny<string>(), EmbeddingPurpose.Document), Times.Once);
+        Assert.That(connection, Is.Not.Null);
+        Assert.That(connection!.State, Is.EqualTo(ConnectionState.Closed));
+        Assert.That(database.Scalar<bool>("SELECT content IS NOT NULL FROM node WHERE id = @id", ("id", nodeId)), Is.EqualTo(committed));
+    }
+
 }
