@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using Npgsql;
 using Backend.Models.Messages;
 using Pooshit.Json;
 using Pooshit.Ocelot.Info;
@@ -117,45 +118,44 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <inheritdoc />
     public async Task<NodeDetails> CreateNode(NodeDetails node, long callerId)
     {
-        using Transaction transaction = MutationTransaction();
-        long[] existingTargets = node.Links?.Distinct().ToArray() ?? [];
-        await LockNodes(transaction, existingTargets);
-        Dictionary<long, Node> targetsBefore = [];
-        foreach (long targetId in existingTargets) targetsBefore[targetId] = await Snapshot(transaction, targetId);
-        long typeId = await ResolveOrCreateTypeId(node.Type, transaction);
+        long nodeId = await Mutate(async transaction => {
+            long[] existingTargets = node.Links?.Distinct().ToArray() ?? [];
+            await LockNodes(transaction, existingTargets);
+            Dictionary<long, Node> targetsBefore = [];
+            foreach (long targetId in existingTargets) targetsBefore[targetId] = await Snapshot(transaction, targetId);
+            long typeId = await ResolveOrCreateTypeId(node.Type, transaction);
 
-        double insertX = node.X ?? 0.0;
-        double insertY = node.Y ?? 0.0;
-        DateTime now = DateTime.UtcNow;
-        long nodeId = await database.Insert<Node>()
-                              .Columns(n => n.TypeId, n => n.Name, n => n.Status, n => n.Severity, n => n.Refinement, n => n.RootNodeId, n => n.Substance, n => n.X, n => n.Y, n => n.OwnerId, n => n.Access, n => n.SkipEmbedding, n => n.Created, n => n.LastUpdate)
-                              .Values(typeId, node.Name, node.Status, node.Severity, node.Refinement, node.RootNodeId, node.Substance, insertX, insertY, callerId, node.Access ?? (NodeAccess.Read | NodeAccess.Write), node.SkipEmbedding ?? false, now, now)
-                              .ReturnID()
-                              .ExecuteAsync(transaction);
+            double insertX = node.X ?? 0.0;
+            double insertY = node.Y ?? 0.0;
+            DateTime now = DateTime.UtcNow;
+            long nodeId = await database.Insert<Node>()
+                                  .Columns(n => n.TypeId, n => n.Name, n => n.Status, n => n.Severity, n => n.Refinement, n => n.RootNodeId, n => n.Substance, n => n.X, n => n.Y, n => n.OwnerId, n => n.Access, n => n.SkipEmbedding, n => n.Created, n => n.LastUpdate)
+                                  .Values(typeId, node.Name, node.Status, node.Severity, node.Refinement, node.RootNodeId, node.Substance, insertX, insertY, callerId, node.Access ?? (NodeAccess.Read | NodeAccess.Write), node.SkipEmbedding ?? false, now, now)
+                                  .ReturnID()
+                                  .ExecuteAsync(transaction);
 
-        // create any requested links atomically with the node
-        long[] links = node.Links?.Distinct().ToArray();
-        if (links?.Length > 0)
-        {
-            foreach (long targetId in links)
+            long[] links = node.Links?.Distinct().ToArray();
+            if (links?.Length > 0)
             {
-                await database.Insert<NodeLink>()
-                              .Columns(l => l.SourceId, l => l.TargetId)
-                              .Values(nodeId, targetId)
-                              .ExecuteAsync(transaction);
+                foreach (long targetId in links)
+                {
+                    await database.Insert<NodeLink>()
+                                  .Columns(l => l.SourceId, l => l.TargetId)
+                                  .Values(nodeId, targetId)
+                                  .ExecuteAsync(transaction);
+                }
+
+                if (insertX == 0.0 && insertY == 0.0)
+                    await TryAnchorOrphanToPositioned(transaction, nodeId, links);
             }
 
-            // auto-position: only when caller did not explicitly set a position (both X and Y are 0 or absent)
-            if (insertX == 0.0 && insertY == 0.0)
-                await TryAnchorOrphanToPositioned(transaction, nodeId, links);
-        }
+            if (embeddingCapability.IsEnabled && node.SkipEmbedding != true && !string.IsNullOrWhiteSpace(node.Name))
+                await EmbeddingWrite.Build(database, nodeId, node.Name, null, null, embeddingProducer).ExecuteAsync(transaction);
 
-        if (embeddingCapability.IsEnabled && node.SkipEmbedding != true && !string.IsNullOrWhiteSpace(node.Name))
-            await EmbeddingWrite.Build(database, nodeId, node.Name, null, null, embeddingProducer).ExecuteAsync(transaction);
-
-        foreach (long targetId in existingTargets)
-            await Notify(transaction, targetsBefore[targetId], await Snapshot(transaction, targetId), "Link added");
-        transaction.Commit();
+            foreach (long targetId in existingTargets)
+                await Notify(transaction, targetsBefore[targetId], await Snapshot(transaction, targetId), "Link added");
+            return nodeId;
+        });
         return await GetNodeById(nodeId, callerId, isAdmin: true);
     }
 
@@ -188,26 +188,26 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (gate != null)
             predicate &= gate;
 
-        using Transaction transaction = MutationTransaction();
-        await LockNodes(transaction, nodeId);
-        Node before = await Snapshot(transaction, nodeId);
-        List<long> neighbors = [];
-        await foreach (NodeLink link in database.Load<NodeLink>().Where(l => l.SourceId == nodeId || l.TargetId == nodeId).ExecuteEntitiesAsync(transaction))
-            neighbors.Add(link.SourceId == nodeId ? link.TargetId : link.SourceId);
-        long[] neighborIds = neighbors.Distinct().ToArray();
-        await LockNodes(transaction, neighborIds);
-        if (await database.Delete<Node>()
-                         .Where(predicate.Content)
-                         .ExecuteAsync(transaction) == 0)
-            throw new NotFoundException<Node>(nodeId);
-        await database.Delete<NodeLink>().Where(l => l.SourceId == nodeId || l.TargetId == nodeId).ExecuteAsync(transaction);
-        await Notify(transaction, before, null);
-        await database.Delete<NodeHook>().Where(h => h.NodeId == nodeId).ExecuteAsync(transaction);
-        foreach (long neighborId in neighborIds) {
-            Node neighbor = await Snapshot(transaction, neighborId);
-            await Notify(transaction, neighbor, neighbor, "Link removed");
-        }
-        transaction.Commit();
+        await Mutate(async transaction => {
+            await LockNodes(transaction, nodeId);
+            Node before = await Snapshot(transaction, nodeId);
+            List<long> neighbors = [];
+            await foreach (NodeLink link in database.Load<NodeLink>().Where(l => l.SourceId == nodeId || l.TargetId == nodeId).ExecuteEntitiesAsync(transaction))
+                neighbors.Add(link.SourceId == nodeId ? link.TargetId : link.SourceId);
+            long[] neighborIds = neighbors.Distinct().ToArray();
+            await LockNodes(transaction, neighborIds);
+            if (await database.Delete<Node>()
+                             .Where(predicate.Content)
+                             .ExecuteAsync(transaction) == 0)
+                throw new NotFoundException<Node>(nodeId);
+            await database.Delete<NodeLink>().Where(l => l.SourceId == nodeId || l.TargetId == nodeId).ExecuteAsync(transaction);
+            await Notify(transaction, before, null);
+            await database.Delete<NodeHook>().Where(h => h.NodeId == nodeId).ExecuteAsync(transaction);
+            foreach (long neighborId in neighborIds) {
+                Node neighbor = await Snapshot(transaction, neighborId);
+                await Notify(transaction, neighbor, neighbor, "Link removed");
+            }
+        });
     }
 
     /// <inheritdoc />
@@ -241,26 +241,26 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (gate != null)
             sourcePredicate &= gate;
 
-        using Transaction transaction = MutationTransaction();
-        await LockNodes(transaction, sourceNodeId, targetNodeId);
-        Node sourceBefore = await Snapshot(transaction, sourceNodeId);
-        Node targetBefore = await Snapshot(transaction, targetNodeId);
-        if (await database.Load<Node>(DB.Count()).Where(sourcePredicate.Content).ExecuteScalarAsync<long>(transaction) == 0)
-            throw new NotFoundException<Node>(sourceNodeId);
+        await Mutate(async transaction => {
+            await LockNodes(transaction, sourceNodeId, targetNodeId);
+            Node sourceBefore = await Snapshot(transaction, sourceNodeId);
+            Node targetBefore = await Snapshot(transaction, targetNodeId);
+            if (await database.Load<Node>(DB.Count()).Where(sourcePredicate.Content).ExecuteScalarAsync<long>(transaction) == 0)
+                throw new NotFoundException<Node>(sourceNodeId);
 
-        if (await database.Load<Node>(DB.Count()).Where(n => n.Id == sourceNodeId || n.Id == targetNodeId).ExecuteScalarAsync<long>(transaction) != 2)
-            throw new NotFoundException<Node>($"Either '{sourceNodeId}' or '{targetNodeId}' does not exist");
-        if (await database.Load<NodeLink>(DB.Count()).Where(n => n.SourceId == sourceNodeId && n.TargetId == targetNodeId || n.SourceId == targetNodeId && n.TargetId == sourceNodeId).ExecuteScalarAsync<long>(transaction) > 0)
-            return;
-        await database.Insert<NodeLink>()
-                      .Columns(n => n.SourceId, n => n.TargetId, n => n.LinkType, n => n.Context)
-                      .Values(sourceNodeId, targetNodeId, linkType, context)
-                      .ExecuteAsync(transaction);
-        await TryAnchorOrphanToPositioned(transaction, sourceNodeId, [targetNodeId]);
-        await TryAnchorOrphanToPositioned(transaction, targetNodeId, [sourceNodeId]);
-        await Notify(transaction, sourceBefore, await Snapshot(transaction, sourceNodeId), "Link added");
-        await Notify(transaction, targetBefore, await Snapshot(transaction, targetNodeId), "Link added");
-        transaction.Commit();
+            if (await database.Load<Node>(DB.Count()).Where(n => n.Id == sourceNodeId || n.Id == targetNodeId).ExecuteScalarAsync<long>(transaction) != 2)
+                throw new NotFoundException<Node>($"Either '{sourceNodeId}' or '{targetNodeId}' does not exist");
+            if (await database.Load<NodeLink>(DB.Count()).Where(n => n.SourceId == sourceNodeId && n.TargetId == targetNodeId || n.SourceId == targetNodeId && n.TargetId == sourceNodeId).ExecuteScalarAsync<long>(transaction) > 0)
+                return;
+            await database.Insert<NodeLink>()
+                          .Columns(n => n.SourceId, n => n.TargetId, n => n.LinkType, n => n.Context)
+                          .Values(sourceNodeId, targetNodeId, linkType, context)
+                          .ExecuteAsync(transaction);
+            await TryAnchorOrphanToPositioned(transaction, sourceNodeId, [targetNodeId]);
+            await TryAnchorOrphanToPositioned(transaction, targetNodeId, [sourceNodeId]);
+            await Notify(transaction, sourceBefore, await Snapshot(transaction, sourceNodeId), "Link added");
+            await Notify(transaction, targetBefore, await Snapshot(transaction, targetNodeId), "Link added");
+        });
     }
 
     /// <summary>
@@ -1053,43 +1053,43 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         PatchOperation[] remainingPatches = typeOp == null ? patches : patches.Where(p => p != typeOp).ToArray();
 
         bool embeddingTouched = embeddingCapability.IsEnabled && (TouchesName(patches) || TouchesPath(patches, "/skipEmbedding"));
-        using Transaction transaction = MutationTransaction();
-        await LockNodes(transaction, nodeId);
-        Node before = await Snapshot(transaction, nodeId);
+        await Mutate(async transaction => {
+            await LockNodes(transaction, nodeId);
+            Node before = await Snapshot(transaction, nodeId);
 
-        if (remainingPatches.Length > 0)
-        {
-            if (await database.Update<Node>()
-                             .Patch(remainingPatches)
-                             .Where(predicate.Content)
-                             .ExecuteAsync(transaction) == 0)
+            if (remainingPatches.Length > 0)
+            {
+                if (await database.Update<Node>()
+                                 .Patch(remainingPatches)
+                                 .Where(predicate.Content)
+                                 .ExecuteAsync(transaction) == 0)
+                    throw new NotFoundException<Node>(nodeId);
+            }
+
+            if (typeOp != null)
+            {
+                long typeId = await ResolveOrCreateTypeId(typeOp.Value as string, transaction);
+                long affected = await database.Update<Node>()
+                                              .Set(n => n.TypeId == typeId)
+                                              .Where(predicate.Content)
+                                              .ExecuteAsync(transaction);
+                if (remainingPatches.Length == 0 && affected == 0)
+                    throw new NotFoundException<Node>(nodeId);
+            }
+
+            DateTime patchedAt = DateTime.UtcNow;
+            long touchAffected = await database.Update<Node>()
+                                               .Set(n => n.LastUpdate == patchedAt)
+                                               .Where(predicate.Content)
+                                               .ExecuteAsync(transaction);
+            if (touchAffected == 0)
                 throw new NotFoundException<Node>(nodeId);
-        }
 
-        if (typeOp != null)
-        {
-            long typeId = await ResolveOrCreateTypeId(typeOp.Value as string, transaction);
-            long affected = await database.Update<Node>()
-                                          .Set(n => n.TypeId == typeId)
-                                          .Where(predicate.Content)
-                                          .ExecuteAsync(transaction);
-            if (remainingPatches.Length == 0 && affected == 0)
-                throw new NotFoundException<Node>(nodeId);
-        }
+            if (embeddingTouched)
+                await RegenerateEmbedding(transaction, nodeId, ct);
 
-        DateTime patchedAt = DateTime.UtcNow;
-        long touchAffected = await database.Update<Node>()
-                                           .Set(n => n.LastUpdate == patchedAt)
-                                           .Where(predicate.Content)
-                                           .ExecuteAsync(transaction);
-        if (touchAffected == 0)
-            throw new NotFoundException<Node>(nodeId);
-
-        if (embeddingTouched)
-            await RegenerateEmbedding(transaction, nodeId, ct);
-
-        await Notify(transaction, before, await Snapshot(transaction, nodeId));
-        transaction.Commit();
+            await Notify(transaction, before, await Snapshot(transaction, nodeId));
+        }, ct);
         return await GetNodeById(nodeId, callerId, isAdmin: true);
     }
 
@@ -1127,21 +1127,21 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (gate != null)
             sourcePredicate &= gate;
 
-        using Transaction transaction = MutationTransaction();
-        await LockNodes(transaction, sourceNodeId, targetNodeId);
-        if (await database.Load<Node>(DB.Count()).Where(sourcePredicate.Content).ExecuteScalarAsync<long>(transaction) == 0)
-            throw new NotFoundException<Node>(sourceNodeId);
+        await Mutate(async transaction => {
+            await LockNodes(transaction, sourceNodeId, targetNodeId);
+            if (await database.Load<Node>(DB.Count()).Where(sourcePredicate.Content).ExecuteScalarAsync<long>(transaction) == 0)
+                throw new NotFoundException<Node>(sourceNodeId);
 
-        long removed = await database.Delete<NodeLink>()
-                      .Where(n => n.SourceId == sourceNodeId && n.TargetId == targetNodeId || n.SourceId == targetNodeId && n.TargetId == sourceNodeId)
-                      .ExecuteAsync(transaction);
-        if (removed > 0) {
-            Node source = await Snapshot(transaction, sourceNodeId);
-            Node target = await Snapshot(transaction, targetNodeId);
-            await Notify(transaction, source, source, "Link removed");
-            await Notify(transaction, target, target, "Link removed");
-        }
-        transaction.Commit();
+            long removed = await database.Delete<NodeLink>()
+                          .Where(n => n.SourceId == sourceNodeId && n.TargetId == targetNodeId || n.SourceId == targetNodeId && n.TargetId == sourceNodeId)
+                          .ExecuteAsync(transaction);
+            if (removed > 0) {
+                Node source = await Snapshot(transaction, sourceNodeId);
+                Node target = await Snapshot(transaction, targetNodeId);
+                await Notify(transaction, source, source, "Link removed");
+                await Notify(transaction, target, target, "Link removed");
+            }
+        });
     }
 
     /// <inheritdoc />
@@ -1154,32 +1154,32 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (gate != null)
             sourcePredicate &= gate;
 
-        using Transaction transaction = MutationTransaction();
-        await LockNodes(transaction, sourceNodeId, targetNodeId);
-        if (await database.Load<Node>(DB.Count()).Where(sourcePredicate.Content).ExecuteScalarAsync<long>(transaction) == 0)
-            throw new NotFoundException<Node>(sourceNodeId);
+        return await Mutate(async transaction => {
+            await LockNodes(transaction, sourceNodeId, targetNodeId);
+            if (await database.Load<Node>(DB.Count()).Where(sourcePredicate.Content).ExecuteScalarAsync<long>(transaction) == 0)
+                throw new NotFoundException<Node>(sourceNodeId);
 
-        Expression<Func<NodeLink, bool>> edgePredicate =
-            l => l.SourceId == sourceNodeId && l.TargetId == targetNodeId || l.SourceId == targetNodeId && l.TargetId == sourceNodeId;
+            Expression<Func<NodeLink, bool>> edgePredicate =
+                l => l.SourceId == sourceNodeId && l.TargetId == targetNodeId || l.SourceId == targetNodeId && l.TargetId == sourceNodeId;
 
-        NodeLink before = await database.Load<NodeLink>().Where(edgePredicate).ExecuteEntityAsync(transaction);
-        if (await database.Update<NodeLink>()
-                         .Patch(patches)
-                         .Where(edgePredicate)
-                         .ExecuteAsync(transaction) == 0)
-            throw new NotFoundException<NodeLink>($"No link between '{sourceNodeId}' and '{targetNodeId}'");
-
-        NodeLink after = await database.Load<NodeLink>(l => l.SourceId, l => l.TargetId, l => l.LinkType, l => l.Context)
+            NodeLink before = await database.Load<NodeLink>().Where(edgePredicate).ExecuteEntityAsync(transaction);
+            if (await database.Update<NodeLink>()
+                             .Patch(patches)
                              .Where(edgePredicate)
-                             .ExecuteEntityAsync(transaction);
-        if (before.LinkType != after.LinkType || before.Context != after.Context) {
-            Node source = await Snapshot(transaction, sourceNodeId);
-            Node target = await Snapshot(transaction, targetNodeId);
-            await Notify(transaction, source, source, "Link changed");
-            await Notify(transaction, target, target, "Link changed");
-        }
-        transaction.Commit();
-        return after;
+                             .ExecuteAsync(transaction) == 0)
+                throw new NotFoundException<NodeLink>($"No link between '{sourceNodeId}' and '{targetNodeId}'");
+
+            NodeLink after = await database.Load<NodeLink>(l => l.SourceId, l => l.TargetId, l => l.LinkType, l => l.Context)
+                                 .Where(edgePredicate)
+                                 .ExecuteEntityAsync(transaction);
+            if (before.LinkType != after.LinkType || before.Context != after.Context) {
+                Node source = await Snapshot(transaction, sourceNodeId);
+                Node target = await Snapshot(transaction, targetNodeId);
+                await Notify(transaction, source, source, "Link changed");
+                await Notify(transaction, target, target, "Link changed");
+            }
+            return after;
+        }, ct);
     }
 
     /// <inheritdoc />
@@ -1192,21 +1192,21 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (gate != null)
             predicate &= gate;
 
-        using Transaction transaction = MutationTransaction();
-        await LockNodes(transaction, nodeId);
-        Node before = await Snapshot(transaction, nodeId, includeContent: true);
+        await Mutate(async transaction => {
+            await LockNodes(transaction, nodeId);
+            Node before = await Snapshot(transaction, nodeId, includeContent: true);
 
-        DateTime uploadedAt = DateTime.UtcNow;
-        if (await database.Update<Node>()
-                          .Set(n => n.ContentType == contentType, n => n.Content == blob, n => n.Substance == (string) null, n => n.LastUpdate == uploadedAt)
-                          .Where(predicate.Content)
-                          .ExecuteAsync(transaction) == 0)
-            throw new NotFoundException<Node>(nodeId);
+            DateTime uploadedAt = DateTime.UtcNow;
+            if (await database.Update<Node>()
+                              .Set(n => n.ContentType == contentType, n => n.Content == blob, n => n.Substance == (string) null, n => n.LastUpdate == uploadedAt)
+                              .Where(predicate.Content)
+                              .ExecuteAsync(transaction) == 0)
+                throw new NotFoundException<Node>(nodeId);
 
-        await RegenerateContentEmbedding(transaction, nodeId, blob, contentType, ct);
+            await RegenerateContentEmbedding(transaction, nodeId, blob, contentType, ct);
 
-        await Notify(transaction, before, await Snapshot(transaction, nodeId, includeContent: true));
-        transaction.Commit();
+            await Notify(transaction, before, await Snapshot(transaction, nodeId, includeContent: true));
+        }, ct);
     }
 
     async Task RegenerateContentEmbedding(Transaction transaction, long nodeId, byte[] content, string contentType, CancellationToken ct)
@@ -1232,30 +1232,30 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (gate != null)
             predicate &= gate;
 
-        using Transaction transaction = MutationTransaction();
-        await LockNodes(transaction, nodeId);
-        Node before = await Snapshot(transaction, nodeId, includeContent: true);
+        await Mutate(async transaction => {
+            await LockNodes(transaction, nodeId);
+            Node before = await Snapshot(transaction, nodeId, includeContent: true);
 
-        Node node = await database.Load<Node>(n => n.ContentType, n => n.Content)
-                                  .Where(predicate.Content)
-                                  .ExecuteEntityAsync(transaction);
-        if (node == null)
-            throw new NotFoundException<Node>(nodeId);
-        if (node.Content == null)
-            throw new NotFoundException<Node>($"Node '{nodeId}' has no content");
+            Node node = await database.Load<Node>(n => n.ContentType, n => n.Content)
+                                      .Where(predicate.Content)
+                                      .ExecuteEntityAsync(transaction);
+            if (node == null)
+                throw new NotFoundException<Node>(nodeId);
+            if (node.Content == null)
+                throw new NotFoundException<Node>($"Node '{nodeId}' has no content");
 
-        byte[] edited = ContentEditor.Apply(node.Content, node.ContentType, edits);
+            byte[] edited = ContentEditor.Apply(node.Content, node.ContentType, edits);
 
-        DateTime editedAt = DateTime.UtcNow;
-        await database.Update<Node>()
-                      .Set(n => n.Content == edited, n => n.Substance == (string) null, n => n.LastUpdate == editedAt)
-                      .Where(n => n.Id == nodeId)
-                      .ExecuteAsync(transaction);
+            DateTime editedAt = DateTime.UtcNow;
+            await database.Update<Node>()
+                          .Set(n => n.Content == edited, n => n.Substance == (string) null, n => n.LastUpdate == editedAt)
+                          .Where(n => n.Id == nodeId)
+                          .ExecuteAsync(transaction);
 
-        await RegenerateContentEmbedding(transaction, nodeId, edited, node.ContentType, ct);
+            await RegenerateContentEmbedding(transaction, nodeId, edited, node.ContentType, ct);
 
-        await Notify(transaction, before, await Snapshot(transaction, nodeId, includeContent: true));
-        transaction.Commit();
+            await Notify(transaction, before, await Snapshot(transaction, nodeId, includeContent: true));
+        }, ct);
         return await GetNodeById(nodeId, callerId, isAdmin: true);
     }
 
@@ -1307,6 +1307,52 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (userId == null)
             throw new NotFoundException<User>(nodeId);
         return userId.Value;
+    }
+
+    Task Mutate(Func<Transaction, Task> action, CancellationToken ct = default) =>
+        Mutate(async transaction => {
+            await action(transaction);
+            return true;
+        }, ct);
+
+    async Task<T> Mutate<T>(Func<Transaction, Task<T>> action, CancellationToken ct = default) {
+        for (int attempt = 0; ; attempt++) {
+            ct.ThrowIfCancellationRequested();
+            try {
+                Transaction transaction = MutationTransaction();
+                NpgsqlConnection connection = transaction.DbTransaction.Connection as NpgsqlConnection;
+                Exception failure = null;
+                try {
+                    T result = await action(transaction);
+                    transaction.Commit();
+                    return result;
+                }
+                catch (Exception exception) {
+                    failure = exception;
+                    throw;
+                }
+                finally {
+                    try {
+                        transaction.Dispose();
+                    }
+                    catch (InvalidOperationException) when (connection != null && failure != null) {
+                        // Pooshit.Ocelot 0.25.0-preview.1 rolls back completed Npgsql transactions during disposal (#24312).
+                        transaction.DbTransaction.Dispose();
+                        connection.Dispose();
+                    }
+                }
+            }
+            catch (Exception exception) when (attempt < 7 && IsSerializationFailure(exception)) {
+                await Task.Delay(Random.Shared.Next(10, Math.Min(200, 20 << attempt)), ct);
+            }
+        }
+    }
+
+    static bool IsSerializationFailure(Exception exception) {
+        for (Exception current = exception; current != null; current = current.InnerException)
+            if (current is PostgresException postgres)
+                return postgres.SqlState == PostgresErrorCodes.SerializationFailure;
+        return false;
     }
 
     Transaction MutationTransaction() {
@@ -1413,20 +1459,20 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         ValidateHook(hook, callerId, isAdmin);
         if (((int)hook.Events & ~(int)NodeHookEvents.All) != 0) throw new ArgumentException("events contains unknown flags");
         if (hook.Events == 0) hook.Events = NodeHookEvents.All;
-        using Transaction transaction = MutationTransaction();
-        await LockNodes(transaction, hook.NodeId);
-        Node node = await Snapshot(transaction, hook.NodeId);
-        User recipient = await database.Load<User>(u => u.Id, u => u.Enabled, u => u.Permissions)
-                                       .Where(u => u.Id == hook.UserId).ExecuteEntityAsync(transaction);
-        if (!CanRead(node, recipient)) throw new NotFoundException<Node>(hook.NodeId);
-        if (await database.Load<NodeHook>(DB.Count()).Where(h => h.NodeId == hook.NodeId && h.UserId == hook.UserId && h.Tag == hook.Tag)
-                          .ExecuteScalarAsync<long>(transaction) == 0)
-            await database.Insert<NodeHook>().Columns(h => h.NodeId, h => h.UserId, h => h.Tag, h => h.Events)
-                          .Values(hook.NodeId, hook.UserId, hook.Tag, hook.Events).ExecuteAsync(transaction);
-        else
-            await database.Update<NodeHook>().Set(h => h.Events == hook.Events)
-                          .Where(h => h.NodeId == hook.NodeId && h.UserId == hook.UserId && h.Tag == hook.Tag).ExecuteAsync(transaction);
-        transaction.Commit();
+        await Mutate(async transaction => {
+            await LockNodes(transaction, hook.NodeId);
+            Node node = await Snapshot(transaction, hook.NodeId);
+            User recipient = await database.Load<User>(u => u.Id, u => u.Enabled, u => u.Permissions)
+                                           .Where(u => u.Id == hook.UserId).ExecuteEntityAsync(transaction);
+            if (!CanRead(node, recipient)) throw new NotFoundException<Node>(hook.NodeId);
+            if (await database.Load<NodeHook>(DB.Count()).Where(h => h.NodeId == hook.NodeId && h.UserId == hook.UserId && h.Tag == hook.Tag)
+                              .ExecuteScalarAsync<long>(transaction) == 0)
+                await database.Insert<NodeHook>().Columns(h => h.NodeId, h => h.UserId, h => h.Tag, h => h.Events)
+                              .Values(hook.NodeId, hook.UserId, hook.Tag, hook.Events).ExecuteAsync(transaction);
+            else
+                await database.Update<NodeHook>().Set(h => h.Events == hook.Events)
+                              .Where(h => h.NodeId == hook.NodeId && h.UserId == hook.UserId && h.Tag == hook.Tag).ExecuteAsync(transaction);
+        });
         return hook;
     }
 
@@ -1447,24 +1493,24 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <inheritdoc />
     public async Task DeleteHook(NodeHook hook, long callerId, bool isAdmin) {
         ValidateHook(hook, callerId, isAdmin);
-        using Transaction transaction = MutationTransaction();
-        await LockNodes(transaction, hook.NodeId);
-        await database.Delete<NodeHook>().Where(h => h.NodeId == hook.NodeId && h.UserId == hook.UserId && h.Tag == hook.Tag)
-                      .ExecuteAsync(transaction);
-        transaction.Commit();
+        await Mutate(async transaction => {
+            await LockNodes(transaction, hook.NodeId);
+            await database.Delete<NodeHook>().Where(h => h.NodeId == hook.NodeId && h.UserId == hook.UserId && h.Tag == hook.Tag)
+                          .ExecuteAsync(transaction);
+        });
     }
 
 
     /// <inheritdoc />
     public async Task PositionUnpositionedNode(long nodeId, double x, double y, CancellationToken ct) {
         ct.ThrowIfCancellationRequested();
-        using Transaction transaction = MutationTransaction();
-        await LockNodes(transaction, nodeId);
-        Node before = await Snapshot(transaction, nodeId);
-        if (before == null || before.X != 0 || before.Y != 0) return;
-        await database.Update<Node>().Set(n => n.X == x, n => n.Y == y).Where(n => n.Id == nodeId).ExecuteAsync(transaction);
-        await Notify(transaction, before, await Snapshot(transaction, nodeId));
-        transaction.Commit();
+        await Mutate(async transaction => {
+            await LockNodes(transaction, nodeId);
+            Node before = await Snapshot(transaction, nodeId);
+            if (before == null || before.X != 0 || before.Y != 0) return;
+            await database.Update<Node>().Set(n => n.X == x, n => n.Y == y).Where(n => n.Id == nodeId).ExecuteAsync(transaction);
+            await Notify(transaction, before, await Snapshot(transaction, nodeId));
+        }, ct);
     }
 
 }

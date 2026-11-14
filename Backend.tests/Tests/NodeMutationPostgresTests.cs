@@ -1,0 +1,160 @@
+using System.Text;
+using Backend.Models.Nodes;
+using Backend.Models.Messages;
+using Backend.Models.Users;
+using Npgsql;
+using Pooshit.Ocelot.Tokens;
+using Backend.Services.Embeddings;
+using Backend.Services.Nodes;
+using Backend.tests.Fixtures;
+using Pooshit.AspNetCore.Services.Data;
+using Pooshit.Json;
+
+namespace Backend.tests.Tests;
+
+/// <summary>PostgreSQL mutation completion and rollback guards.</summary>
+[TestFixture, Parallelizable]
+public class NodeMutationPostgresTests {
+    static async Task<EmbeddingPostgresDatabase> CreateDatabase() {
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("POSTGRES_CONNECTION"))) Assert.Ignore("POSTGRES_CONNECTION is required");
+        EmbeddingPostgresDatabase database = new();
+        await database.Start();
+        return database;
+    }
+
+    [Test, Parallelizable]
+    [Description("Overlapping writes to distinct nodes all commit content and its immediately searchable vector.")]
+    public async Task UploadContent_ConcurrentDistinctNodes_AllBodiesAndSearchVectorsCommit() {
+        using EmbeddingPostgresDatabase database = await CreateDatabase();
+        NodeService setup = new(database.Entities, new EmbeddingCapability(true), new HashedWordEmbeddingProducer());
+        string[] words = ["bicycle", "gardening", "astronomy"];
+        List<NodeDetails> nodes = [];
+        foreach (string word in words) nodes.Add(await setup.CreateNode(new NodeDetails { Name = word, Type = "documentation" }, 0));
+        using BarrierEmbeddingProducer producer = new(3);
+        NodeService service = new(database.Entities, new EmbeddingCapability(true), producer);
+        byte[][] bodies = words.Select(word => Encoding.UTF8.GetBytes(string.Join(' ', Enumerable.Repeat(word, 220)))).ToArray();
+
+        await Task.WhenAll(nodes.Select((node, index) => Task.Run(async () => {
+            using MemoryStream content = new(bodies[index]);
+            await service.UploadContent(node.Id, "text/plain", content, 0, true);
+        })));
+
+        Assert.That(producer.Calls, Is.GreaterThanOrEqualTo(3));
+        for (int index = 0; index < nodes.Count; index++) {
+            (string contentType, Stream content) = await service.GetNodeData(nodes[index].Id, 0, true);
+            using (content) {
+                using MemoryStream actual = new();
+                await content.CopyToAsync(actual);
+                Assert.That(actual.ToArray(), Is.EqualTo(bodies[index]));
+            }
+            using MemoryStream response = new();
+            await (await service.ListPaged(new NodeFilter { Query = words[index], Count = 1 }, 0, true)).Write(response);
+            Page<NodeDetails> page = Json.Read<Page<NodeDetails>>(Encoding.UTF8.GetString(response.ToArray()));
+            Assert.That(page.Result.Single().Id, Is.EqualTo(nodes[index].Id));
+            Assert.That(contentType, Is.EqualTo("text/plain"));
+        }
+    }
+    [TestCase("40001", 1, 2, true, false), Parallelizable]
+    [TestCase("40001", 1, 2, true, true)]
+    [TestCase("40001", 100, 8, false, false)]
+    [TestCase("40001", 100, 8, false, true)]
+    [TestCase("23505", 1, 1, false, false)]
+    [TestCase("08006", 1, 1, false, false)]
+    [Description("Only serialization aborts replay, at most eight attempts, with failed writes rolled back.")]
+    public async Task UploadContent_DatabaseFailure_RetriesOnlySerializationAbort(string sqlState, int failures, long expectedAttempts, bool succeeds, bool atCommit) {
+        using EmbeddingPostgresDatabase database = await CreateDatabase();
+        NodeService service = new(database.Entities, new EmbeddingCapability(false), EmbeddingProducers.Function);
+        long nodeId = (await service.CreateNode(new NodeDetails { Name = "failure guard" }, 0)).Id;
+        using MemoryStream initial = new("original"u8.ToArray());
+        await service.UploadContent(nodeId, "text/plain", initial, 0, true);
+        await database.Entities.DBClient.NonQueryAsync("CREATE SEQUENCE mutation_attempts");
+        await database.Entities.DBClient.NonQueryAsync("CREATE TABLE failure_plan (sqlstate text, failures int)");
+        database.Scalar<int>("INSERT INTO failure_plan VALUES (@code, @failures) RETURNING failures", ("code", sqlState), ("failures", failures));
+        await database.Entities.DBClient.NonQueryAsync("""
+            CREATE FUNCTION fail_content() RETURNS trigger LANGUAGE plpgsql AS $$
+            DECLARE plan failure_plan; BEGIN
+            SELECT * INTO plan FROM failure_plan;
+            IF nextval('mutation_attempts') <= plan.failures THEN RAISE EXCEPTION USING ERRCODE = plan.sqlstate, MESSAGE = 'injected database failure'; END IF;
+            RETURN NEW; END $$
+            """);
+        await database.Entities.DBClient.NonQueryAsync(atCommit
+            ? "CREATE CONSTRAINT TRIGGER fail_content AFTER UPDATE ON node DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (OLD.content IS DISTINCT FROM NEW.content) EXECUTE FUNCTION fail_content()"
+            : "CREATE TRIGGER fail_content BEFORE UPDATE OF content ON node FOR EACH ROW EXECUTE FUNCTION fail_content()");
+        using MemoryStream data = new("replacement"u8.ToArray());
+
+        if (succeeds) await service.UploadContent(nodeId, "text/plain", data, 0, true);
+        else {
+            Exception exception = Assert.CatchAsync(() => service.UploadContent(nodeId, "text/plain", data, 0, true))!;
+            while (exception is not PostgresException && exception.InnerException != null) exception = exception.InnerException;
+            Assert.That(exception, Is.InstanceOf<PostgresException>());
+            Assert.That(((PostgresException)exception).SqlState, Is.EqualTo(sqlState));
+        }
+
+        Assert.That(database.Scalar<long>("SELECT last_value FROM mutation_attempts"), Is.EqualTo(expectedAttempts));
+        Assert.That(database.Scalar<byte[]>("SELECT content FROM node WHERE id = @id", ("id", nodeId)),
+            Is.EqualTo(Encoding.UTF8.GetBytes(succeeds ? "replacement" : "original")));
+    }
+
+    [Test, Parallelizable]
+    [Description("Concurrent relative content edits reread the committed body and send one notification per commit.")]
+    public async Task PatchContent_ConcurrentSameNode_PreservesEveryEditAndOneNoticePerCommit() {
+        using EmbeddingPostgresDatabase database = await CreateDatabase();
+        NodeService service = new(database.Entities, new EmbeddingCapability(false), EmbeddingProducers.Function);
+        long userId = await database.Entities.Insert<User>().Columns(u => u.Name, u => u.Enabled, u => u.CreatedAt)
+            .Values("subscriber", true, DateTime.UtcNow).ReturnID().ExecuteAsync();
+        long nodeId = (await service.CreateNode(new NodeDetails { Name = "shared body" }, userId)).Id;
+        using MemoryStream initial = new("seed"u8.ToArray());
+        await service.UploadContent(nodeId, "text/plain", initial, userId, false);
+        await service.RegisterHook(new NodeHook { NodeId = nodeId, UserId = userId, Tag = "content", Events = NodeHookEvents.Content }, userId, false);
+
+        await Task.WhenAll(new[] { "a", "b", "c" }.Select(value => Task.Run(() => service.PatchContent(nodeId,
+            [new ContentEdit { Unit = ContentEditUnit.Char, Start = 0, Length = 0, Value = value }], userId, false, default))));
+
+        string body = Encoding.UTF8.GetString(database.Scalar<byte[]>("SELECT content FROM node WHERE id = @id", ("id", nodeId)));
+        Assert.That(body, Does.EndWith("seed"));
+        Assert.That(body[..3].Order(), Is.EqualTo("abc"));
+        Assert.That(await database.Entities.Load<Message>(DB.Count()).ExecuteScalarAsync<long>(), Is.EqualTo(3));
+    }
+
+    [Test, Parallelizable]
+    [Description("An abort after inserting a first notification rolls back all effects before replay.")]
+    public async Task UploadContent_NotificationSerializationAbort_RollsBackEarlierNoticeBeforeRetry() {
+        using EmbeddingPostgresDatabase database = await CreateDatabase();
+        NodeService service = new(database.Entities, new EmbeddingCapability(false), EmbeddingProducers.Function);
+        long userId = await database.Entities.Insert<User>().Columns(u => u.Name, u => u.Enabled, u => u.CreatedAt)
+            .Values("subscriber", true, DateTime.UtcNow).ReturnID().ExecuteAsync();
+        long nodeId = (await service.CreateNode(new NodeDetails { Name = "notification guard" }, userId)).Id;
+        foreach (string tag in new[] { "first", "second" })
+            await service.RegisterHook(new NodeHook { NodeId = nodeId, UserId = userId, Tag = tag }, userId, false);
+        await database.Entities.DBClient.NonQueryAsync("CREATE SEQUENCE notice_attempts");
+        await database.Entities.DBClient.NonQueryAsync("""
+            CREATE FUNCTION fail_second_notice() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+            IF nextval('notice_attempts') = 2 THEN RAISE EXCEPTION USING ERRCODE = '40001', MESSAGE = 'injected notice serialization abort'; END IF;
+            RETURN NEW; END $$
+            """);
+        await database.Entities.DBClient.NonQueryAsync("CREATE TRIGGER fail_second_notice BEFORE INSERT ON message FOR EACH ROW EXECUTE FUNCTION fail_second_notice()");
+        using MemoryStream data = new("committed body"u8.ToArray());
+
+        await service.UploadContent(nodeId, "text/plain", data, userId, false);
+
+        Assert.That(database.Scalar<long>("SELECT last_value FROM notice_attempts"), Is.EqualTo(4));
+        Assert.That(await database.Entities.Load<Message>(DB.Count()).ExecuteScalarAsync<long>(), Is.EqualTo(2));
+        Assert.That(database.Scalar<byte[]>("SELECT content FROM node WHERE id = @id", ("id", nodeId)), Is.EqualTo("committed body"u8.ToArray()));
+    }
+
+    [Test, Parallelizable]
+    [Description("A cancelled mutation does not change the stored content.")]
+    public async Task UploadContent_CancelledToken_LeavesContentUnchanged() {
+        using EmbeddingPostgresDatabase database = await CreateDatabase();
+        NodeService service = new(database.Entities, new EmbeddingCapability(false), EmbeddingProducers.Function);
+        long nodeId = (await service.CreateNode(new NodeDetails { Name = "cancel guard" }, 0)).Id;
+        using MemoryStream data = new("cancelled"u8.ToArray());
+        using CancellationTokenSource cancellation = new();
+        cancellation.Cancel();
+
+        Assert.ThrowsAsync<OperationCanceledException>(() => service.UploadContent(nodeId, "text/plain", data, 0, true, cancellation.Token));
+
+        Assert.That(database.Scalar<bool>("SELECT content IS NULL FROM node WHERE id = @id", ("id", nodeId)), Is.True);
+    }
+
+}
