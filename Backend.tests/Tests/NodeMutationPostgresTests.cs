@@ -22,6 +22,8 @@ public class NodeMutationPostgresTests {
         return database;
     }
 
+    /// <summary>Concurrent distinct-node upload completion.</summary>
+    /// <returns>The asynchronous check.</returns>
     [Test, Parallelizable]
     [Description("Overlapping writes to distinct nodes all commit content and its immediately searchable vector.")]
     public async Task UploadContent_ConcurrentDistinctNodes_AllBodiesAndSearchVectorsCommit() {
@@ -54,6 +56,14 @@ public class NodeMutationPostgresTests {
             Assert.That(contentType, Is.EqualTo("text/plain"));
         }
     }
+
+    /// <summary>Serialization retry selection and exhaustion.</summary>
+    /// <param name="sqlState">Injected database error code.</param>
+    /// <param name="failures">Number of injected failures.</param>
+    /// <param name="expectedAttempts">Expected number of transaction attempts.</param>
+    /// <param name="succeeds">Whether the upload should complete.</param>
+    /// <param name="atCommit">Whether the failure occurs during commit.</param>
+    /// <returns>The asynchronous check.</returns>
     [TestCase("40001", 1, 2, true, false), Parallelizable]
     [TestCase("40001", 1, 2, true, true)]
     [TestCase("40001", 100, 8, false, false)]
@@ -95,6 +105,8 @@ public class NodeMutationPostgresTests {
             Is.EqualTo(Encoding.UTF8.GetBytes(succeeds ? "replacement" : "original")));
     }
 
+    /// <summary>Concurrent relative content edits and notifications.</summary>
+    /// <returns>The asynchronous check.</returns>
     [Test, Parallelizable]
     [Description("Concurrent relative content edits reread the committed body and send one notification per commit.")]
     public async Task PatchContent_ConcurrentSameNode_PreservesEveryEditAndOneNoticePerCommit() {
@@ -116,6 +128,8 @@ public class NodeMutationPostgresTests {
         Assert.That(await database.Entities.Load<Message>(DB.Count()).ExecuteScalarAsync<long>(), Is.EqualTo(3));
     }
 
+    /// <summary>Notification rollback before transaction replay.</summary>
+    /// <returns>The asynchronous check.</returns>
     [Test, Parallelizable]
     [Description("An abort after inserting a first notification rolls back all effects before replay.")]
     public async Task UploadContent_NotificationSerializationAbort_RollsBackEarlierNoticeBeforeRetry() {
@@ -142,6 +156,8 @@ public class NodeMutationPostgresTests {
         Assert.That(database.Scalar<byte[]>("SELECT content FROM node WHERE id = @id", ("id", nodeId)), Is.EqualTo("committed body"u8.ToArray()));
     }
 
+    /// <summary>Content preservation after cancellation.</summary>
+    /// <returns>The asynchronous check.</returns>
     [Test, Parallelizable]
     [Description("A cancelled mutation does not change the stored content.")]
     public async Task UploadContent_CancelledToken_LeavesContentUnchanged() {
@@ -156,5 +172,4 @@ public class NodeMutationPostgresTests {
 
         Assert.That(database.Scalar<bool>("SELECT content IS NULL FROM node WHERE id = @id", ("id", nodeId)), Is.True);
     }
-
 }
