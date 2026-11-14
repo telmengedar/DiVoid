@@ -220,5 +220,4 @@ public class NodeMutationPostgresTests {
         Assert.That(connection!.State, Is.EqualTo(ConnectionState.Closed));
         Assert.That(database.Scalar<bool>("SELECT content IS NOT NULL FROM node WHERE id = @id", ("id", nodeId)), Is.EqualTo(committed));
     }
-
 }
