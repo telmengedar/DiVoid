@@ -16,6 +16,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
@@ -27,6 +28,7 @@ namespace Backend.tests.Tests;
 [TestFixture, Parallelizable]
 public class TeamsWebhookTests {
     /// <summary>Checks that the native SDK sends the fixed setup reply.</summary>
+    /// <returns>The asynchronous test operation.</returns>
     [Test, Parallelizable]
     public async Task ProcessAsync_ValidConnectorText_SendsFixedSdkReply() {
         using TeamsWebhookFixture fixture = new();
@@ -46,6 +48,8 @@ public class TeamsWebhookTests {
     }
 
     /// <summary>Checks that rejected input produces no outbound send.</summary>
+    /// <param name="failure">The invalid input scenario.</param>
+    /// <returns>The asynchronous test operation.</returns>
     [TestCase("missing"), TestCase("malformed"), TestCase("signature"), TestCase("unknown-key")]
     [TestCase("issuer"), TestCase("audience"), TestCase("audience-slash"), TestCase("expired"), TestCase("future")]
     [TestCase("entra"), TestCase("keycloak"), TestCase("api-key"), TestCase("algorithm")]
@@ -78,6 +82,7 @@ public class TeamsWebhookTests {
     }
 
     /// <summary>Checks Connector authentication when DiVoid authentication is disabled.</summary>
+    /// <returns>The asynchronous test operation.</returns>
     [Test, Parallelizable]
     public async Task ProcessAsync_DivoidAuthenticationDisabled_StillRequiresConnectorToken() {
         using TeamsWebhookFixture fixture = new(authEnabled: false);
@@ -91,6 +96,8 @@ public class TeamsWebhookTests {
     }
 
     /// <summary>Checks that rejected input produces no outbound send.</summary>
+    /// <param name="failure">The invalid input scenario.</param>
+    /// <returns>The asynchronous test operation.</returns>
     [TestCase("channel"), TestCase("tenant-missing"), TestCase("tenant-wrong"), TestCase("conversation-tenant")]
     [TestCase("http"), TestCase("query"), TestCase("fragment"), TestCase("userinfo")]
     [TestCase("claim-missing"), TestCase("claim-empty"), TestCase("claim-mismatch"), TestCase("claim-conflict"), TestCase("claim-case")]
@@ -128,6 +135,8 @@ public class TeamsWebhookTests {
     }
 
     /// <summary>Checks the supported service URL claim spellings.</summary>
+    /// <param name="includeCamelCase">Whether both accepted claim spellings are present.</param>
+    /// <returns>The asynchronous test operation.</returns>
     [TestCase(false), TestCase(true), Parallelizable]
     public async Task ProcessAsync_LowercaseServiceUrlClaim_AcceptsExactBinding(bool includeCamelCase) {
         using TeamsWebhookFixture fixture = new();
@@ -142,6 +151,8 @@ public class TeamsWebhookTests {
     }
 
     /// <summary>Checks that rejected input produces no outbound send.</summary>
+    /// <param name="endorsement">The invalid signing key endorsement scenario.</param>
+    /// <returns>The asynchronous test operation.</returns>
     [TestCase("missing"), TestCase("wrong"), Parallelizable]
     public async Task ProcessAsync_UnendorsedSigningKey_RejectsBeforeSend(string endorsement) {
         using TeamsWebhookFixture fixture = new();
@@ -155,6 +166,7 @@ public class TeamsWebhookTests {
     }
 
     /// <summary>Checks authoritative signing key rotation.</summary>
+    /// <returns>The asynchronous test operation.</returns>
     [Test, Parallelizable]
     public async Task ProcessAsync_AuthoritativeKeyRotation_AcceptsRefreshedKey() {
         using TeamsWebhookFixture fixture = new();
@@ -182,6 +194,8 @@ public class TeamsWebhookTests {
     }
 
     /// <summary>Checks malformed activity rejection.</summary>
+    /// <param name="failure">The invalid input scenario.</param>
+    /// <returns>The asynchronous test operation.</returns>
     [TestCase("json"), TestCase("type"), TestCase("id"), TestCase("conversation"), TestCase("from"), TestCase("recipient")]
     [Parallelizable]
     public async Task ProcessAsync_MalformedActivity_ReturnsBadRequest(string failure) {
@@ -199,6 +213,8 @@ public class TeamsWebhookTests {
     }
 
     /// <summary>Checks strict UTF-8 and native JSON nesting bounds.</summary>
+    /// <param name="invalidUtf8">Whether the payload contains invalid UTF-8.</param>
+    /// <returns>The asynchronous test operation.</returns>
     [TestCase(false), TestCase(true), Parallelizable]
     public async Task ProcessAsync_DeepJsonOrInvalidUtf8_ReturnsBadRequest(bool invalidUtf8) {
         using TeamsWebhookFixture fixture = new();
@@ -215,6 +231,8 @@ public class TeamsWebhookTests {
     }
 
     /// <summary>Checks known-length and unknown-length body bounds.</summary>
+    /// <param name="unknownLength">Whether the body has an unknown content length.</param>
+    /// <returns>The asynchronous test operation.</returns>
     [TestCase(false), TestCase(true), Parallelizable]
     public async Task ProcessAsync_OversizedBody_ReturnsPayloadTooLarge(bool unknownLength) {
         using TeamsWebhookFixture fixture = new();
@@ -229,6 +247,9 @@ public class TeamsWebhookTests {
     }
 
     /// <summary>Checks acknowledgment and unsupported activity outcomes.</summary>
+    /// <param name="type">The activity type scenario.</param>
+    /// <param name="status">The expected HTTP status.</param>
+    /// <returns>The asynchronous test operation.</returns>
     [TestCase("conversationUpdate", 200), TestCase("invoke", 501), TestCase("attachment", 200)]
     [Parallelizable]
     public async Task ProcessAsync_NontextOrUnsupportedActivity_AcknowledgesWithoutReply(string type, int status) {
@@ -245,6 +266,9 @@ public class TeamsWebhookTests {
     }
 
     /// <summary>Checks propagation of SDK send failures.</summary>
+    /// <param name="cancel">Whether the transport reports cancellation.</param>
+    /// <param name="status">The expected HTTP status.</param>
+    /// <returns>The asynchronous test operation.</returns>
     [TestCase(false, 502), TestCase(true, 504), Parallelizable]
     public async Task ProcessAsync_OutboundFailure_DoesNotReportSuccess(bool cancel, int status) {
         using TeamsWebhookFixture fixture = new();
@@ -257,7 +281,38 @@ public class TeamsWebhookTests {
         Assert.That(response.StatusCode, Is.EqualTo((HttpStatusCode)status));
     }
 
+    /// <summary>Checks payload and credential privacy with trace logging enabled.</summary>
+    /// <returns>The asynchronous test operation.</returns>
+    [Test, Parallelizable]
+    public async Task ProcessAsync_TraceLogging_DoesNotExposePayloadOrCredentials() {
+        TeamsLogCapture capture = new();
+        using TeamsWebhookFixture fixture = new(configureServices: services => {
+            services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Trace).AddProvider(capture));
+            services.PostConfigure<LoggerFilterOptions>(options => {
+                foreach (LoggerFilterRule rule in options.Rules.Where(rule => rule.CategoryName != "Microsoft.Teams").ToArray())
+                    options.Rules.Remove(rule);
+                options.MinLevel = LogLevel.Trace;
+            });
+        });
+        fixture.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Teams.Trace.Control")
+            .LogTrace("teams-trace-control");
+        string token = fixture.Token();
+        Dictionary<string, object?> activity = TeamsWebhookFixture.Activity();
+
+        using HttpResponseMessage success = await fixture.Post(token, activity);
+        fixture.Connector.Status = HttpStatusCode.BadGateway;
+        using HttpResponseMessage failure = await fixture.Post(token, activity);
+
+        Assert.That(success.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(failure.StatusCode, Is.EqualTo(HttpStatusCode.BadGateway));
+        Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(2));
+        Assert.That(capture.Messages.Any(message => message.Contains("teams-trace-control")), Is.True);
+        Assert.That(capture.Messages.Any(message => message.Contains((string)activity["text"]!) ||
+            message.Contains("synthetic-fixture-secret") || message.Contains(token)), Is.False);
+    }
+
     /// <summary>Checks the webhook contract.</summary>
+    /// <returns>The asynchronous test operation.</returns>
     [Test, Parallelizable]
     public async Task AddTeamsWebhook_Enabled_PreservesDivoidAuthenticationDefaults() {
         using TeamsWebhookFixture fixture = new();
@@ -282,6 +337,7 @@ public class TeamsWebhookTests {
     }
 
     /// <summary>Checks existing credentials and message author binding.</summary>
+    /// <returns>The asynchronous test operation.</returns>
     [Test, Parallelizable]
     public async Task Create_TeamsEnabled_PreservesKeycloakAndApiKeyCallerIdentity() {
         using DatabaseFixture database = new();
@@ -335,6 +391,7 @@ public class TeamsWebhookTests {
     }
 
     /// <summary>Checks the disabled webhook route.</summary>
+    /// <returns>The asynchronous test operation.</returns>
     [Test, Parallelizable]
     public async Task MapTeamsWebhook_Disabled_ReturnsNotFound() {
         using TeamsWebhookFixture fixture = new(authEnabled: false, overrides: new() { ["Teams:Enabled"] = "false" });
@@ -346,6 +403,8 @@ public class TeamsWebhookTests {
     }
 
     /// <summary>Checks fail-closed configuration validation.</summary>
+    /// <param name="field">The invalid configuration field.</param>
+    /// <param name="value">The invalid configuration value.</param>
     [TestCase("AzureAd:ClientId", "invalid"), TestCase("AzureAd:TenantId", "")]
     [TestCase("AzureAd:ClientCredentials:0:ClientSecret", "")]
     [TestCase("AzureAd:ClientCredentials:0:SourceType", "ManagedIdentity")]

@@ -8,6 +8,7 @@ public sealed class TeamsChunkedContent : HttpContent {
     readonly byte[] bytes;
 
     /// <summary>Creates unknown-length request content.</summary>
+    /// <param name="body">The request body.</param>
     public TeamsChunkedContent(string body) {
         bytes = Encoding.UTF8.GetBytes(body);
         Headers.ContentType = new("application/json");

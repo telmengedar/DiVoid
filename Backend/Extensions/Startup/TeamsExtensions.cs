@@ -20,9 +20,12 @@ public static class TeamsExtensions {
     const string Issuer = "https://api.botframework.com";
     const string Metadata = "https://login.botframework.com/v1/.well-known/openid-configuration";
     const int MaximumBodyBytes = 256 * 1024;
-    static readonly object Endorsement = new();
+    static readonly object endorsement = new();
 
     /// <summary>Registers optional Teams authentication and SDK clients.</summary>
+    /// <param name="services">The application service registrations.</param>
+    /// <param name="configuration">The integration configuration.</param>
+    /// <returns>The application service registrations.</returns>
     public static IServiceCollection AddTeamsWebhook(this IServiceCollection services, IConfiguration configuration) {
         if (!configuration.GetValue<bool>("Teams:Enabled"))
             return services;
@@ -54,7 +57,7 @@ public static class TeamsExtensions {
                     JsonWebKey key = keys.JsonWebKeySet?.Keys.FirstOrDefault(candidate =>
                         candidate.Kid == signingKey.KeyId &&
                         candidate.ComputeJwkThumbprint().SequenceEqual(signingKey.ComputeJwkThumbprint()));
-                    context.HttpContext.Items[Endorsement] = key != null &&
+                    context.HttpContext.Items[endorsement] = key != null &&
                         key.AdditionalData.TryGetValue("endorsements", out object endorsements) &&
                         endorsements is JsonElement { ValueKind: JsonValueKind.Array } values &&
                         values.EnumerateArray().Any(value =>
@@ -111,6 +114,8 @@ public static class TeamsExtensions {
     }
 
     /// <summary>Maps the optional Teams activity endpoint.</summary>
+    /// <param name="endpoints">The application endpoint registrations.</param>
+    /// <param name="configuration">The integration configuration.</param>
     public static void MapTeamsWebhook(this IEndpointRouteBuilder endpoints, IConfiguration configuration) {
         if (!configuration.GetValue<bool>("Teams:Enabled"))
             return;
@@ -120,7 +125,7 @@ public static class TeamsExtensions {
     }
 
     static async Task<IResult> ProcessAsync(HttpContext context, TeamsSetupBot bot, Guid tenant) {
-        if (!context.Items.TryGetValue(Endorsement, out object endorsed) || endorsed is not true)
+        if (!context.Items.TryGetValue(endorsement, out object endorsed) || endorsed is not true)
             return Results.StatusCode(StatusCodes.Status403Forbidden);
         if (context.Request.ContentLength > MaximumBodyBytes)
             return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);

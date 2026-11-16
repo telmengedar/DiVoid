@@ -8,17 +8,20 @@ namespace Backend.tests.Fixtures;
 
 /// <summary>Serves synthetic authoritative Connector discovery and endorsed signing keys.</summary>
 public sealed class TeamsMetadataHandler : HttpMessageHandler {
-    /// <summary>The currently published signing key.</summary>
-    public RsaSecurityKey Key { get; set; }
-    /// <summary>The published channel endorsements.</summary>
-    public string[]? Endorsements { get; set; } = ["msteams"];
-    /// <summary>The number of authoritative key reads.</summary>
-    public int KeyRequests { get; private set; }
-
     /// <summary>Creates the synthetic metadata transport.</summary>
+    /// <param name="key">The initial published signing key.</param>
     public TeamsMetadataHandler(RsaSecurityKey key) {
         Key = key;
     }
+
+    /// <summary>The currently published signing key.</summary>
+    public RsaSecurityKey Key { get; set; }
+
+    /// <summary>The published channel endorsements.</summary>
+    public string[]? Endorsements { get; set; } = ["msteams"];
+
+    /// <summary>The number of authoritative key reads.</summary>
+    public int KeyRequests { get; private set; }
 
     /// <inheritdoc />
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
