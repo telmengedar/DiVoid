@@ -12,6 +12,9 @@ public sealed class TeamsConnectorHandler : HttpMessageHandler {
     /// <summary>The SDK request destinations.</summary>
     public ConcurrentQueue<Uri> Destinations { get; } = new();
 
+    /// <summary>Whether the SDK supplied a nonempty bearer authorization header.</summary>
+    public bool HasBearerAuthorization { get; private set; }
+
     /// <summary>The Connector response status.</summary>
     public HttpStatusCode Status { get; set; } = HttpStatusCode.OK;
 
@@ -20,6 +23,7 @@ public sealed class TeamsConnectorHandler : HttpMessageHandler {
 
     /// <inheritdoc />
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
+        HasBearerAuthorization = request.Headers.Authorization is { Scheme: "Bearer", Parameter.Length: > 0 };
         Destinations.Enqueue(request.RequestUri!);
         Bodies.Enqueue(await request.Content!.ReadAsStringAsync(cancellationToken));
         if (CancelSend)
