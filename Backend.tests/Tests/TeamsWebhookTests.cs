@@ -98,7 +98,7 @@ public class TeamsWebhookTests {
     /// <summary>Checks that rejected input produces no outbound send.</summary>
     /// <param name="failure">The invalid input scenario.</param>
     /// <returns>The asynchronous test operation.</returns>
-    [TestCase("channel"), TestCase("tenant-missing"), TestCase("tenant-wrong"), TestCase("conversation-tenant")]
+    [TestCase("channel"), TestCase("tenant-missing"), TestCase("tenant-conflict"), TestCase("conversation-tenant")]
     [TestCase("http"), TestCase("query"), TestCase("fragment"), TestCase("userinfo")]
     [TestCase("claim-missing"), TestCase("claim-empty"), TestCase("claim-mismatch"), TestCase("claim-conflict"), TestCase("claim-case")]
     [Parallelizable]
@@ -109,7 +109,7 @@ public class TeamsWebhookTests {
         switch (failure) {
             case "channel": activity["channelId"] = "webchat"; break;
             case "tenant-missing": activity.Remove("channelData"); break;
-            case "tenant-wrong": activity["channelData"] = new Dictionary<string, object> {
+            case "tenant-conflict": activity["channelData"] = new Dictionary<string, object> {
                 ["tenant"] = new Dictionary<string, object> { ["id"] = Guid.NewGuid().ToString() }
             }; break;
             case "conversation-tenant": activity["conversation"] = new Dictionary<string, object> {
