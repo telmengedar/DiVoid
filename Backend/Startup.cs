@@ -227,6 +227,8 @@ public class Startup
             });
         }
 
+        services.AddTeamsWebhook(Configuration);
+
         services.AddHostedService<DatabaseModelService>();
         services.AddHostedService<EmbeddingModelGuardService>();
         services.AddHostedService<StartupWarningService>();
@@ -266,12 +268,14 @@ public class Startup
         app.UseDivoidCors();
 
         if (AuthEnabled)
-            app.UseAuthentication();
+            app.UseWhen(context => context.GetEndpoint()?.Metadata.GetOrderedMetadata<IAuthorizeData>()
+                .Any(data => data.Policy == "TeamsBot") != true, branch => branch.UseAuthentication());
         app.UseAuthorization();
 
         app.UseEndpoints(endpoints =>
         {
             endpoints.MapControllers();
+            endpoints.MapTeamsWebhook(Configuration);
         });
     }
 }
