@@ -139,8 +139,17 @@ public sealed class TeamsWebhookFixture : IDisposable {
     /// <param name="content">The request content.</param>
     /// <param name="path">The application route.</param>
     /// <returns>The application response.</returns>
-    public async Task<HttpResponseMessage> PostBody(string? token, HttpContent content, string path = "api/teams/messages") {
-        using HttpRequestMessage request = await http.CreateRequest(Rest.Path(TestSetup.BaseUrl, path), HttpMethod.Post, null);
+    public Task<HttpResponseMessage> PostBody(string? token, HttpContent content, string path = "api/teams/messages") =>
+        Send(HttpMethod.Post, path, token, content);
+
+    /// <summary>Sends an authenticated request through the test server.</summary>
+    /// <param name="method">The HTTP method.</param>
+    /// <param name="path">The application route.</param>
+    /// <param name="token">The optional bearer credential.</param>
+    /// <param name="content">The optional request content.</param>
+    /// <returns>The application response.</returns>
+    public async Task<HttpResponseMessage> Send(HttpMethod method, string path, string? token = null, HttpContent? content = null) {
+        using HttpRequestMessage request = await http.CreateRequest(Rest.Path(TestSetup.BaseUrl, path), method, null);
         request.Content = content;
         if (token != null)
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);

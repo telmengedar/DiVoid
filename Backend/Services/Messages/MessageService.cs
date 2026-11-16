@@ -1,6 +1,8 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Npgsql;
+using Pooshit.Ocelot.Clients;
 using Backend.Extensions;
 using Backend.Errors.Exceptions;
 using Backend.Models.Messages;
@@ -32,6 +34,11 @@ public class MessageService : IMessageService {
 
     /// <inheritdoc />
     public async Task<MessageDetails> Create(long callerId, MessageDetails details) {
+        long id = await Insert(callerId, details);
+        return await GetById(callerId, isAdmin: true, id);
+    }
+
+    internal async Task<long> Insert(long callerId, MessageDetails details, Transaction transaction = null, string replyTransport = null) {
         if (details.RecipientId <= 0)
             throw new ArgumentException("RecipientId must be a valid user id", nameof(details));
 
@@ -45,18 +52,18 @@ public class MessageService : IMessageService {
 
         long recipientExists = await database.Load<User>(DB.Count())
                                               .Where(u => u.Id == details.RecipientId && u.Enabled)
-                                              .ExecuteScalarAsync<long>();
+                                              .ExecuteScalarAsync<long>(transaction);
         if (recipientExists == 0)
             throw new NotFoundException<User>(details.RecipientId);
 
         DateTime now = DateTime.UtcNow;
         long id = await database.Insert<Message>()
-                                .Columns(m => m.AuthorId, m => m.RecipientId, m => m.Subject, m => m.Body, m => m.CreatedAt)
-                                .Values(callerId, details.RecipientId, subject, details.Body, now)
+                                .Columns(m => m.AuthorId, m => m.RecipientId, m => m.Subject, m => m.Body, m => m.CreatedAt, m => m.ReplyTransport)
+                                .Values(callerId, details.RecipientId, subject, details.Body, now, replyTransport)
                                 .ReturnID()
-                                .ExecuteAsync();
+                                .ExecuteAsync(transaction);
 
-        return await GetById(callerId, isAdmin: true, id);
+        return id;
     }
 
 
@@ -135,16 +142,41 @@ public class MessageService : IMessageService {
 
     /// <inheritdoc />
     public async Task Delete(long callerId, bool isAdmin, long id) {
-        DeleteOperation<Message> operation = database.Delete<Message>();
+        await Transact(database, async transaction => {
+            DeleteOperation<Message> operation = database.Delete<Message>();
+            if (isAdmin)
+                operation.Where(message => message.Id == id);
+            else
+                operation.Where(message => message.Id == id && message.RecipientId == callerId);
+            if (await operation.ExecuteAsync(transaction) == 0)
+                throw new NotFoundException<Message>(id);
+            DateTime? consumed = DateTime.UtcNow;
+            DateTime? expires = consumed.Value.AddDays(30);
+            await database.Update<TeamsMessageOrigin>()
+                .Set(origin => origin.ConsumedAt == consumed, origin => origin.ExpiresAt == expires)
+                .Where(origin => origin.MessageId == id).ExecuteAsync(transaction);
+            return true;
+        });
+    }
 
-        if (isAdmin) {
-            operation.Where(m => m.Id == id);
-        } else {
-            long recipientId = callerId;
-            operation.Where(m => m.Id == id && m.RecipientId == recipientId);
+    internal static async Task<T> Transact<T>(IEntityManager database, Func<Transaction, Task<T>> action) {
+        Transaction transaction = database.Transaction();
+        NpgsqlConnection connection = transaction.DbTransaction.Connection as NpgsqlConnection;
+        Exception failure = null;
+        try {
+            T result = await action(transaction);
+            transaction.Commit();
+            return result;
+        } catch (Exception exception) {
+            failure = exception;
+            throw;
+        } finally {
+            try {
+                transaction.Dispose();
+            } catch (InvalidOperationException) when (connection != null && failure != null) {
+                transaction.DbTransaction.Dispose();
+                connection.Dispose();
+            }
         }
-
-        if (await operation.ExecuteAsync() == 0)
-            throw new NotFoundException<Message>(id);
     }
 }

@@ -172,6 +172,11 @@ public static class TeamsExtensions {
         if (string.IsNullOrWhiteSpace(activity.Conversation?.Id) || string.IsNullOrWhiteSpace(activity.From?.Id) ||
             string.IsNullOrWhiteSpace(activity.Recipient?.Id))
             return Results.BadRequest();
+        TeamsRoutingOptions routing = context.RequestServices.GetRequiredService<TeamsRoutingOptions>();
+        if (routing.IsBound) {
+            await context.RequestServices.GetRequiredService<TeamsMessageService>().ReceiveAsync(message, context.RequestAborted);
+            return Results.Ok();
+        }
         try {
             await bot.ProcessAsync(received, context.User, null, context.RequestAborted);
             return Results.Ok();

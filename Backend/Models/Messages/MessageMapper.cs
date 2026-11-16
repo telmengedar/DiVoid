@@ -18,7 +18,7 @@ public class MessageMapper : FieldMapper<MessageDetails, Message> {
 
 
     /// <inheritdoc />
-    public override string[] DefaultListFields => ["id", "authorid", "recipientid", "subject", "createdat"];
+    public override string[] DefaultListFields => ["id", "authorid", "recipientid", "subject", "createdat", "replytransport"];
 
 
     static IEnumerable<FieldMapping<MessageDetails>> Mappings() {
@@ -34,6 +34,8 @@ public class MessageMapper : FieldMapper<MessageDetails, Message> {
         yield return new FieldMapping<MessageDetails, string>("subject",
                                                               m => m.Subject,
                                                               (m, v) => m.Subject = v);
+        yield return new FieldMapping<MessageDetails, string>("replytransport",
+            m => m.ReplyTransport, (m, value) => m.ReplyTransport = value);
         yield return new FieldMapping<MessageDetails, string>("body",
                                                               m => m.Body,
                                                               (m, v) => m.Body = v);

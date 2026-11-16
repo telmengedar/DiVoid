@@ -10,6 +10,7 @@ using Backend.Services.Embeddings;
 using Backend.Services.Messages;
 using Backend.Services.Nodes;
 using Backend.Services.Users;
+using Backend.Services.Teams;
 using mamgo.services.Binding;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -87,6 +88,7 @@ public class Startup
         // AuthenticationFailedExceptionHandler and AuthorizationFailedExceptionHandler map
         // auth pipeline exceptions to the canonical { code, text } shape at 401/403.
         services.AddTransient<IErrorHandler, AuthenticationFailedExceptionHandler>();
+        services.AddTransient<IErrorHandler, MessageReplyExceptionHandler>();
         services.AddTransient<IErrorHandler, AuthorizationFailedExceptionHandler>();
         services.AddLogging(options =>
         {
@@ -109,7 +111,8 @@ public class Startup
         services.AddTransient<IKeyGenerator, KeyGenerator>();
         services.AddTransient<IUserService, UserService>();
         services.AddTransient<IApiKeyService, ApiKeyService>();
-        services.AddTransient<IMessageService, MessageService>();
+        services.AddTransient<MessageService>();
+        services.AddTransient<IMessageService>(provider => provider.GetRequiredService<MessageService>());
         services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
         if (AuthEnabled) {
@@ -227,9 +230,13 @@ public class Startup
             });
         }
 
+        services.AddSingleton(new TeamsRoutingOptions(Configuration));
+        services.AddTransient<TeamsMessageService>();
         services.AddTeamsWebhook(Configuration);
 
         services.AddHostedService<DatabaseModelService>();
+        if (Configuration.GetValue<bool>("Teams:Enabled"))
+            services.AddHostedService<TeamsRoutingValidationService>();
         services.AddHostedService<EmbeddingModelGuardService>();
         services.AddHostedService<StartupWarningService>();
     }

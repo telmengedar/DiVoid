@@ -46,4 +46,6 @@ public class Message {
     /// </summary>
     [Index("recipient")]
     public DateTime CreatedAt { get; set; }
+    /// <summary>The internally assigned external reply transport.</summary>
+    public string ReplyTransport { get; set; }
 }
