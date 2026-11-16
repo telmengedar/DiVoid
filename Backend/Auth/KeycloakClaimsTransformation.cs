@@ -1,5 +1,6 @@
 using System;
 using System.Security.Claims;
+using System.Linq;
 using System.Threading.Tasks;
 using Backend.Models.Users;
 using Microsoft.AspNetCore.Authentication;
@@ -44,6 +45,9 @@ public class KeycloakClaimsTransformation : IClaimsTransformation {
 
     /// <inheritdoc />
     public async Task<ClaimsPrincipal> TransformAsync(ClaimsPrincipal principal) {
+        if (principal.Identities.Any(identity => identity.AuthenticationType == "TeamsBot"))
+            return principal;
+
         // Idempotency guard — avoid double-augmentation on retried requests
         if (principal.HasClaim(AugmentedMarker, "1"))
             return principal;
