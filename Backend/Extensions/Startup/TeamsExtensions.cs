@@ -5,6 +5,7 @@ using Backend.Services.Teams;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.Identity.Abstractions;
 using Microsoft.Teams.Apps;
 using Microsoft.Teams.Apps.Clients;
 using Microsoft.Teams.Apps.Schema;
@@ -17,6 +18,8 @@ namespace Backend.Extensions.Startup;
 /// <summary>Registers the isolated public Azure Teams setup webhook.</summary>
 public static class TeamsExtensions {
     const string Scheme = "TeamsBot";
+    const string CredentialTenant = "botframework.com";
+    const string CredentialInstance = "https://login.microsoftonline.com/";
     const string Issuer = "https://api.botframework.com";
     const string Metadata = "https://login.botframework.com/v1/.well-known/openid-configuration";
     const int MaximumBodyBytes = 256 * 1024;
@@ -31,6 +34,7 @@ public static class TeamsExtensions {
             return services;
 
         ValidateConfiguration(configuration);
+        AllowedTenants(configuration);
         string clientId = configuration["AzureAd:ClientId"];
         services.AddAuthentication().AddJwtBearer(Scheme, options => {
             options.MetadataAddress = Metadata;
@@ -69,10 +73,17 @@ public static class TeamsExtensions {
             policy.AddAuthenticationSchemes(Scheme).RequireAuthenticatedUser()));
         services.AddHttpContextAccessor();
         services.AddLogging(logging => logging.AddFilter("Microsoft.Teams", LogLevel.None));
-        services.AddConversationClient();
-        services.AddUserTokenClient();
-        services.AddBotHttpClient(nameof(ApiClient), BotConfig.Resolve(services));
+        BotConfig botConfig = BotConfig.Resolve(services);
+        services.EnsureMsalServices(botConfig);
+        services.AddBotClient<ConversationClient>(nameof(ConversationClient), botConfig);
+        services.AddBotClient<UserTokenClient>(nameof(UserTokenClient), botConfig);
+        services.AddBotHttpClient(nameof(ApiClient), botConfig);
         services.AddTeamsApiClient(nameof(ApiClient));
+        services.PostConfigure<MicrosoftIdentityApplicationOptions>("AzureAd", options => {
+            options.Instance = CredentialInstance;
+            options.TenantId = CredentialTenant;
+            options.Authority = string.Empty;
+        });
         services.AddSingleton(new TeamsBotApplicationOptions {
             AppId = clientId,
             ProcessActivityTimeout = TimeSpan.FromSeconds(15)
@@ -93,15 +104,15 @@ public static class TeamsExtensions {
                 setting.Key.StartsWith("BotFramework:", StringComparison.OrdinalIgnoreCase))))
             if (!allowed.Contains(setting.Key))
                 throw new InvalidOperationException($"Teams does not support configuration field {setting.Key}.");
-        foreach (string field in new[] { "TenantId", "ClientId" })
-            if (!Guid.TryParse(configuration[$"AzureAd:{field}"], out Guid id) || id == Guid.Empty)
-                throw new InvalidOperationException($"AzureAd:{field} must be a nonempty GUID when Teams is enabled.");
+        if (!Guid.TryParse(configuration["AzureAd:ClientId"], out Guid id) || id == Guid.Empty)
+            throw new InvalidOperationException("AzureAd:ClientId must be a nonempty GUID when Teams is enabled.");
         IConfigurationSection[] credentials = configuration.GetSection("AzureAd:ClientCredentials").GetChildren().ToArray();
         if (credentials.Length != 1 || credentials[0]["SourceType"] != "ClientSecret" ||
             string.IsNullOrWhiteSpace(credentials[0]["ClientSecret"]))
             throw new InvalidOperationException("Teams requires one AzureAd:ClientCredentials ClientSecret credential.");
         foreach ((string field, string expected) in new[] {
-            ("AzureAd:Instance", "https://login.microsoftonline.com/"),
+            ("AzureAd:Instance", CredentialInstance),
+            ("AzureAd:TenantId", CredentialTenant),
             ("BotFramework:OpenIdMetadataUrl", Metadata),
             ("BotFramework:BotTokenIssuer", Issuer),
             ("BotFramework:GraphBaseUrl", "https://graph.microsoft.com")
@@ -113,18 +124,31 @@ public static class TeamsExtensions {
                 throw new InvalidOperationException("Teams authentication cannot be disabled.");
     }
 
+    static HashSet<Guid> AllowedTenants(IConfiguration configuration) {
+        IConfigurationSection section = configuration.GetSection("Teams:AllowedTenantIds");
+        if (section.Value != null)
+            throw new InvalidOperationException("Teams:AllowedTenantIds must be an array of tenant GUIDs.");
+        HashSet<Guid> tenants = new();
+        foreach (IConfigurationSection entry in section.GetChildren()) {
+            if (!Guid.TryParse(entry.Value, out Guid tenant) || tenant == Guid.Empty)
+                throw new InvalidOperationException("Teams:AllowedTenantIds entries must be nonempty tenant GUIDs.");
+            tenants.Add(tenant);
+        }
+        return tenants;
+    }
+
     /// <summary>Maps the optional Teams activity endpoint.</summary>
     /// <param name="endpoints">The application endpoint registrations.</param>
     /// <param name="configuration">The integration configuration.</param>
     public static void MapTeamsWebhook(this IEndpointRouteBuilder endpoints, IConfiguration configuration) {
         if (!configuration.GetValue<bool>("Teams:Enabled"))
             return;
-        Guid tenant = Guid.Parse(configuration["AzureAd:TenantId"]);
+        HashSet<Guid> tenants = AllowedTenants(configuration);
         endpoints.MapPost("/api/teams/messages", (HttpContext context, TeamsSetupBot bot) =>
-            ProcessAsync(context, bot, tenant)).RequireAuthorization(Scheme);
+            ProcessAsync(context, bot, tenants)).RequireAuthorization(Scheme);
     }
 
-    static async Task<IResult> ProcessAsync(HttpContext context, TeamsSetupBot bot, Guid tenant) {
+    static async Task<IResult> ProcessAsync(HttpContext context, TeamsSetupBot bot, HashSet<Guid> tenants) {
         if (!context.Items.TryGetValue(endorsement, out object endorsed) || endorsed is not true)
             return Results.StatusCode(StatusCodes.Status403Forbidden);
         if (context.Request.ContentLength > MaximumBodyBytes)
@@ -153,9 +177,10 @@ public static class TeamsExtensions {
             return Results.BadRequest();
         }
         if (activity.ChannelId != "msteams" ||
-            !Guid.TryParse(activity.ChannelData?.Tenant?.Id, out Guid activityTenant) || activityTenant != tenant ||
+            !Guid.TryParse(activity.ChannelData?.Tenant?.Id, out Guid activityTenant) || activityTenant == Guid.Empty ||
+            (tenants.Count > 0 && !tenants.Contains(activityTenant)) ||
             (activity.Conversation?.TenantId is string conversationTenant &&
-                (!Guid.TryParse(conversationTenant, out Guid parsedTenant) || parsedTenant != tenant)))
+                (!Guid.TryParse(conversationTenant, out Guid parsedTenant) || parsedTenant != activityTenant)))
             return Results.StatusCode(StatusCodes.Status403Forbidden);
         Uri serviceUrl = activity.ServiceUrl;
         string[] claims = context.User.Claims.Where(claim => claim.Type is "serviceUrl" or "serviceurl")

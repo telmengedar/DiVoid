@@ -40,8 +40,9 @@ public sealed class TeamsWebhookFixture : IDisposable {
     /// <param name="authEnabled">Whether DiVoid authentication is enabled.</param>
     /// <param name="overrides">The optional configuration overrides.</param>
     /// <param name="configureServices">The optional service registration overrides.</param>
+    /// <param name="preserveOutboundAuthentication">Whether the native SDK credential handler is retained.</param>
     public TeamsWebhookFixture(bool authEnabled = true, Dictionary<string, string?>? overrides = null,
-        Action<IServiceCollection>? configureServices = null) {
+        Action<IServiceCollection>? configureServices = null, bool preserveOutboundAuthentication = false) {
         Key = new RsaSecurityKey(rsa) { KeyId = "teams-first" };
         Metadata = new TeamsMetadataHandler(Key);
         Dictionary<string, string?> config = new() {
@@ -50,7 +51,6 @@ public sealed class TeamsWebhookFixture : IDisposable {
             ["Keycloak:Authority"] = "https://keycloak.invalid/realm",
             ["Teams:Enabled"] = "true",
             ["AzureAd:ClientId"] = ClientId,
-            ["AzureAd:TenantId"] = TenantId,
             ["AzureAd:ClientCredentials:0:SourceType"] = "ClientSecret",
             ["AzureAd:ClientCredentials:0:ClientSecret"] = "synthetic-fixture-secret",
             ["DIVOID_KEY_PEPPER"] = "teams-test-pepper-0000000000000000000000000"
@@ -68,7 +68,8 @@ public sealed class TeamsWebhookFixture : IDisposable {
                 services.AddSingleton(Messages.Object);
                 services.Configure<JwtBearerOptions>("TeamsBot", options => options.BackchannelHttpHandler = Metadata);
                 services.ConfigureAll<HttpClientFactoryOptions>(options => options.HttpMessageHandlerBuilderActions.Add(builder => {
-                    builder.AdditionalHandlers.Clear();
+                    if (!preserveOutboundAuthentication)
+                        builder.AdditionalHandlers.Clear();
                     builder.PrimaryHandler = Connector;
                 }));
                 configureServices?.Invoke(services);

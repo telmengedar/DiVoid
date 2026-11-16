@@ -73,20 +73,23 @@ Similarity scores depend on the model. The score bands described in the `divoid_
 
 ### Optional Teams bot webhook
 
-The setup endpoint is `POST /api/teams/messages`. It is disabled by default and supports a single tenant in the public Azure cloud. Register a single-tenant Entra application and Azure Bot with the same Microsoft App ID and tenant, enable the Microsoft Teams channel, and set the bot's messaging endpoint to your public HTTPS URL followed by `/api/teams/messages`.
+The setup endpoint is `POST /api/teams/messages`. It is disabled by default and supports a Teams-managed bot using its existing Bot ID and client secret through the shared Bot Framework credential authority. Configure the bot's Microsoft Teams channel and public HTTPS messaging endpoint ending in `/api/teams/messages`. No owner directory tenant GUID or Azure-owned app registration is required for this credential profile.
 
 Provide these settings through the deployment's secret provider or environment. Replace the placeholders; keep the client secret out of source control:
 
 ```
 Teams__Enabled=true
-AzureAd__TenantId=<tenant-guid>
 AzureAd__ClientId=<bot-microsoft-app-guid>
 AzureAd__ClientCredentials__0__SourceType=ClientSecret
 AzureAd__ClientCredentials__0__ClientSecret=<secret-from-secret-provider>
 ```
 
-Create and install a Teams app manifest with `bots[].botId` set to that App ID and the desired conversation scopes. Send text to the bot and expect: “DiVoid Teams webhook is connected. Message routing to DiVoid users is not implemented yet.” This reply confirms the setup handler ran and the Connector accepted its outbound request. It does not establish delivery to a DiVoid user. Attachment-only and lifecycle activities are acknowledged without a reply; invoke actions return 501.
+Outbound SDK credentials always use `https://login.microsoftonline.com/botframework.com` and the Connector scope `https://api.botframework.com/.default`. `AzureAd__TenantId` may be omitted; if set, it must be `botframework.com`. `common`, `organizations`, directory GUIDs and custom authority overrides are rejected. This authority is independent of the Teams conversation tenant.
 
-Microsoft Connector bearer JWTs authenticate this endpoint through Microsoft's signing keys, exact bot audience, issuer and lifetime. Activities must also match the configured tenant, Teams channel, endorsed signing key and signed HTTPS service URL. A bot ID, app secret, DiVoid API key or outgoing-webhook HMAC does not authenticate an incoming bot activity. An unauthenticated POST returns 401; there is no GET verification challenge or unauthenticated emulator mode. Teams authentication remains required when DiVoid authentication is disabled. Requests are limited to 256 KiB and replies to 15 seconds. Unsafe AzureAd/BotFramework configuration overrides fail startup.
+Every incoming activity must carry a valid, nonzero tenant GUID, consistent with its conversation metadata. By default any such tenant may send an otherwise valid Microsoft-authenticated activity for this bot. Set `Teams__AllowedTenantIds__0=<activity-tenant-guid>` and subsequent numbered entries to restrict accepted conversation tenants. An empty or absent list imposes no application tenant restriction; malformed or blank entries fail startup.
+
+Create and install a Teams app manifest with `bots[].botId` set to that Bot ID and the desired conversation scopes. Send text to the bot and expect: “DiVoid Teams webhook is connected. Message routing to DiVoid users is not implemented yet.” This reply confirms the setup handler ran and the Connector accepted its outbound request. It does not establish delivery to a DiVoid user. Attachment-only and lifecycle activities are acknowledged without a reply; invoke actions return 501.
+
+Microsoft Connector bearer JWTs authenticate this endpoint through Microsoft's signing keys, exact bot audience, issuer and lifetime. Activities must also satisfy the independent tenant policy, Teams channel, endorsed signing key and signed HTTPS service URL. A bot ID, app secret, DiVoid API key or outgoing-webhook HMAC does not authenticate an incoming bot activity. An unauthenticated POST returns 401; there is no GET verification challenge or unauthenticated emulator mode. Teams authentication remains required when DiVoid authentication is disabled. Requests are limited to 256 KiB and replies to 15 seconds. Unsafe AzureAd/BotFramework configuration overrides fail startup.
 
 Public reachability, TLS/proxy setup, tenant installation and real Teams delivery require deployment validation. Routing to DiVoid users, a virtual Teams user and tag/channel defaults are deferred. The host currently targets .NET 9, whose Microsoft support ended on November 10, 2026; upgrading that runtime is separate work.
