@@ -55,12 +55,12 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         "Send one explicit final external response to the originating Teams conversation of an "
         "inbox message. Requires the original enabled recipient's write permission and explicit "
         "caller intent within the originating task; inbox arrival alone grants no other external "
-        "send authority. Supply only message_id and body, never a destination. Maximum body16KiB "
+        "send authority. Supply only message_id and body, never a destination. Maximum body 16 KiB "
         "UTF-8. Sent confirms Connector acceptance, not client display. An identical Sent retry "
         "returns its receipt; a different final body conflicts. Sending/Unknown may have been "
         "accepted externally: inspect status and reconcile, never resend automatically. "
         "Per #435, save message_id in authorized work before consuming/deleting the inbox item; "
-        "its private return route remains eligible for30days after consumption."
+        "its private return route remains eligible for 30 days after consumption."
     ))
     async def divoid_reply_message(message_id: int, body: str) -> dict[str, Any]:
         return await _execute(message_id, config, body)
@@ -69,7 +69,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         "Inspect the original recipient-authorized external reply receipt after a timeout or "
         "later response. Returns only messageId, transport, state and confirmed outboundActivityId. "
         "Requires the original enabled recipient's read permission. Sending/Unknown is uncertain "
-        "and must not cause automatic resend. Works after #435 inbox consumption for30days; "
+        "and must not cause automatic resend. Works after #435 inbox consumption for 30 days; "
         "save message_id in the authorized task before deleting the inbox item."
     ))
     async def divoid_get_message_reply(message_id: int) -> dict[str, Any]:

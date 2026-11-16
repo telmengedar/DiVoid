@@ -1,3 +1,5 @@
+using Backend.Extensions.Startup;
+
 namespace Backend.Services.Teams;
 
 /// <summary>The optional fixed inbox binding for the configured Teams bot.</summary>
@@ -6,10 +8,10 @@ public sealed class TeamsRoutingOptions {
     /// <param name="configuration">The integration configuration.</param>
     public TeamsRoutingOptions(IConfiguration configuration) {
         BotAppId = Guid.TryParse(configuration["AzureAd:ClientId"], out Guid bot) ? bot.ToString("D") : configuration["AzureAd:ClientId"];
-        TenantId = Guid.TryParse(configuration["AzureAd:TenantId"], out Guid tenant) ? tenant.ToString("D") : configuration["AzureAd:TenantId"];
         Enabled = configuration.GetValue<bool>("Teams:Enabled");
         if (!Enabled)
             return;
+        AllowedTenantIds = TeamsExtensions.AllowedTenants(configuration);
         string user = configuration["Teams:Target:UserId"];
         string bridge = configuration["Teams:BridgeUserId"];
         Tag = configuration["Teams:Target:Tag"];
@@ -35,8 +37,8 @@ public sealed class TeamsRoutingOptions {
     /// <summary>The configured bot application identifier.</summary>
     public string BotAppId { get; }
 
-    /// <summary>The sole accepted Teams tenant.</summary>
-    public string TenantId { get; }
+    /// <summary>The optional allowed activity tenants, independent of credential authority.</summary>
+    public IReadOnlySet<Guid> AllowedTenantIds { get; } = new HashSet<Guid>();
 
     /// <summary>The configured inbox recipient.</summary>
     public long RecipientId { get; }

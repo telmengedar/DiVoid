@@ -308,7 +308,8 @@ public class TeamsWebhookTests {
         Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(2));
         Assert.That(capture.Messages.Any(message => message.Contains("teams-trace-control")), Is.True);
         Assert.That(capture.Messages.Any(message => message.Contains((string)activity["text"]!) ||
-            message.Contains("synthetic-fixture-secret") || message.Contains(token)), Is.False);
+            message.Contains("synthetic-fixture-secret") || message.Contains(token) ||
+            message.Contains(TeamsWebhookFixture.ServiceUrl) || message.Contains("conversation-1")), Is.False);
     }
 
     /// <summary>Checks the webhook contract.</summary>

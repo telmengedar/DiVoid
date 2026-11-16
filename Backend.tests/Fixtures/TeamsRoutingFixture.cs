@@ -22,7 +22,9 @@ public sealed class TeamsRoutingFixture : IDisposable {
     /// <summary>Creates the configured test host over the isolated database.</summary>
     /// <param name="database">The isolated persistence fixture.</param>
     /// <param name="overrides">The optional integration configuration overrides.</param>
-    public TeamsRoutingFixture(TeamsRoutingDatabase database, Dictionary<string, string?>? overrides = null) {
+    /// <param name="configureServices">Optional test-host service instrumentation.</param>
+    public TeamsRoutingFixture(TeamsRoutingDatabase database, Dictionary<string, string?>? overrides = null,
+        Action<IServiceCollection>? configureServices = null) {
         Database = database;
         key = new RsaSecurityKey(rsa) { KeyId = "routing-keycloak" };
         Dictionary<string, string?> config = new() {
@@ -42,6 +44,7 @@ public sealed class TeamsRoutingFixture : IDisposable {
                 options.Configuration = new OpenIdConnectConfiguration { Issuer = "https://keycloak.invalid/realm" };
                 options.Configuration.SigningKeys.Add(key);
             });
+            configureServices?.Invoke(services);
         });
     }
 

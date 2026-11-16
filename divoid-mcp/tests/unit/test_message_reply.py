@@ -120,3 +120,19 @@ async def test_status_is_returned_without_interpretation_or_send(server, state):
     assert result["state"] == state
     assert route.call_count == 1
     assert len(respx.calls) == 1
+
+
+@respx.mock
+async def test_inbox_requests_body_and_transport_for_external_reply(server):
+    message = {"id": 7, "body": "External Teams text", "replyTransport": "teams"}
+    route = respx.get("http://divoid.test/messages").mock(
+        return_value=httpx.Response(200, json={"result": [message], "total": 1, "continue": None})
+    )
+
+    result = await server._tool_manager.call_tool("divoid_list_messages", {})
+
+    assert route.call_count == 1
+    assert set(route.calls[0].request.url.params.get_list("fields")) == {
+        "id", "authorid", "recipientid", "subject", "body", "createdat", "replytransport"
+    }
+    assert result["result"] == [message]

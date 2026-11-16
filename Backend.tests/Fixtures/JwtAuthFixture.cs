@@ -1,6 +1,7 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http;
@@ -35,6 +36,7 @@ public sealed class JwtAuthFixture : IDisposable
     readonly RsaSecurityKey signingKey;
     readonly WebApplicationFactory<Program> factory;
     readonly HttpMessageHandler serverHandler;
+    readonly FakeJwksHandlerPublic metadata;
 
     public JwtAuthFixture()
     {
@@ -43,6 +45,7 @@ public sealed class JwtAuthFixture : IDisposable
 
         string jwks          = BuildJwks();
         string discoveryJson = BuildDiscoveryDocument();
+        metadata = new FakeJwksHandlerPublic(TestAuthority, discoveryJson, jwks);
 
         string dbPath = $"/tmp/divoid_jwt_auth_test_{Guid.NewGuid():N}.db3";
 
@@ -62,8 +65,8 @@ public sealed class JwtAuthFixture : IDisposable
             builder.ConfigureServices(services => {
                 // Replace the JwtBearer backchannel handler and override signing key directly
                 // so the middleware never makes a real network call to Keycloak.
-                services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options => {
-                    options.BackchannelHttpHandler = new FakeJwksHandlerPublic(TestAuthority, discoveryJson, jwks);
+                services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options => {
+                    options.BackchannelHttpHandler = metadata;
                     options.TokenValidationParameters.IssuerSigningKey  = signingKey;
                     options.TokenValidationParameters.IssuerSigningKeys = [signingKey];
                 });
@@ -75,6 +78,12 @@ public sealed class JwtAuthFixture : IDisposable
         serverHandler = factory.Server.CreateHandler();
         EntityManager = factory.Services.GetRequiredService<IEntityManager>();
     }
+
+    /// <summary>The actual application service provider.</summary>
+    public IServiceProvider Services => factory.Services;
+
+    /// <summary>The metadata requests captured by the configured fake backchannel.</summary>
+    public IReadOnlyCollection<Uri> DiscoveryRequests => metadata.Requests.ToArray();
 
     /// <summary>entity manager for direct DB setup in tests</summary>
     public IEntityManager EntityManager { get; }
@@ -187,10 +196,15 @@ public sealed class JwtAuthFixture : IDisposable
             this.jwksJson      = jwksJson;
         }
 
+        /// <summary>The requested OIDC discovery and signing key addresses.</summary>
+        public ConcurrentQueue<Uri> Requests { get; } = new();
+
+        /// <inheritdoc />
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage  request,
             CancellationToken   cancellationToken)
         {
+            Requests.Enqueue(request.RequestUri!);
             string url = request.RequestUri?.ToString() ?? "";
 
             if (url.Contains(".well-known/openid-configuration"))

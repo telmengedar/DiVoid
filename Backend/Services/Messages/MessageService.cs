@@ -150,8 +150,8 @@ public class MessageService : IMessageService {
                 operation.Where(message => message.Id == id && message.RecipientId == callerId);
             if (await operation.ExecuteAsync(transaction) == 0)
                 throw new NotFoundException<Message>(id);
-            DateTime? consumed = DateTime.UtcNow;
-            DateTime? expires = consumed.Value.AddDays(30);
+            long? consumed = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            long? expires = consumed + 30 * 24 * 60 * 60;
             await database.Update<TeamsMessageOrigin>()
                 .Set(origin => origin.ConsumedAt == consumed, origin => origin.ExpiresAt == expires)
                 .Where(origin => origin.MessageId == id).ExecuteAsync(transaction);

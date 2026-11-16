@@ -42,7 +42,8 @@ For each message in your current project's scope (check the subject tag): act on
 it, then delete it (there is no archive; undeleted messages are bugs). Leave \
 messages outside your project scope untouched — a different session matching that \
 scope will pick them up. \
-Response shape: {result: [{id, authorId, recipientId, subject, body, createdAt}], \
+Save the message id before deletion when replyTransport is teams; an explicit external reply uses divoid_reply_message. \
+Response shape: {result: [{id, authorId, recipientId, subject, body, createdAt, replyTransport}], \
 total, continue} where continue is the offset for the next page (null when exhausted).\
 """
 
@@ -61,7 +62,10 @@ async def _execute(
     """
     logger.info("divoid_list_messages count=%d continue=%d", count, continue_offset)
 
-    params: dict[str, Any] = {"count": count}
+    params: dict[str, Any] = {
+        "count": count,
+        "fields": ["id", "authorid", "recipientid", "subject", "body", "createdat", "replytransport"],
+    }
     if continue_offset > 0:
         params["continue"] = continue_offset
 

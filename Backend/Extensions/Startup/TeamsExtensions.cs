@@ -76,6 +76,7 @@ public static class TeamsExtensions {
         BotConfig botConfig = BotConfig.Resolve(services);
         services.EnsureMsalServices(botConfig);
         services.AddBotClient<ConversationClient>(nameof(ConversationClient), botConfig);
+        services.AddHttpClient(nameof(ConversationClient)).RemoveAllLoggers();
         services.AddBotClient<UserTokenClient>(nameof(UserTokenClient), botConfig);
         services.AddBotHttpClient(nameof(ApiClient), botConfig);
         services.AddTeamsApiClient(nameof(ApiClient));
@@ -124,7 +125,7 @@ public static class TeamsExtensions {
                 throw new InvalidOperationException("Teams authentication cannot be disabled.");
     }
 
-    static HashSet<Guid> AllowedTenants(IConfiguration configuration) {
+    internal static HashSet<Guid> AllowedTenants(IConfiguration configuration) {
         IConfigurationSection section = configuration.GetSection("Teams:AllowedTenantIds");
         if (section.Value != null)
             throw new InvalidOperationException("Teams:AllowedTenantIds must be an array of tenant GUIDs.");

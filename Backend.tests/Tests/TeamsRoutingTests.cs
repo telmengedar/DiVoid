@@ -7,6 +7,7 @@ using Backend.Models.Users;
 using Backend.Services.Teams;
 using Backend.tests.Fixtures;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Pooshit.Http.Paths;
@@ -100,7 +101,7 @@ public class TeamsRoutingTests {
         Assert.That(consumed.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         Assert.That(await database.Entities.Load<Message>(DB.Count()).Where(message => message.Id == original.Id).ExecuteScalarAsync<long>(), Is.Zero);
         TeamsMessageOrigin retained = await database.Entities.Load<TeamsMessageOrigin>().Where(origin => origin.MessageId == original.Id).ExecuteEntityAsync();
-        Assert.That(retained.ExpiresAt, Is.InRange(DateTime.UtcNow.AddDays(30).AddMinutes(-1), DateTime.UtcNow.AddDays(30).AddMinutes(1)));
+        Assert.That(retained.ExpiresAt, Is.InRange(DateTimeOffset.UtcNow.AddDays(30).AddMinutes(-1).ToUnixTimeSeconds(), DateTimeOffset.UtcNow.AddDays(30).AddMinutes(1).ToUnixTimeSeconds()));
         using TeamsRoutingFixture rebound = new(database, new() { ["Teams:Target:UserId"] = database.OtherId.ToString() });
 
         using HttpResponseMessage denied = await rebound.Reply(original.Id, userId: database.OtherId);
@@ -182,7 +183,7 @@ public class TeamsRoutingTests {
         long id = await Receive(fixture);
         using HttpResponseMessage deleted = await fixture.Host.Send(HttpMethod.Delete, Rest.Path("api/messages", id), fixture.UserToken(database.RecipientId));
         Assert.That(deleted.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        DateTime? expired = DateTime.UtcNow.AddSeconds(-1);
+        long? expired = DateTimeOffset.UtcNow.AddSeconds(-1).ToUnixTimeSeconds();
         await database.Entities.Update<TeamsMessageOrigin>().Set(origin => origin.ExpiresAt == expired).Where(origin => origin.MessageId == id).ExecuteAsync();
 
         using HttpResponseMessage unavailable = await fixture.Reply(id);
@@ -235,7 +236,8 @@ public class TeamsRoutingTests {
             long? home = 10;
             await database.Entities.Update<User>().Set(user => user.HomeNodeId == home).Where(user => user.Id == database.BridgeId).ExecuteAsync();
         } else
-            await database.Entities.Insert<ApiKey>().Columns(key => key.UserId, key => key.KeyId).Values(database.BridgeId, "no-bridge-key").ExecuteAsync();
+            await database.Entities.Insert<ApiKey>().Columns(key => key.UserId, key => key.KeyId, key => key.Enabled, key => key.CreatedAt)
+                .Values(database.BridgeId, "no-bridge-key", false, DateTime.UtcNow).ExecuteAsync();
 
         using HttpResponseMessage response = await fixture.Host.Post(fixture.Host.Token());
 
@@ -292,6 +294,176 @@ public class TeamsRoutingTests {
         using HttpResponseMessage again = await fixture.Reply(id);
         Assert.That(again.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
         Assert.That(fixture.Host.Connector.Bodies, Has.Count.EqualTo(1));
+    }
+
+    /// <summary>Checks that actual activity tenants remain distinct from shared credentials.</summary>
+    /// <returns>The asynchronous test operation.</returns>
+    [Test, Parallelizable]
+    public async Task ReplyAsync_ActivityTenantRestrictionChanged_RejectsStoredReference() {
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
+        using TeamsRoutingFixture fixture = new(database);
+        long id = await Receive(fixture);
+        TeamsMessageOrigin original = await database.Entities.Load<TeamsMessageOrigin>().ExecuteEntityAsync();
+        Assert.That(original.TenantId, Is.EqualTo(TeamsWebhookFixture.TenantId));
+        using TeamsRoutingFixture restricted = new(database, new() {
+            ["Teams:AllowedTenantIds:0"] = "99999999-9999-9999-9999-999999999999"
+        });
+
+        using HttpResponseMessage denied = await restricted.Reply(id);
+        using HttpResponseMessage deniedStatus = await restricted.Status(id);
+        using HttpResponseMessage allowed = await fixture.Reply(id);
+
+        Assert.That(denied.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        Assert.That(deniedStatus.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        Assert.That(restricted.Host.Connector.Bodies, Is.Empty);
+        Assert.That(allowed.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+    }
+
+    /// <summary>Checks that native bot echoes cannot loop through the inbox.</summary>
+    /// <returns>The asynchronous test operation.</returns>
+    [Test, Parallelizable]
+    public async Task ReceiveAsync_BotEcho_DoesNotPersistOrReply() {
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
+        using TeamsRoutingFixture fixture = new(database);
+        Dictionary<string, object?> activity = TeamsWebhookFixture.Activity();
+        activity["from"] = activity["recipient"];
+
+        using HttpResponseMessage response = await fixture.Host.Post(fixture.Host.Token(), activity);
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(await Count<Message>(database), Is.Zero);
+        Assert.That(await Count<TeamsMessageOrigin>(database), Is.Zero);
+        Assert.That(fixture.Host.Connector.Bodies, Is.Empty);
+    }
+
+    /// <summary>Checks that a crashed sender cannot silently acquire another send attempt.</summary>
+    /// <returns>The asynchronous test operation.</returns>
+    [Test, Parallelizable]
+    public async Task ReplyAsync_StaleSending_ReturnsUnknownAndRefusesResend() {
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
+        using TeamsRoutingFixture fixture = new(database);
+        long id = await Receive(fixture);
+        long? started = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds();
+        TeamsReplyState sending = TeamsReplyState.Sending;
+        await database.Entities.Update<TeamsMessageOrigin>()
+            .Set(origin => origin.ReplyState == sending, origin => origin.ReplyAttemptStartedAt == started)
+            .Where(origin => origin.MessageId == id).ExecuteAsync();
+
+        using HttpResponseMessage status = await fixture.Status(id);
+        using HttpResponseMessage reply = await fixture.Reply(id);
+
+        Assert.That(status.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(Json.Read<MessageReplyReceipt>(await status.Content.ReadAsStringAsync()).State, Is.EqualTo("unknown"));
+        Assert.That(reply.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+        Assert.That(fixture.Host.Connector.Bodies, Is.Empty);
+    }
+
+    /// <summary>Checks linked caller cancellation after a real Connector request begins.</summary>
+    /// <returns>The asynchronous test operation.</returns>
+    [Test, Parallelizable]
+    public async Task ReplyAsync_CallerCancelledAfterSend_PersistsUnknownAndRefusesResend() {
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
+        using TeamsRoutingFixture fixture = new(database);
+        long id = await Receive(fixture);
+        fixture.Host.Connector.ResponseBarrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task;
+        using CancellationTokenSource cancellation = new();
+        TeamsMessageService service = fixture.Host.Services.GetRequiredService<TeamsMessageService>();
+        Task<MessageReplyReceipt> reply = service.ReplyAsync(database.RecipientId, id, "explicit cancelled reply", cancellation.Token);
+        await fixture.Host.Connector.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        cancellation.Cancel();
+
+        MessageReplyException? failure = Assert.ThrowsAsync<MessageReplyException>(async () => await reply);
+        Assert.That(failure, Is.Not.Null);
+        using HttpResponseMessage status = await fixture.Status(id);
+        Assert.That(Json.Read<MessageReplyReceipt>(await status.Content.ReadAsStringAsync()).State, Is.EqualTo("unknown"));
+        using HttpResponseMessage again = await fixture.Reply(id);
+        Assert.That(again.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+        Assert.That(fixture.Host.Connector.Bodies, Has.Count.EqualTo(1));
+    }
+
+    /// <summary>Checks actual ingress and explicit reply privacy under enabled trace logging.</summary>
+    /// <returns>The asynchronous test operation.</returns>
+    [Test, Parallelizable]
+    public async Task ReplyAsync_TraceLogging_DoesNotExposeBodyCredentialsOrPrivateReference() {
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
+        TeamsLogCapture capture = new();
+        using TeamsRoutingFixture fixture = new(database, configureServices: services => {
+            services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Trace).AddProvider(capture));
+            services.PostConfigure<LoggerFilterOptions>(options => {
+                foreach (LoggerFilterRule rule in options.Rules.Where(rule => rule.CategoryName != "Microsoft.Teams").ToArray())
+                    options.Rules.Remove(rule);
+                options.MinLevel = LogLevel.Trace;
+            });
+        });
+        fixture.Host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Teams.Routing.Control")
+            .LogTrace("routing-trace-control");
+        long id = await Receive(fixture);
+        fixture.Host.Connector.Status = HttpStatusCode.BadGateway;
+        const string responseText = "private-explicit-response-marker";
+        string token = fixture.UserToken(database.RecipientId);
+
+        using HttpResponseMessage response = await fixture.Reply(id, responseText);
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadGateway));
+        Assert.That(fixture.Host.Connector.Bodies, Has.Count.EqualTo(1));
+        Assert.That(capture.Messages.Any(message => message.Contains("routing-trace-control")), Is.True);
+        Assert.That(capture.Messages.Any(message => message.Contains(responseText) ||
+            message.Contains("sensitive text must never be echoed") || message.Contains(TeamsWebhookFixture.ServiceUrl) ||
+            message.Contains("synthetic-fixture-secret") || message.Contains(token)), Is.False);
+    }
+
+    /// <summary>Checks bounded lazy cleanup and hard expiry even when an expired row remains.</summary>
+    /// <returns>The asynchronous test operation.</returns>
+    [Test, Parallelizable]
+    public async Task GetAsync_ExpiredBatchOverLimit_RejectsAndDeletesOnlyBoundedRows() {
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
+        using TeamsRoutingFixture fixture = new(database);
+        long activeId = await Receive(fixture);
+        long? expired = DateTimeOffset.UtcNow.AddSeconds(-1).ToUnixTimeSeconds();
+        for (int index = 0; index < 65; index++)
+            await database.Entities.Insert<TeamsMessageOrigin>()
+                .Columns(origin => origin.MessageId, origin => origin.DedupKey, origin => origin.ExpiresAt,
+                    origin => origin.BotAppId, origin => origin.TenantId, origin => origin.RecipientId,
+                    origin => origin.ServiceUrl, origin => origin.ConversationId, origin => origin.ActivityId,
+                    origin => origin.BotId, origin => origin.SenderId, origin => origin.ReplyState)
+                .Values(1000L + index, index.ToString("X64"), expired, TeamsWebhookFixture.ClientId,
+                    TeamsWebhookFixture.TenantId, database.RecipientId, TeamsWebhookFixture.ServiceUrl,
+                    "expired-conversation", "expired-activity", "bot", "sender", TeamsReplyState.Pending).ExecuteAsync();
+
+        using HttpResponseMessage expiredStatus = await fixture.Status(1064);
+
+        Assert.That(expiredStatus.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        Assert.That(await Count<TeamsMessageOrigin>(database), Is.EqualTo(2));
+        using HttpResponseMessage activeStatus = await fixture.Status(activeId);
+        Assert.That(activeStatus.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(await Count<TeamsMessageOrigin>(database), Is.EqualTo(1));
+        Assert.That(await Count<Message>(database), Is.EqualTo(1));
+        Assert.That(fixture.Host.Connector.Bodies, Is.Empty);
+    }
+
+    /// <summary>Checks that incomplete or unsafe bindings cannot enable external routing.</summary>
+    /// <param name="failure">The invalid fixed-binding scenario.</param>
+    [TestCase("target"), TestCase("bridge"), TestCase("tag"), TestCase("same"), TestCase("auth"), TestCase("tag-injection"), Parallelizable]
+    public void TeamsRoutingOptions_UnsafeBinding_RejectsStartup(string failure) {
+        Dictionary<string, string?> config = new() {
+            ["Teams:Enabled"] = "true", ["AzureAd:ClientId"] = TeamsWebhookFixture.ClientId,
+            ["Teams:Target:UserId"] = "1", ["Teams:BridgeUserId"] = "2", ["Teams:Target:Tag"] = "divoid",
+            ["Auth:Enabled"] = "true"
+        };
+        TeamsRoutingOptions valid = new(new ConfigurationBuilder().AddInMemoryCollection(config).Build());
+        Assert.That(valid.IsBound, Is.True);
+        if (failure == "auth")
+            config["Auth:Enabled"] = "false";
+        else if (failure == "same")
+            config["Teams:BridgeUserId"] = "1";
+        else if (failure == "tag-injection")
+            config["Teams:Target:Tag"] = "divoid] [other";
+        else
+            config.Remove(failure == "target" ? "Teams:Target:UserId" : failure == "bridge" ? "Teams:BridgeUserId" : "Teams:Target:Tag");
+
+        Assert.Throws<InvalidOperationException>(() => new TeamsRoutingOptions(
+            new ConfigurationBuilder().AddInMemoryCollection(config).Build()));
     }
 
     static async Task<long> Receive(TeamsRoutingFixture fixture) {

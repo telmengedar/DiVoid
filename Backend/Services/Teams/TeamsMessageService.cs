@@ -69,7 +69,8 @@ public sealed class TeamsMessageService {
         if (activity.From?.Id == activity.Recipient?.Id || activity.From?.BotId == options.BotAppId)
             return 0;
         await CleanupAsync();
-        string dedup = Digest(options.BotAppId, options.TenantId, activity.Conversation.Id, activity.Id);
+        string tenantId = Guid.Parse(activity.ChannelData.Tenant.Id).ToString("D");
+        string dedup = Digest(options.BotAppId, tenantId, activity.Conversation.Id, activity.Id);
         try {
             return await MessageService.Transact(database, async transaction => {
                 await ValidateBindingAsync(transaction);
@@ -83,7 +84,7 @@ public sealed class TeamsMessageService {
                         origin => origin.TenantId, origin => origin.RecipientId, origin => origin.ServiceUrl,
                         origin => origin.ConversationId, origin => origin.ActivityId, origin => origin.BotId,
                         origin => origin.SenderId, origin => origin.ReplyState)
-                    .Values(messageId, dedup, options.BotAppId, options.TenantId, options.RecipientId,
+                    .Values(messageId, dedup, options.BotAppId, tenantId, options.RecipientId,
                         activity.ServiceUrl.OriginalString, activity.Conversation.Id, activity.Id,
                         activity.Recipient.Id, activity.From.Id, TeamsReplyState.Pending).ExecuteAsync(transaction);
                 return messageId;
@@ -91,7 +92,7 @@ public sealed class TeamsMessageService {
         } catch (Exception exception) when (IsUniqueViolation(exception)) {
             TeamsMessageOrigin original = await database.Load<TeamsMessageOrigin>()
                 .Where(origin => origin.DedupKey == dedup).ExecuteEntityAsync();
-            if (original == null || original.BotAppId != options.BotAppId || original.TenantId != options.TenantId ||
+            if (original == null || original.BotAppId != options.BotAppId || original.TenantId != tenantId ||
                 original.ConversationId != activity.Conversation.Id || original.ActivityId != activity.Id)
                 throw;
             return original.MessageId;
@@ -124,7 +125,7 @@ public sealed class TeamsMessageService {
             throw new MessageReplyException(HttpStatusCode.Conflict, "reply_outcome_unknown",
                 "A reply is in progress or its external outcome is unknown. Inspect reply status; do not resend.");
         cancellationToken.ThrowIfCancellationRequested();
-        DateTime? started = DateTime.UtcNow;
+        long? started = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         TeamsReplyState sending = TeamsReplyState.Sending;
         long claimed = await database.Update<TeamsMessageOrigin>()
             .Set(route => route.ReplyState == sending, route => route.ReplyBodyHash == hash,
@@ -176,14 +177,16 @@ public sealed class TeamsMessageService {
         if (!options.Enabled || callerId <= 0)
             throw new NotFoundException<Message>(messageId);
         await CleanupAsync();
-        DateTime now = DateTime.UtcNow;
+        long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         TeamsMessageOrigin origin = await database.Load<TeamsMessageOrigin>()
             .Where(route => route.MessageId == messageId && route.RecipientId == callerId &&
                 (route.ExpiresAt == null || route.ExpiresAt > now)).ExecuteEntityAsync();
         User recipient = origin == null ? null : await database.Load<User>()
             .Where(user => user.Id == callerId && user.Enabled).ExecuteEntityAsync();
         if (origin == null || recipient == null || !options.Enabled ||
-            origin.BotAppId != options.BotAppId || origin.TenantId != options.TenantId ||
+            origin.BotAppId != options.BotAppId ||
+            !Guid.TryParse(origin.TenantId, out Guid tenant) || tenant == Guid.Empty ||
+            (options.AllowedTenantIds.Count > 0 && !options.AllowedTenantIds.Contains(tenant)) ||
             string.IsNullOrWhiteSpace(origin.ConversationId) || string.IsNullOrWhiteSpace(origin.ActivityId) ||
             string.IsNullOrWhiteSpace(origin.BotId) || string.IsNullOrWhiteSpace(origin.SenderId) ||
             !Uri.TryCreate(origin.ServiceUrl, UriKind.Absolute, out Uri url) || url.Scheme != Uri.UriSchemeHttps ||
@@ -197,7 +200,7 @@ public sealed class TeamsMessageService {
         .Where(origin => origin.MessageId == messageId).ExecuteAsync();
 
     async Task CleanupAsync() {
-        DateTime now = DateTime.UtcNow;
+        long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         List<long> ids = new();
         await foreach (TeamsMessageOrigin origin in database.Load<TeamsMessageOrigin>()
             .Where(route => route.ExpiresAt != null && route.ExpiresAt <= now).Limit(64).ExecuteEntitiesAsync())
@@ -209,7 +212,7 @@ public sealed class TeamsMessageService {
     static MessageReplyReceipt Receipt(TeamsMessageOrigin origin) => new() {
         MessageId = origin.MessageId,
         Transport = "teams",
-        State = origin.ReplyState == TeamsReplyState.Sending && origin.ReplyAttemptStartedAt <= DateTime.UtcNow.AddSeconds(-15)
+        State = origin.ReplyState == TeamsReplyState.Sending && origin.ReplyAttemptStartedAt <= DateTimeOffset.UtcNow.AddSeconds(-15).ToUnixTimeSeconds()
             ? "unknown" : origin.ReplyState.ToString().ToLowerInvariant(),
         OutboundActivityId = origin.OutboundActivityId
     };

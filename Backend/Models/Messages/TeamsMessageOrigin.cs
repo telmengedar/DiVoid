@@ -37,12 +37,12 @@ public class TeamsMessageOrigin {
     /// <summary>The native external sender identifier.</summary>
     public string SenderId { get; set; }
 
-    /// <summary>The inbox consumption time.</summary>
-    public DateTime? ConsumedAt { get; set; }
+    /// <summary>The inbox consumption time in UTC Unix seconds.</summary>
+    public long? ConsumedAt { get; set; }
 
-    /// <summary>The retained route expiration.</summary>
+    /// <summary>The retained route expiration in UTC Unix seconds.</summary>
     [Index("expiry")]
-    public DateTime? ExpiresAt { get; set; }
+    public long? ExpiresAt { get; set; }
 
     /// <summary>The explicit reply receipt state.</summary>
     [DefaultValue(0)]
@@ -52,8 +52,8 @@ public class TeamsMessageOrigin {
     [Size(64)]
     public string ReplyBodyHash { get; set; }
 
-    /// <summary>The external attempt start time.</summary>
-    public DateTime? ReplyAttemptStartedAt { get; set; }
+    /// <summary>The external attempt start time in UTC Unix seconds.</summary>
+    public long? ReplyAttemptStartedAt { get; set; }
 
     /// <summary>The confirmed outbound activity identifier.</summary>
     public string OutboundActivityId { get; set; }
