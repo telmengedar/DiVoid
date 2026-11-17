@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Http;
 using Microsoft.Identity.Abstractions;
 using Moq;
 
@@ -72,6 +73,47 @@ public class TeamsManagedProfileTests {
         Assert.That(effective.Authority, Is.Empty);
         Assert.That(fixture.Connector.HasBearerAuthorization, Is.True);
         Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(1));
+        Assert.That(fixture.Database.Invocations, Is.Empty);
+    }
+
+    /// <summary>Checks real native token-provider selection reaches the approved authority without external traffic.</summary>
+    /// <param name="nativeClient">Whether to traverse the native conversation client authentication handler.</param>
+    /// <returns>The asynchronous test operation.</returns>
+    [TestCase(false), TestCase(true), Parallelizable]
+    public async Task NativeAuthorizationProvider_RegisteredAzureAd_ReachesAuthorityBoundary(bool nativeClient) {
+        NativeAuthorityBoundary boundary = new();
+        using TeamsWebhookFixture fixture = new(preserveOutboundAuthentication: true, configureServices: services => {
+            services.ConfigureAll<HttpClientFactoryOptions>(options => options.HttpMessageHandlerBuilderActions.Add(builder => {
+                builder.PrimaryHandler = boundary;
+            }));
+        });
+        Microsoft.AspNetCore.Http.DefaultHttpContext context = new();
+        context.Request.Scheme = "https";
+        context.Request.Host = new Microsoft.AspNetCore.Http.HostString("in-process.invalid");
+        context.RequestServices = fixture.Services;
+        context.User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(
+            new[] { new System.Security.Claims.Claim("divoid.user_id", "17"), new System.Security.Claims.Claim("permission", "write") }, "ApiKey"));
+        fixture.Services.GetRequiredService<Microsoft.AspNetCore.Http.IHttpContextAccessor>().HttpContext = context;
+        IAuthorizationHeaderProvider provider = fixture.Services.GetRequiredService<IAuthorizationHeaderProvider>();
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(5));
+        Exception? failure = Assert.CatchAsync<Exception>(async () => {
+            if (nativeClient)
+                await fixture.Services.GetRequiredService<Microsoft.Teams.Core.ConversationClient>().SendActivityAsync(
+                    "in-process-only", new Microsoft.Teams.Apps.MessageActivityInput { Text = "not sent" },
+                    new Uri(TeamsWebhookFixture.ServiceUrl), requestContext: new Microsoft.Teams.Core.Http.BotRequestContext { BotAppId = TeamsWebhookFixture.ClientId },
+                    cancellationToken: timeout.Token);
+            else
+                await provider.CreateAuthorizationHeaderForAppAsync("https://api.botframework.com/.default", new AuthorizationHeaderProviderOptions {
+                    AcquireTokenOptions = new AcquireTokenOptions { AuthenticationOptionsName = "AzureAd" }
+                }, timeout.Token);
+        });
+        Assert.That(boundary.Observed, Is.Not.Empty);
+        Assert.That(boundary.Observed.All(allowed => allowed), Is.True);
+        Assert.That(boundary.TokenRequests, Is.EqualTo(1));
+        Assert.That(boundary.TokenScopeMatches && boundary.CredentialMatches, Is.True);
+        Assert.That(failure, Is.Not.Null);
+        Assert.That(ExceptionChain(failure!).Any(exception => exception.Message.Contains("IDW10503", StringComparison.Ordinal)), Is.False);
+        Assert.That(fixture.Connector.Bodies, Is.Empty);
         Assert.That(fixture.Database.Invocations, Is.Empty);
     }
 
@@ -154,6 +196,11 @@ public class TeamsManagedProfileTests {
 
         Assert.That(failure!.Message, Does.Contain("Teams").Or.Contain("AzureAd"));
         Assert.That(failure.Message.Contains("synthetic-fixture-secret"), Is.False);
+    }
+
+    static IEnumerable<Exception> ExceptionChain(Exception failure) {
+        for (Exception? current = failure; current != null; current = current.InnerException)
+            yield return current;
     }
 
     static Dictionary<string, object?> ActivityFor(string tenant) {

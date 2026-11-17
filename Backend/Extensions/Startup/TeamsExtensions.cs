@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.Identity.Abstractions;
+using Microsoft.Identity.Web;
 using Microsoft.Teams.Apps;
 using Microsoft.Teams.Apps.Clients;
 using Microsoft.Teams.Apps.Schema;
@@ -80,6 +81,12 @@ public static class TeamsExtensions {
         services.AddBotClient<UserTokenClient>(nameof(UserTokenClient), botConfig);
         services.AddBotHttpClient(nameof(ApiClient), botConfig);
         services.AddTeamsApiClient(nameof(ApiClient));
+        services.AddAuthentication().AddMicrosoftIdentityWebApi(_ => { }, options => {
+            options.ClientId = clientId;
+            options.Instance = CredentialInstance;
+            options.TenantId = CredentialTenant;
+            options.Authority = string.Empty;
+        }, jwtBearerScheme: "AzureAd");
         services.PostConfigure<MicrosoftIdentityApplicationOptions>("AzureAd", options => {
             options.Instance = CredentialInstance;
             options.TenantId = CredentialTenant;
