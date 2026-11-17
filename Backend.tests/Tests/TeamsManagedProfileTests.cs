@@ -4,6 +4,9 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Http;
+using System.Collections.Concurrent;
+using System.Text;
 using Microsoft.Identity.Abstractions;
 using Moq;
 
@@ -72,6 +75,47 @@ public class TeamsManagedProfileTests {
         Assert.That(effective.Authority, Is.Empty);
         Assert.That(fixture.Connector.HasBearerAuthorization, Is.True);
         Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(1));
+        Assert.That(fixture.Database.Invocations, Is.Empty);
+    }
+
+    /// <summary>Checks real native token-provider selection reaches the approved authority without external traffic.</summary>
+    /// <param name="nativeClient">Whether to traverse the native conversation client authentication handler.</param>
+    /// <returns>The asynchronous test operation.</returns>
+    [TestCase(false), TestCase(true), Parallelizable]
+    public async Task NativeAuthorizationProvider_RegisteredAzureAd_ReachesAuthorityBoundary(bool nativeClient) {
+        NativeAuthorityBoundary boundary = new();
+        using TeamsWebhookFixture fixture = new(preserveOutboundAuthentication: true, configureServices: services => {
+            services.ConfigureAll<HttpClientFactoryOptions>(options => options.HttpMessageHandlerBuilderActions.Add(builder => {
+                builder.PrimaryHandler = boundary;
+            }));
+        });
+        Microsoft.AspNetCore.Http.DefaultHttpContext context = new();
+        context.Request.Scheme = "https";
+        context.Request.Host = new Microsoft.AspNetCore.Http.HostString("in-process.invalid");
+        context.RequestServices = fixture.Services;
+        context.User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(
+            new[] { new System.Security.Claims.Claim("divoid.user_id", "17"), new System.Security.Claims.Claim("permission", "write") }, "ApiKey"));
+        fixture.Services.GetRequiredService<Microsoft.AspNetCore.Http.IHttpContextAccessor>().HttpContext = context;
+        IAuthorizationHeaderProvider provider = fixture.Services.GetRequiredService<IAuthorizationHeaderProvider>();
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(5));
+        Exception? failure = Assert.CatchAsync<Exception>(async () => {
+            if (nativeClient)
+                await fixture.Services.GetRequiredService<Microsoft.Teams.Core.ConversationClient>().SendActivityAsync(
+                    "in-process-only", new Microsoft.Teams.Apps.MessageActivityInput { Text = "not sent" },
+                    new Uri(TeamsWebhookFixture.ServiceUrl), requestContext: new Microsoft.Teams.Core.Http.BotRequestContext { BotAppId = TeamsWebhookFixture.ClientId },
+                    cancellationToken: timeout.Token);
+            else
+                await provider.CreateAuthorizationHeaderForAppAsync("https://api.botframework.com/.default", new AuthorizationHeaderProviderOptions {
+                    AcquireTokenOptions = new AcquireTokenOptions { AuthenticationOptionsName = "AzureAd" }
+                }, timeout.Token);
+        });
+        Assert.That(boundary.Observed, Is.Not.Empty);
+        Assert.That(boundary.Observed.All(allowed => allowed), Is.True);
+        Assert.That(boundary.TokenRequests, Is.EqualTo(1));
+        Assert.That(boundary.TokenScopeMatches && boundary.CredentialMatches, Is.True);
+        Assert.That(failure, Is.Not.Null);
+        Assert.That(ExceptionChain(failure!).Any(exception => exception.Message.Contains("IDW10503", StringComparison.Ordinal)), Is.False);
+        Assert.That(fixture.Connector.Bodies, Is.Empty);
         Assert.That(fixture.Database.Invocations, Is.Empty);
     }
 
@@ -155,6 +199,54 @@ public class TeamsManagedProfileTests {
         Assert.That(failure!.Message, Does.Contain("Teams").Or.Contain("AzureAd"));
         Assert.That(failure.Message.Contains("synthetic-fixture-secret"), Is.False);
     }
+
+    static IEnumerable<Exception> ExceptionChain(Exception failure) {
+        for (Exception? current = failure; current != null; current = current.InnerException)
+            yield return current;
+    }
+
+    sealed class NativeAuthorityBoundary : HttpMessageHandler {
+        /// <summary>The captured authority allow-list decisions.</summary>
+        public ConcurrentQueue<bool> Observed { get; } = new();
+
+        /// <summary>The number of token requests intercepted in memory.</summary>
+        public int TokenRequests { get; private set; }
+
+        /// <summary>Whether the token request used the Connector scope.</summary>
+        public bool TokenScopeMatches { get; private set; }
+
+        /// <summary>Whether the request used the sole configured synthetic client credential.</summary>
+        public bool CredentialMatches { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
+            Uri? uri = request.RequestUri;
+            bool allowed = uri is { Scheme: "https", Host: "login.microsoftonline.com", Port: 443 } &&
+                (uri.AbsolutePath.StartsWith("/botframework.com/", StringComparison.Ordinal) || uri.AbsolutePath == "/common/discovery/instance");
+            Observed.Enqueue(allowed);
+            if (!allowed)
+                throw new NativeAuthorityBoundaryReachedException();
+            if (request.Method == HttpMethod.Get && uri!.AbsolutePath == "/common/discovery/instance")
+                return Metadata("{\"tenant_discovery_endpoint\":\"https://login.microsoftonline.com/botframework.com/v2.0/.well-known/openid-configuration\",\"metadata\":[{\"preferred_network\":\"login.microsoftonline.com\",\"preferred_cache\":\"login.microsoftonline.com\",\"aliases\":[\"login.microsoftonline.com\"]}]}");
+            if (request.Method == HttpMethod.Get && uri!.AbsolutePath == "/botframework.com/v2.0/.well-known/openid-configuration")
+                return Metadata("{\"authorization_endpoint\":\"https://login.microsoftonline.com/botframework.com/oauth2/v2.0/authorize\",\"token_endpoint\":\"https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token\",\"issuer\":\"https://login.microsoftonline.com/botframework.com/v2.0\"}");
+            if (request.Method == HttpMethod.Post && uri!.AbsolutePath == "/botframework.com/oauth2/v2.0/token") {
+                TokenRequests++;
+                string content = await request.Content!.ReadAsStringAsync(cancellationToken);
+                Dictionary<string, string> form = content.Split('&').Select(item => item.Split('=', 2))
+                    .ToDictionary(item => Uri.UnescapeDataString(item[0].Replace('+', ' ')), item => Uri.UnescapeDataString(item[1].Replace('+', ' ')));
+                TokenScopeMatches = form.GetValueOrDefault("scope") == "https://api.botframework.com/.default";
+                CredentialMatches = form.GetValueOrDefault("client_id") == TeamsWebhookFixture.ClientId &&
+                    form.GetValueOrDefault("client_secret") == "synthetic-fixture-secret" && form.GetValueOrDefault("grant_type") == "client_credentials";
+            }
+            throw new NativeAuthorityBoundaryReachedException();
+        }
+
+        static HttpResponseMessage Metadata(string json) => new(HttpStatusCode.OK) {
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
+        };
+    }
+
+    sealed class NativeAuthorityBoundaryReachedException : Exception { }
 
     static Dictionary<string, object?> ActivityFor(string tenant) {
         Dictionary<string, object?> activity = TeamsWebhookFixture.Activity();
