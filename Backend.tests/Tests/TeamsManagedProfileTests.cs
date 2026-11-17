@@ -41,9 +41,10 @@ public class TeamsManagedProfileTests {
     }
 
     /// <summary>Checks the real SDK credential handler's scope and named authority selection.</summary>
+    /// <param name="diagnostic">Whether the separately bounded diagnostic client issues the request.</param>
     /// <returns>The asynchronous test operation.</returns>
-    [Test, Parallelizable]
-    public async Task ProcessAsync_NativeCredentialHandler_UsesSharedOptionsAndConnectorScope() {
+    [TestCase(false), TestCase(true), Parallelizable]
+    public async Task ProcessAsync_NativeCredentialHandler_UsesSharedOptionsAndConnectorScope(bool diagnostic) {
         string? observedScope = null;
         string? observedName = null;
         Mock<IAuthorizationHeaderProvider> provider = new(MockBehavior.Strict);
@@ -61,7 +62,18 @@ public class TeamsManagedProfileTests {
         using HttpResponseMessage response = await fixture.Post(fixture.Token());
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        await fixture.ReplyToQueuedMessage();
+        if (diagnostic) {
+            fixture.Connector.ResponseBody = "[]";
+            using HttpClient http = fixture.Services.GetRequiredService<IHttpClientFactory>().CreateClient("TeamsConnectorDiagnosis");
+            Assert.That(http.Timeout, Is.EqualTo(TimeSpan.FromSeconds(15)));
+            await new Microsoft.Teams.Core.ConversationClient(http).GetConversationMembersAsync("synthetic-conversation", new Uri(TeamsWebhookFixture.ServiceUrl));
+            Assert.That(fixture.DiagnosisRedirectsDisabled, Is.True);
+        } else {
+            await fixture.ReplyToQueuedMessage();
+            Assert.That(fixture.ReplyRedirectsEnabled, Is.True);
+            using HttpClient http = fixture.Services.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(Microsoft.Teams.Core.ConversationClient));
+            Assert.That(http.Timeout, Is.EqualTo(TimeSpan.FromSeconds(100)));
+        }
         provider.Verify(auth => auth.CreateAuthorizationHeaderForAppAsync(It.IsAny<string>(),
             It.IsAny<AuthorizationHeaderProviderOptions>(), It.IsAny<CancellationToken>()), Times.Once);
         Assert.That(observedScope, Is.EqualTo("https://api.botframework.com/.default"));
@@ -72,7 +84,8 @@ public class TeamsManagedProfileTests {
         Assert.That(effective.TenantId, Is.EqualTo("botframework.com"));
         Assert.That(effective.Authority, Is.Empty);
         Assert.That(fixture.Connector.HasBearerAuthorization, Is.True);
-        Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(1));
+        Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(diagnostic ? 0 : 1));
+        Assert.That(fixture.Connector.Methods.Single(), Is.EqualTo(diagnostic ? HttpMethod.Get : HttpMethod.Post));
         Assert.That(fixture.Database.Invocations, Is.Empty);
     }
 

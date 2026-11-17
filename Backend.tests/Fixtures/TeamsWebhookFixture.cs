@@ -74,6 +74,10 @@ public sealed class TeamsWebhookFixture : IDisposable {
                 services.AddSingleton(Messages.Object);
                 services.Configure<JwtBearerOptions>("TeamsBot", options => options.BackchannelHttpHandler = Metadata);
                 services.ConfigureAll<HttpClientFactoryOptions>(options => options.HttpMessageHandlerBuilderActions.Add(builder => {
+                    if (builder.Name == "TeamsConnectorDiagnosis")
+                        DiagnosisRedirectsDisabled = builder.PrimaryHandler is SocketsHttpHandler { AllowAutoRedirect: false };
+                    if (builder.Name == nameof(Microsoft.Teams.Core.ConversationClient))
+                        ReplyRedirectsEnabled = builder.PrimaryHandler is SocketsHttpHandler { AllowAutoRedirect: true } or HttpClientHandler { AllowAutoRedirect: true };
                     if (!preserveOutboundAuthentication)
                         builder.AdditionalHandlers.Clear();
                     builder.PrimaryHandler = Connector;
@@ -98,6 +102,12 @@ public sealed class TeamsWebhookFixture : IDisposable {
 
     /// <summary>The captured outbound SDK transport.</summary>
     public TeamsConnectorHandler Connector { get; } = new();
+
+    /// <summary>Whether the production diagnostic handler disables automatic redirects.</summary>
+    public bool DiagnosisRedirectsDisabled { get; private set; }
+
+    /// <summary>Whether the ordinary reply handler retains its default redirect behavior.</summary>
+    public bool ReplyRedirectsEnabled { get; private set; }
 
     /// <summary>The strict persistence boundary spy.</summary>
     public Mock<IEntityManager> Database { get; } = new(MockBehavior.Strict);

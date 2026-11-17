@@ -72,6 +72,13 @@ public sealed class TeamsRoutingFixture : IDisposable {
     public Task<HttpResponseMessage> Status(long messageId, long? userId = null) =>
         Host.Send(HttpMethod.Get, Rest.Path("api/messages", messageId, "reply"), UserToken(userId ?? Database.RecipientId));
 
+    /// <summary>Explicitly probes the original Connector conversation without a request body.</summary>
+    /// <param name="messageId">The retained original inbox identifier.</param>
+    /// <param name="userId">The optional calling actor.</param>
+    /// <returns>The safe diagnostic response.</returns>
+    public Task<HttpResponseMessage> Diagnose(long messageId, long? userId = null) =>
+        Host.Send(HttpMethod.Post, Rest.Path("api/messages", messageId, "reply", "diagnosis"), UserToken(userId ?? Database.RecipientId));
+
     /// <inheritdoc />
     public void Dispose() {
         Host.Dispose();
