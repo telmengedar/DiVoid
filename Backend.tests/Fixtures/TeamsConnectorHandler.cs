@@ -15,8 +15,14 @@ public sealed class TeamsConnectorHandler : HttpMessageHandler {
     /// <summary>Whether the SDK supplied a nonempty bearer authorization header.</summary>
     public bool HasBearerAuthorization { get; private set; }
 
+    /// <summary>The optional original exception thrown at the synthetic Connector boundary.</summary>
+    public Exception? Failure { get; set; }
+
     /// <summary>The Connector response status.</summary>
     public HttpStatusCode Status { get; set; } = HttpStatusCode.OK;
+
+    /// <summary>The synthetic Connector response content.</summary>
+    public string ResponseBody { get; set; } = "{\"id\":\"setup-reply\"}";
 
     /// <summary>The first observed outbound request.</summary>
     public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -33,12 +39,14 @@ public sealed class TeamsConnectorHandler : HttpMessageHandler {
         Destinations.Enqueue(request.RequestUri!);
         Bodies.Enqueue(await request.Content!.ReadAsStringAsync(cancellationToken));
         Started.TrySetResult();
+        if (Failure != null)
+            throw Failure;
         if (ResponseBarrier != null)
             await ResponseBarrier.WaitAsync(cancellationToken);
         if (CancelSend)
             throw new OperationCanceledException(cancellationToken);
         return new HttpResponseMessage(Status) {
-            Content = new StringContent("{\"id\":\"setup-reply\"}", Encoding.UTF8, "application/json")
+            Content = new StringContent(ResponseBody, Encoding.UTF8, "application/json")
         };
     }
 }

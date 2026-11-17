@@ -7,6 +7,11 @@ namespace Backend.tests.Fixtures;
 public sealed class TeamsLogCapture : ILoggerProvider, ILogger {
     readonly ConcurrentQueue<string> messages = new();
 
+    readonly ConcurrentQueue<(LogLevel Level, Exception? Exception, IReadOnlyDictionary<string, object?> Fields)> entries = new();
+
+    /// <summary>The original exception arguments and structured fields captured by the logger.</summary>
+    public (LogLevel Level, Exception? Exception, IReadOnlyDictionary<string, object?> Fields)[] Entries => entries.ToArray();
+
     /// <summary>The captured log messages.</summary>
     public string[] Messages => messages.ToArray();
 
@@ -24,5 +29,10 @@ public sealed class TeamsLogCapture : ILoggerProvider, ILogger {
 
     /// <inheritdoc />
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-        Func<TState, Exception?, string> formatter) => messages.Enqueue(formatter(state, exception) + exception?.ToString());
+        Func<TState, Exception?, string> formatter) {
+        IReadOnlyDictionary<string, object?> fields = state is IEnumerable<KeyValuePair<string, object?>> values
+            ? values.ToDictionary(value => value.Key, value => value.Value) : new Dictionary<string, object?>();
+        entries.Enqueue((logLevel, exception, fields));
+        messages.Enqueue(formatter(state, exception) + exception?.ToString());
+    }
 }
