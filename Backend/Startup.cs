@@ -231,12 +231,11 @@ public class Startup
         }
 
         services.AddSingleton(new TeamsRoutingOptions(Configuration));
+        services.AddTransient<TeamsGraphBindingService>();
         services.AddTransient<TeamsMessageService>();
         services.AddTeamsWebhook(Configuration);
 
         services.AddHostedService<DatabaseModelService>();
-        if (Configuration.GetValue<bool>("Teams:Enabled"))
-            services.AddHostedService<TeamsRoutingValidationService>();
         services.AddHostedService<EmbeddingModelGuardService>();
         services.AddHostedService<StartupWarningService>();
     }

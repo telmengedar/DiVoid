@@ -20,7 +20,7 @@ public class TeamsManagedProfileTests {
         Dictionary<string, string?> config = explicitTenant
             ? new() { ["AzureAd:TenantId"] = "botframework.com" }
             : new();
-        using TeamsWebhookFixture fixture = new(overrides: config);
+        using TeamsWebhookFixture fixture = new(overrides: config, graphBinding: true);
         MicrosoftIdentityApplicationOptions options = fixture.Services
             .GetRequiredService<IOptionsMonitor<MicrosoftIdentityApplicationOptions>>().Get("AzureAd");
         IConfiguration original = fixture.Services.GetRequiredService<IConfiguration>();
@@ -36,7 +36,7 @@ public class TeamsManagedProfileTests {
         Assert.That(options.ClientCredentials.Single().SourceType, Is.EqualTo(CredentialSource.ClientSecret));
         Assert.That(options.ClientCredentials.Single().ClientSecret == original["AzureAd:ClientCredentials:0:ClientSecret"], Is.True);
         Assert.That(original["AzureAd:TenantId"], explicitTenant ? Is.EqualTo("botframework.com") : Is.Null);
-        Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(1));
+        Assert.That(fixture.Connector.Bodies, Is.Empty);
     }
 
     /// <summary>Checks the real SDK credential handler's scope and named authority selection.</summary>
@@ -52,7 +52,7 @@ public class TeamsManagedProfileTests {
                 observedScope = scope;
                 observedName = options.AcquireTokenOptions.AuthenticationOptionsName;
             }).ReturnsAsync("Bearer synthetic-sdk-credential");
-        using TeamsWebhookFixture fixture = new(preserveOutboundAuthentication: true, configureServices: services => {
+        using TeamsWebhookFixture fixture = new(graphBinding: true, preserveOutboundAuthentication: true, configureServices: services => {
             services.RemoveAll<IAuthorizationHeaderProvider>();
             services.AddSingleton(provider.Object);
         });
@@ -60,6 +60,7 @@ public class TeamsManagedProfileTests {
         using HttpResponseMessage response = await fixture.Post(fixture.Token());
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        await fixture.ReplyToQueuedMessage();
         provider.Verify(auth => auth.CreateAuthorizationHeaderForAppAsync(It.IsAny<string>(),
             It.IsAny<AuthorizationHeaderProviderOptions>(), It.IsAny<CancellationToken>()), Times.Once);
         Assert.That(observedScope, Is.EqualTo("https://api.botframework.com/.default"));
@@ -78,7 +79,7 @@ public class TeamsManagedProfileTests {
     /// <returns>The asynchronous test operation.</returns>
     [Test, Parallelizable]
     public async Task ProcessAsync_TwoActivityTenants_UseSameSharedAuthority() {
-        using TeamsWebhookFixture fixture = new();
+        using TeamsWebhookFixture fixture = new(graphBinding: true);
         using HttpResponseMessage first = await fixture.Post(fixture.Token());
         Dictionary<string, object?> second = ActivityFor(Guid.NewGuid().ToString());
 
@@ -86,7 +87,7 @@ public class TeamsManagedProfileTests {
 
         Assert.That(first.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         Assert.That(next.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(2));
+        Assert.That(fixture.Connector.Bodies, Is.Empty);
         MicrosoftIdentityApplicationOptions options = fixture.Services
             .GetRequiredService<IOptionsMonitor<MicrosoftIdentityApplicationOptions>>().Get("AzureAd");
         Assert.That(options.TenantId, Is.EqualTo("botframework.com"));
@@ -98,7 +99,7 @@ public class TeamsManagedProfileTests {
     [Test, Parallelizable]
     public async Task ProcessAsync_ExplicitTenantAllowlist_RejectsOnlyUnlistedActivityTenant() {
         string secondTenant = Guid.NewGuid().ToString();
-        using TeamsWebhookFixture fixture = new(overrides: new() {
+        using TeamsWebhookFixture fixture = new(graphBinding: true, overrides: new() {
             ["Teams:AllowedTenantIds:0"] = TeamsWebhookFixture.TenantId,
             ["Teams:AllowedTenantIds:1"] = secondTenant
         });
@@ -110,7 +111,7 @@ public class TeamsManagedProfileTests {
         Assert.That(first.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         Assert.That(second.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         Assert.That(denied.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
-        Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(2));
+        Assert.That(fixture.Connector.Bodies, Is.Empty);
         Assert.That(fixture.Services.GetRequiredService<IOptionsMonitor<MicrosoftIdentityApplicationOptions>>()
             .Get("AzureAd").TenantId, Is.EqualTo("botframework.com"));
     }
@@ -129,6 +130,7 @@ public class TeamsManagedProfileTests {
         Assert.That(fixture.Metadata.KeyRequests, Is.GreaterThan(0));
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
         Assert.That(fixture.Connector.Bodies, Is.Empty);
+        Assert.That(fixture.Database.Invocations, Is.Empty);
     }
 
     /// <summary>Checks fail-closed credential and activity-policy configuration.</summary>

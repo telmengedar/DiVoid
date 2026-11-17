@@ -3,6 +3,7 @@ using System.Net;
 using Backend.Errors.Exceptions;
 using Backend.Models.Auth;
 using Backend.Models.Messages;
+using Backend.Models.Nodes;
 using Backend.Models.Users;
 using Backend.Services.Teams;
 using Backend.tests.Fixtures;
@@ -17,7 +18,7 @@ using Pooshit.Ocelot.Tokens;
 
 namespace Backend.tests.Tests;
 
-/// <summary>Exercises durable fixed-target Teams routing and explicit external reply ownership.</summary>
+/// <summary>Exercises durable graph-target Teams routing and explicit external reply ownership.</summary>
 [TestFixture, Parallelizable]
 public class TeamsRoutingTests {
     /// <summary>Checks that authenticated ordinary text reaches only the configured inbox.</summary>
@@ -37,7 +38,7 @@ public class TeamsRoutingTests {
         Message message = await database.Entities.Load<Message>().ExecuteEntityAsync();
         TeamsMessageOrigin origin = await database.Entities.Load<TeamsMessageOrigin>().ExecuteEntityAsync();
         Assert.That(message.Id, Is.GreaterThan(0));
-        Assert.That(message.AuthorId, Is.EqualTo(database.BridgeId));
+        Assert.That(message.AuthorId, Is.Zero);
         Assert.That(message.RecipientId, Is.EqualTo(database.RecipientId));
         Assert.That(message.Subject, Is.EqualTo("[divoid] Teams message"));
         Assert.That(message.Body, Does.StartWith("External Microsoft Teams message (untrusted input):").And.Contain((string)activity["text"]!));
@@ -102,7 +103,8 @@ public class TeamsRoutingTests {
         Assert.That(await database.Entities.Load<Message>(DB.Count()).Where(message => message.Id == original.Id).ExecuteScalarAsync<long>(), Is.Zero);
         TeamsMessageOrigin retained = await database.Entities.Load<TeamsMessageOrigin>().Where(origin => origin.MessageId == original.Id).ExecuteEntityAsync();
         Assert.That(retained.ExpiresAt, Is.InRange(DateTimeOffset.UtcNow.AddDays(30).AddMinutes(-1).ToUnixTimeSeconds(), DateTimeOffset.UtcNow.AddDays(30).AddMinutes(1).ToUnixTimeSeconds()));
-        using TeamsRoutingFixture rebound = new(database, new() { ["Teams:Target:UserId"] = database.OtherId.ToString() });
+        await database.SetBindingAsync(database.BindingId, database.RecipientId, database.OtherId, "other-tag");
+        using TeamsRoutingFixture rebound = new(database);
 
         using HttpResponseMessage denied = await rebound.Reply(original.Id, userId: database.OtherId);
         using HttpResponseMessage replyFirst = await rebound.Reply(original.Id);
@@ -219,25 +221,22 @@ public class TeamsRoutingTests {
         Assert.That(fixture.Host.Connector.Bodies, Is.Empty);
     }
 
-    /// <summary>Checks fixed binding and credentialless bridge validation at ingress.</summary>
-    /// <param name="failure">The invalid actor scenario.</param>
+    /// <summary>Checks protected graph authority and enabled actors before inbox insertion.</summary>
+    /// <param name="failure">The invalid current binding scenario.</param>
     /// <returns>The asynchronous test operation.</returns>
-    [TestCase("target"), TestCase("bridge"), TestCase("permissions"), TestCase("home"), TestCase("key"), Parallelizable]
-    public async Task ReceiveAsync_InvalidConfiguredActors_RejectsWithoutPersistence(string failure) {
+    [TestCase("target"), TestCase("owner"), TestCase("public-write"), TestCase("proof"), Parallelizable]
+    public async Task ReceiveAsync_InvalidGraphBinding_RejectsWithoutPersistence(string failure) {
         using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
         using TeamsRoutingFixture fixture = new(database);
-        if (failure == "target")
+        if (failure == "target") {
+            await database.SetBindingAsync(database.BindingId, database.RecipientId, database.OtherId, "divoid");
+            await database.Entities.Update<User>().Set(user => user.Enabled == false).Where(user => user.Id == database.OtherId).ExecuteAsync();
+        } else if (failure == "owner")
             await database.Entities.Update<User>().Set(user => user.Enabled == false).Where(user => user.Id == database.RecipientId).ExecuteAsync();
-        else if (failure == "bridge")
-            await database.Entities.Update<User>().Set(user => user.Enabled == true).Where(user => user.Id == database.BridgeId).ExecuteAsync();
-        else if (failure == "permissions")
-            await database.Entities.Update<User>().Set(user => user.Permissions == "[\"write\"]").Where(user => user.Id == database.BridgeId).ExecuteAsync();
-        else if (failure == "home") {
-            long? home = 10;
-            await database.Entities.Update<User>().Set(user => user.HomeNodeId == home).Where(user => user.Id == database.BridgeId).ExecuteAsync();
-        } else
-            await database.Entities.Insert<ApiKey>().Columns(key => key.UserId, key => key.KeyId, key => key.Enabled, key => key.CreatedAt)
-                .Values(database.BridgeId, "no-bridge-key", false, DateTime.UtcNow).ExecuteAsync();
+        else if (failure == "public-write")
+            await database.Entities.Update<Node>().Set(node => node.Access == (NodeAccess.Read | NodeAccess.Write)).Where(node => node.Id == database.BindingId).ExecuteAsync();
+        else
+            await database.SetBindingAsync(database.BindingId, database.RecipientId, database.RecipientId, "divoid", "wrong-synthetic-secret");
 
         using HttpResponseMessage response = await fixture.Host.Post(fixture.Host.Token());
 
@@ -398,6 +397,8 @@ public class TeamsRoutingTests {
         });
         fixture.Host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Teams.Routing.Control")
             .LogTrace("routing-trace-control");
+        Node binding = await database.Entities.Load<Node>(node => node.Content).Where(node => node.Id == database.BindingId).ExecuteEntityAsync();
+        string proof = (string)Json.Read<Dictionary<string, object>>(System.Text.Encoding.UTF8.GetString(binding.Content))["proof"];
         long id = await Receive(fixture);
         fixture.Host.Connector.Status = HttpStatusCode.BadGateway;
         const string responseText = "private-explicit-response-marker";
@@ -410,7 +411,7 @@ public class TeamsRoutingTests {
         Assert.That(capture.Messages.Any(message => message.Contains("routing-trace-control")), Is.True);
         Assert.That(capture.Messages.Any(message => message.Contains(responseText) ||
             message.Contains("sensitive text must never be echoed") || message.Contains(TeamsWebhookFixture.ServiceUrl) ||
-            message.Contains("synthetic-fixture-secret") || message.Contains(token)), Is.False);
+            message.Contains("synthetic-fixture-secret") || message.Contains(token) || message.Contains(proof)), Is.False);
     }
 
     /// <summary>Checks bounded lazy cleanup and hard expiry even when an expired row remains.</summary>
@@ -442,25 +443,14 @@ public class TeamsRoutingTests {
         Assert.That(fixture.Host.Connector.Bodies, Is.Empty);
     }
 
-    /// <summary>Checks that incomplete or unsafe bindings cannot enable external routing.</summary>
-    /// <param name="failure">The invalid fixed-binding scenario.</param>
-    [TestCase("target"), TestCase("bridge"), TestCase("tag"), TestCase("same"), TestCase("auth"), TestCase("tag-injection"), Parallelizable]
-    public void TeamsRoutingOptions_UnsafeBinding_RejectsStartup(string failure) {
-        Dictionary<string, string?> config = new() {
-            ["Teams:Enabled"] = "true", ["AzureAd:ClientId"] = TeamsWebhookFixture.ClientId,
-            ["Teams:Target:UserId"] = "1", ["Teams:BridgeUserId"] = "2", ["Teams:Target:Tag"] = "divoid",
-            ["Auth:Enabled"] = "true"
-        };
+    /// <summary>Checks that old environment fields cannot remain a competing authority.</summary>
+    /// <param name="field">The legacy routing field.</param>
+    [TestCase("Teams:Target:UserId"), TestCase("Teams:BridgeUserId"), TestCase("Teams:Target:Tag"), Parallelizable]
+    public void TeamsRoutingOptions_LegacyRoutingField_RejectsStartup(string field) {
+        Dictionary<string, string?> config = new() { ["Teams:Enabled"] = "true", ["AzureAd:ClientId"] = TeamsWebhookFixture.ClientId };
         TeamsRoutingOptions valid = new(new ConfigurationBuilder().AddInMemoryCollection(config).Build());
-        Assert.That(valid.IsBound, Is.True);
-        if (failure == "auth")
-            config["Auth:Enabled"] = "false";
-        else if (failure == "same")
-            config["Teams:BridgeUserId"] = "1";
-        else if (failure == "tag-injection")
-            config["Teams:Target:Tag"] = "divoid] [other";
-        else
-            config.Remove(failure == "target" ? "Teams:Target:UserId" : failure == "bridge" ? "Teams:BridgeUserId" : "Teams:Target:Tag");
+        Assert.That(valid.Enabled, Is.True);
+        config[field] = "legacy-value";
 
         Assert.Throws<InvalidOperationException>(() => new TeamsRoutingOptions(
             new ConfigurationBuilder().AddInMemoryCollection(config).Build()));

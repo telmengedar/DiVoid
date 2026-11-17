@@ -27,24 +27,15 @@ namespace Backend.tests.Tests;
 /// <summary>Exercises Connector authentication, boundary rejection, SDK replies and DiVoid isolation.</summary>
 [TestFixture, Parallelizable]
 public class TeamsWebhookTests {
-    /// <summary>Checks that the native SDK sends the fixed setup reply.</summary>
+    /// <summary>Checks valid Connector text queues graph transport without an automatic reply.</summary>
     /// <returns>The asynchronous test operation.</returns>
     [Test, Parallelizable]
-    public async Task ProcessAsync_ValidConnectorText_SendsFixedSdkReply() {
-        using TeamsWebhookFixture fixture = new();
-
+    public async Task ProcessAsync_ValidConnectorText_QueuesWithoutAutomaticReply() {
+        using TeamsWebhookFixture fixture = new(graphBinding: true);
         using HttpResponseMessage response = await fixture.Post(fixture.Token());
-
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         Assert.That(fixture.Metadata.KeyRequests, Is.GreaterThan(0));
-        Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(1));
-        Dictionary<string, object> reply = Json.Read<Dictionary<string, object>>(fixture.Connector.Bodies.Single());
-        Assert.That(reply["type"], Is.EqualTo("message"));
-        Assert.That(reply["text"], Is.EqualTo("DiVoid Teams webhook is connected. Message routing to DiVoid users is not implemented yet."));
-        Assert.That(fixture.Connector.Destinations.Single().AbsoluteUri,
-            Does.StartWith(TeamsWebhookFixture.ServiceUrl).And.Contain("conversation-1"));
-        Assert.That(fixture.Database.Invocations, Is.Empty);
-        Assert.That(fixture.Messages.Invocations, Is.Empty);
+        Assert.That(fixture.Connector.Bodies, Is.Empty);
     }
 
     /// <summary>Checks that rejected input produces no outbound send.</summary>
@@ -81,18 +72,13 @@ public class TeamsWebhookTests {
         Assert.That(fixture.Database.Invocations, Is.Empty);
     }
 
-    /// <summary>Checks Connector authentication when DiVoid authentication is disabled.</summary>
-    /// <returns>The asynchronous test operation.</returns>
+    /// <summary>Checks graph routing cannot run with graph authorization disabled.</summary>
     [Test, Parallelizable]
-    public async Task ProcessAsync_DivoidAuthenticationDisabled_StillRequiresConnectorToken() {
-        using TeamsWebhookFixture fixture = new(authEnabled: false);
-
-        using HttpResponseMessage rejected = await fixture.Post(null);
-        using HttpResponseMessage accepted = await fixture.Post(fixture.Token());
-
-        Assert.That(rejected.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
-        Assert.That(accepted.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(1));
+    public void ProcessAsync_DivoidAuthenticationDisabled_RejectsStartup() {
+        InvalidOperationException? failure = Assert.Throws<InvalidOperationException>(() => {
+            using TeamsWebhookFixture fixture = new(authEnabled: false);
+        });
+        Assert.That(failure!.Message, Does.Contain("Auth:Enabled"));
     }
 
     /// <summary>Checks that rejected input produces no outbound send.</summary>
@@ -139,7 +125,7 @@ public class TeamsWebhookTests {
     /// <returns>The asynchronous test operation.</returns>
     [TestCase(false), TestCase(true), Parallelizable]
     public async Task ProcessAsync_LowercaseServiceUrlClaim_AcceptsExactBinding(bool includeCamelCase) {
-        using TeamsWebhookFixture fixture = new();
+        using TeamsWebhookFixture fixture = new(graphBinding: true);
         List<Claim> claims = [new("serviceurl", TeamsWebhookFixture.ServiceUrl)];
         if (includeCamelCase)
             claims.Add(new("serviceUrl", TeamsWebhookFixture.ServiceUrl));
@@ -147,7 +133,7 @@ public class TeamsWebhookTests {
         using HttpResponseMessage response = await fixture.Post(fixture.Token(claims: claims.ToArray()));
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(1));
+        Assert.That(fixture.Connector.Bodies, Is.Empty);
     }
 
     /// <summary>Checks that rejected input produces no outbound send.</summary>
@@ -169,7 +155,7 @@ public class TeamsWebhookTests {
     /// <returns>The asynchronous test operation.</returns>
     [Test, Parallelizable]
     public async Task ProcessAsync_AuthoritativeKeyRotation_AcceptsRefreshedKey() {
-        using TeamsWebhookFixture fixture = new();
+        using TeamsWebhookFixture fixture = new(graphBinding: true);
         using HttpResponseMessage first = await fixture.Post(fixture.Token());
         Assert.That(first.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         using RSA rotatedRsa = RSA.Create(2048);
@@ -190,7 +176,7 @@ public class TeamsWebhookTests {
 
         Assert.That(fixture.Metadata.KeyRequests, Is.GreaterThanOrEqualTo(2));
         Assert.That(second.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(2));
+        Assert.That(fixture.Connector.Bodies, Is.Empty);
     }
 
     /// <summary>Checks malformed activity rejection.</summary>
@@ -248,7 +234,6 @@ public class TeamsWebhookTests {
 
     /// <summary>Checks acknowledgment and unsupported activity outcomes.</summary>
     /// <param name="type">The activity type scenario.</param>
-    /// <param name="status">The expected HTTP status.</param>
     /// <returns>The asynchronous test operation.</returns>
     [TestCase("conversationUpdate", 200), TestCase("invoke", 501), TestCase("attachment", 200)]
     [Parallelizable]
@@ -265,20 +250,22 @@ public class TeamsWebhookTests {
         Assert.That(fixture.Messages.Invocations, Is.Empty);
     }
 
-    /// <summary>Checks propagation of SDK send failures.</summary>
+    /// <summary>Checks explicit reply failures after successful graph ingress.</summary>
     /// <param name="cancel">Whether the transport reports cancellation.</param>
-    /// <param name="status">The expected HTTP status.</param>
     /// <returns>The asynchronous test operation.</returns>
-    [TestCase(false, 502), TestCase(true, 504), Parallelizable]
-    public async Task ProcessAsync_OutboundFailure_DoesNotReportSuccess(bool cancel, int status) {
-        using TeamsWebhookFixture fixture = new();
+    [TestCase(false), TestCase(true), Parallelizable]
+    public async Task ReplyAsync_OutboundFailure_ReportsUnknown(bool cancel) {
+        using TeamsWebhookFixture fixture = new(graphBinding: true);
         fixture.Connector.Status = HttpStatusCode.BadGateway;
         fixture.Connector.CancelSend = cancel;
 
         using HttpResponseMessage response = await fixture.Post(fixture.Token());
 
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Backend.Errors.Exceptions.MessageReplyException? failure = Assert.ThrowsAsync<Backend.Errors.Exceptions.MessageReplyException>(async () => await fixture.ReplyToQueuedMessage());
+        Assert.That(failure!.Code, Is.EqualTo("reply_outcome_unknown"));
+        Assert.That(failure.Status, Is.EqualTo(HttpStatusCode.BadGateway));
         Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(1));
-        Assert.That(response.StatusCode, Is.EqualTo((HttpStatusCode)status));
     }
 
     /// <summary>Checks payload and credential privacy with trace logging enabled.</summary>
@@ -286,7 +273,7 @@ public class TeamsWebhookTests {
     [Test, Parallelizable]
     public async Task ProcessAsync_TraceLogging_DoesNotExposePayloadOrCredentials() {
         TeamsLogCapture capture = new();
-        using TeamsWebhookFixture fixture = new(configureServices: services => {
+        using TeamsWebhookFixture fixture = new(graphBinding: true, configureServices: services => {
             services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Trace).AddProvider(capture));
             services.PostConfigure<LoggerFilterOptions>(options => {
                 foreach (LoggerFilterRule rule in options.Rules.Where(rule => rule.CategoryName != "Microsoft.Teams").ToArray())
@@ -301,11 +288,11 @@ public class TeamsWebhookTests {
 
         using HttpResponseMessage success = await fixture.Post(token, activity);
         fixture.Connector.Status = HttpStatusCode.BadGateway;
-        using HttpResponseMessage failure = await fixture.Post(token, activity);
+        Backend.Errors.Exceptions.MessageReplyException? failure = Assert.ThrowsAsync<Backend.Errors.Exceptions.MessageReplyException>(async () => await fixture.ReplyToQueuedMessage());
 
         Assert.That(success.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        Assert.That(failure.StatusCode, Is.EqualTo(HttpStatusCode.BadGateway));
-        Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(2));
+        Assert.That(failure, Is.Not.Null);
+        Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(1));
         Assert.That(capture.Messages.Any(message => message.Contains("teams-trace-control")), Is.True);
         Assert.That(capture.Messages.Any(message => message.Contains((string)activity["text"]!) ||
             message.Contains("synthetic-fixture-secret") || message.Contains(token) ||
@@ -387,8 +374,8 @@ public class TeamsWebhookTests {
         Assert.That(apiMessage.AuthorId, Is.EqualTo(author));
         Assert.That(jwtMessage.Id, Is.GreaterThan(0));
         Assert.That(apiMessage.Id, Is.GreaterThan(jwtMessage.Id));
-        Assert.That(webhook.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(1));
+        Assert.That(webhook.StatusCode, Is.EqualTo(HttpStatusCode.ServiceUnavailable));
+        Assert.That(fixture.Connector.Bodies, Is.Empty);
     }
 
     /// <summary>Checks the disabled webhook route.</summary>
