@@ -14,6 +14,7 @@ using Microsoft.Teams.Core.Schema;
 using Npgsql;
 using Pooshit.AspNetCore.Services.Errors.Exceptions;
 using Pooshit.Json;
+using Pooshit.Http.Paths;
 using Pooshit.Ocelot.Clients;
 using Pooshit.Ocelot.Entities;
 using Pooshit.Ocelot.Expressions;
@@ -107,26 +108,31 @@ public sealed class TeamsMessageService {
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(15));
         using HttpClient http = httpClients.CreateClient("TeamsConnectorDiagnosis");
-        ConversationClient diagnostic = new(http);
+        MessageReplyDiagnosis result = new();
+        Uri route = new(Rest.Path(new Uri(origin.ServiceUrl).ToString().TrimEnd('/'), "v3", "conversations",
+            Uri.EscapeDataString(origin.ConversationId), "members"));
+        using HttpClient observed = new(new TeamsConnectorDiagnosisHandler(http, route, options.BotAppId, result));
+        ConversationClient diagnostic = new(observed);
         try {
             await diagnostic.GetConversationMembersAsync(origin.ConversationId, new Uri(origin.ServiceUrl),
                 requestContext: new BotRequestContext { BotAppId = options.BotAppId }, cancellationToken: timeout.Token);
-            return new MessageReplyDiagnosis { Completed = true, ProviderCode = "absent", Reason = "connector_read_completed" };
+            result.Completed = true;
+            result.ProviderCode = "absent";
+            result.Reason = "connector_read_completed";
+            return result;
         } catch (Exception exception) {
             LogFailure(messageId, "diagnose", exception);
-            return DiagnoseFailure(exception, cancellationToken.IsCancellationRequested);
+            return DiagnoseFailure(exception, cancellationToken.IsCancellationRequested, result);
         }
     }
 
-    static MessageReplyDiagnosis DiagnoseFailure(Exception exception, bool callerCancelled) {
+    static MessageReplyDiagnosis DiagnoseFailure(Exception exception, bool callerCancelled, MessageReplyDiagnosis result) {
         Exception[] causes = FailureCauses(exception).ToArray();
         HttpRequestException response = causes.OfType<HttpRequestException>().FirstOrDefault(cause => cause.StatusCode.HasValue);
-        MessageReplyDiagnosis result = new() {
-            HttpStatus = response?.StatusCode is HttpStatusCode status ? (int)status : null,
-            ProviderCode = "absent",
-            Reason = causes.Any(cause => cause is OperationCanceledException) ? callerCancelled ? "cancelled" : "timeout" :
-                response == null ? "request_failed" : "connector_rejected"
-        };
+        result.HttpStatus = response?.StatusCode is HttpStatusCode status ? (int)status : null;
+        result.ProviderCode = "absent";
+        result.Reason = causes.Any(cause => cause is OperationCanceledException) ? callerCancelled ? "cancelled" : "timeout" :
+            response == null ? "request_failed" : "connector_rejected";
         if (response == null || !QuotesInput(response))
             return result;
         string[] codes = ["Unauthorized", "Forbidden", "InvalidToken", "InvalidAuthenticationToken", "AuthenticationFailed",

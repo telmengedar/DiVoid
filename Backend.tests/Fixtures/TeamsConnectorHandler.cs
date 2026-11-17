@@ -27,6 +27,9 @@ public sealed class TeamsConnectorHandler : HttpMessageHandler {
     /// <summary>The synthetic Connector response content.</summary>
     public string ResponseBody { get; set; } = "{\"id\":\"setup-reply\"}";
 
+    /// <summary>The synthetic raw authentication challenge values.</summary>
+    public string[] AuthenticationChallenges { get; set; } = [];
+
     /// <summary>The first observed outbound request.</summary>
     public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -50,8 +53,10 @@ public sealed class TeamsConnectorHandler : HttpMessageHandler {
             await ResponseBarrier.WaitAsync(cancellationToken);
         if (CancelSend)
             throw new OperationCanceledException(cancellationToken);
-        return new HttpResponseMessage(Status) {
+        HttpResponseMessage response = new(Status) {
             Content = new StringContent(ResponseBody, Encoding.UTF8, "application/json")
         };
+        response.Headers.TryAddWithoutValidation("WWW-Authenticate", AuthenticationChallenges);
+        return response;
     }
 }

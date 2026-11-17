@@ -23,15 +23,16 @@ public sealed class TeamsRoutingFixture : IDisposable {
     /// <param name="database">The isolated persistence fixture.</param>
     /// <param name="overrides">The optional integration configuration overrides.</param>
     /// <param name="configureServices">Optional test-host service instrumentation.</param>
+    /// <param name="preserveOutboundAuthentication">Whether the native SDK credential handler is retained.</param>
     public TeamsRoutingFixture(TeamsRoutingDatabase database, Dictionary<string, string?>? overrides = null,
-        Action<IServiceCollection>? configureServices = null) {
+        Action<IServiceCollection>? configureServices = null, bool preserveOutboundAuthentication = false) {
         Database = database;
         key = new RsaSecurityKey(rsa) { KeyId = "routing-keycloak" };
         Dictionary<string, string?> config = new();
         if (overrides != null)
             foreach (KeyValuePair<string, string?> item in overrides)
                 config[item.Key] = item.Value;
-        Host = new TeamsWebhookFixture(overrides: config, configureServices: services => {
+        Host = new TeamsWebhookFixture(overrides: config, preserveOutboundAuthentication: preserveOutboundAuthentication, configureServices: services => {
             services.RemoveAll<IEntityManager>();
             services.AddSingleton(database.Entities);
             services.RemoveAll<IMessageService>();
