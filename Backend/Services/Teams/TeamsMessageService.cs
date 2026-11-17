@@ -1,4 +1,5 @@
 using System.Net;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using Backend.Errors.Exceptions;
@@ -28,20 +29,23 @@ public sealed class TeamsMessageService {
     readonly TeamsRoutingOptions options;
     readonly ConversationClient connector;
     readonly ITeamsGraphBindingService binding;
+    readonly ILogger<TeamsMessageService> logger;
 
     /// <summary>Creates the concrete Teams inbox transport.</summary>
     /// <param name="database">The application database.</param>
     /// <param name="messages">The existing inbox insertion service.</param>
     /// <param name="options">The trusted bot configuration.</param>
     /// <param name="binding">The protected graph resolver.</param>
+    /// <param name="logger">The application failure logger.</param>
     /// <param name="connector">The authenticated native Connector client.</param>
-    public TeamsMessageService(IEntityManager database, MessageService messages, TeamsRoutingOptions options, ITeamsGraphBindingService binding,
+    public TeamsMessageService(IEntityManager database, MessageService messages, TeamsRoutingOptions options, ITeamsGraphBindingService binding, ILogger<TeamsMessageService> logger,
         ConversationClient connector = null) {
         this.database = database;
         this.messages = messages;
         this.options = options;
         this.connector = connector;
         this.binding = binding;
+        this.logger = logger;
     }
 
     /// <summary>Queues one authenticated native message using the current protected graph binding.</summary>
@@ -130,6 +134,7 @@ public sealed class TeamsMessageService {
             sent = await connector.SendActivityAsync(origin.ConversationId, reply, new Uri(origin.ServiceUrl),
                 requestContext: new BotRequestContext { BotAppId = options.BotAppId }, cancellationToken: timeout.Token);
         } catch (Exception exception) {
+            LogFailure(messageId, "send", exception);
             bool definitive = exception is ArgumentException ||
                 exception is HttpRequestException { StatusCode: >= HttpStatusCode.BadRequest and < HttpStatusCode.InternalServerError };
             await SetState(messageId, definitive ? TeamsReplyState.Failed : TeamsReplyState.Unknown,
@@ -148,13 +153,63 @@ public sealed class TeamsMessageService {
             await database.Update<TeamsMessageOrigin>()
                 .Set(route => route.ReplyState == accepted, route => route.OutboundActivityId == sent.Id,
                     route => route.ErrorCategory == null).Where(route => route.MessageId == messageId).ExecuteAsync();
-        } catch {
+        } catch (Exception exception) {
+            LogFailure(messageId, "receipt_persist", exception);
             throw new MessageReplyException(HttpStatusCode.BadGateway, "reply_outcome_unknown",
                 "The Connector accepted the reply but its local receipt could not be confirmed. Do not resend.");
         }
         origin.ReplyState = TeamsReplyState.Sent;
         origin.OutboundActivityId = sent.Id;
         return Receipt(origin);
+    }
+
+    void LogFailure(long messageId, string stage, Exception exception) {
+        Exception[] causes = FailureCauses(exception).ToArray();
+        int? status = causes.OfType<HttpRequestException>().Where(cause => cause.StatusCode.HasValue)
+            .Select(cause => (int?)cause.StatusCode.Value).FirstOrDefault();
+        if (causes.Any(QuotesInput)) {
+            string details = string.Join("\n", causes.Select(MessageFreeStack));
+            logger.LogError("Teams reply failure messageId={MessageId} stage={Stage} httpStatus={HttpStatus} exceptions={ExceptionDetails}",
+                messageId, stage, status, details);
+        } else
+            logger.LogError(exception, "Teams reply failure messageId={MessageId} stage={Stage} httpStatus={HttpStatus}",
+                messageId, stage, status);
+    }
+
+    static bool QuotesInput(Exception exception) {
+        if (exception is FormatException)
+            return true;
+        for (Type type = exception.GetType(); type != null; type = type.BaseType)
+            if (type.Name == "ScriptRuntimeException" && type.Namespace?.StartsWith("Pooshit.Scripting", StringComparison.Ordinal) == true)
+                return true;
+        Type origin = exception.TargetSite?.DeclaringType;
+        return exception is HttpRequestException && origin?.DeclaringType == typeof(BotHttpClient) &&
+            origin.Name.StartsWith("<HandleResponseAsync>", StringComparison.Ordinal);
+    }
+
+    static IEnumerable<Exception> FailureCauses(Exception exception) {
+        yield return exception;
+        IEnumerable<Exception> inner = exception is AggregateException aggregate ? aggregate.InnerExceptions :
+            exception.InnerException == null ? [] : [exception.InnerException];
+        foreach (Exception cause in inner)
+            foreach (Exception descendant in FailureCauses(cause))
+                yield return descendant;
+    }
+
+    static string MessageFreeStack(Exception exception) {
+        StringBuilder details = new(exception.GetType().FullName);
+        foreach (StackFrame frame in new StackTrace(exception, true).GetFrames() ?? []) {
+            System.Reflection.MethodBase method = frame.GetMethod();
+            if (method == null)
+                continue;
+            details.Append("\n at ").Append(method.DeclaringType?.FullName).Append('.').Append(method.Name);
+            string file = frame.GetFileName();
+            if (!string.IsNullOrEmpty(file)) {
+                string basename = Path.GetFileName(file.Replace('\\', '/').Split('?', '#')[0]);
+                details.Append(" in ").Append(basename).Append(':').Append(frame.GetFileLineNumber());
+            }
+        }
+        return details.ToString();
     }
 
     async Task<TeamsMessageOrigin> AuthorizedOrigin(long callerId, long messageId) {

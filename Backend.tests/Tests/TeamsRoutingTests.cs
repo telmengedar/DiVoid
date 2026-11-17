@@ -414,6 +414,128 @@ public class TeamsRoutingTests {
             message.Contains("synthetic-fixture-secret") || message.Contains(token) || message.Contains(proof)), Is.False);
     }
 
+    /// <summary>Checks original failure objects or message-free causal stacks while retaining reply state.</summary>
+    /// <param name="scenario">The thrown failure shape.</param>
+    /// <param name="status">The expected typed HTTP status in the diagnostic event.</param>
+    /// <param name="expectedState">The unchanged public attempt state.</param>
+    /// <param name="sanitized">Whether a known input-quoting cause excludes the exception object.</param>
+    /// <returns>The asynchronous test operation.</returns>
+    [TestCase("http-4xx", 403, "failed", false), TestCase("http-5xx", 503, "unknown", false)]
+    [TestCase("argument", null, "failed", false), TestCase("format-inner", null, "unknown", true)]
+    [TestCase("format-aggregate", 403, "unknown", true), TestCase("aggregate-safe", 403, "unknown", false), Parallelizable]
+    public async Task ReplyAsync_FailureDiagnostics_PreservesCauseAndPrivacy(string scenario, int? status, string expectedState, bool sanitized) {
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
+        TeamsLogCapture capture = new();
+        using TeamsRoutingFixture fixture = new(database, configureServices: services => services.AddLogging(logging => logging.AddProvider(capture)));
+        long id = await Receive(fixture);
+        const string Canary = "private-secret-response-canary";
+        const string ReplyBody = "private-diagnostic-reply-body";
+        string token = fixture.UserToken(database.RecipientId);
+        Exception inner = ThrowDiagnosticFailure(sanitized
+            ? new FormatException(Canary + ReplyBody + token + TeamsWebhookFixture.ServiceUrl)
+            : new InvalidOperationException("Synthetic inner failure."));
+        Exception failure = scenario switch {
+            "http-4xx" => new HttpRequestException("Synthetic Connector failure.", inner, HttpStatusCode.Forbidden),
+            "http-5xx" => new HttpRequestException("Synthetic Connector failure.", inner, HttpStatusCode.ServiceUnavailable),
+            "argument" => new ArgumentException("Synthetic invalid argument.", inner),
+            "format-inner" => new InvalidOperationException("Synthetic outer failure.", inner),
+            _ => new AggregateException("Synthetic aggregate failure.", new[] {
+                ThrowDiagnosticFailure(new InvalidOperationException("Synthetic sibling failure.")),
+                ThrowDiagnosticFailure(new HttpRequestException("Synthetic HTTP failure.", inner, HttpStatusCode.Forbidden))
+            })
+        };
+        fixture.Host.Connector.Failure = failure;
+
+        using HttpResponseMessage response = await fixture.Reply(id, ReplyBody);
+
+        Assert.That(fixture.Host.Connector.Bodies, Has.Count.EqualTo(1));
+        Assert.That(failure.StackTrace, Does.Contain(nameof(TeamsConnectorHandler)));
+        (LogLevel Level, Exception? Exception, IReadOnlyDictionary<string, object?> Fields) logged = capture.Entries.Single(entry =>
+            entry.Fields.TryGetValue("Stage", out object? stage) && Equals(stage, "send"));
+        Assert.That(logged.Level, Is.EqualTo(LogLevel.Error));
+        Assert.That(logged.Fields["MessageId"], Is.EqualTo(id));
+        Assert.That(logged.Fields["HttpStatus"], Is.EqualTo(status));
+        Assert.That(logged.Exception, sanitized ? Is.Null : Is.SameAs(failure));
+        string diagnostic = sanitized ? (string)logged.Fields["ExceptionDetails"]! : logged.Exception!.ToString();
+        Assert.That(diagnostic, Does.Contain(failure.GetType().FullName).And.Contain(inner.GetType().FullName));
+        Assert.That(diagnostic, Does.Contain(nameof(TeamsConnectorHandler)).And.Contain(nameof(ThrowDiagnosticFailure)));
+        if (scenario.Contains("aggregate", StringComparison.Ordinal))
+            Assert.That(diagnostic, Does.Contain(typeof(HttpRequestException).FullName).And.Contain(typeof(InvalidOperationException).FullName));
+        if (sanitized) {
+            Assert.That(logged.Exception, Is.Null);
+            Assert.That(diagnostic.Contains('/') || diagnostic.Contains('\\'), Is.False);
+        }
+        Assert.That(capture.Messages.Any(message => message.Contains(Canary) || message.Contains(ReplyBody) ||
+            message.Contains(token) || message.Contains(TeamsWebhookFixture.ServiceUrl) || message.Contains("conversation-1") ||
+            message.Contains("sender-1")), Is.False);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadGateway));
+        using HttpResponseMessage receipt = await fixture.Status(id);
+        Assert.That(Json.Read<MessageReplyReceipt>(await receipt.Content.ReadAsStringAsync()).State, Is.EqualTo(expectedState));
+    }
+
+    /// <summary>Checks native SDK HTTP failures retain their exception without logging response payloads.</summary>
+    /// <returns>The asynchronous test operation.</returns>
+    [Test, Parallelizable]
+    public async Task ReplyAsync_NativeSdkFailure_LogsCauseWithoutResponseBody() {
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
+        TeamsLogCapture capture = new();
+        using TeamsRoutingFixture fixture = new(database, configureServices: services => services.AddLogging(logging => logging.AddProvider(capture)));
+        long id = await Receive(fixture);
+        const string Canary = "private-provider-response-canary";
+        fixture.Host.Connector.Status = HttpStatusCode.Forbidden;
+        fixture.Host.Connector.ResponseBody = Json.WriteString(new Dictionary<string, object> {
+            ["error"] = new Dictionary<string, object> { ["code"] = "synthetic", ["message"] = Canary + TeamsWebhookFixture.ServiceUrl }
+        });
+
+        using HttpResponseMessage response = await fixture.Reply(id);
+
+        Assert.That(fixture.Host.Connector.Bodies, Has.Count.EqualTo(1));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadGateway));
+        (LogLevel Level, Exception? Exception, IReadOnlyDictionary<string, object?> Fields) logged = capture.Entries.Single(entry =>
+            entry.Fields.TryGetValue("Stage", out object? stage) && Equals(stage, "send"));
+        Assert.That(logged.Fields["HttpStatus"], Is.EqualTo(403));
+        Assert.That(logged.Exception, Is.Null);
+        string details = (string)logged.Fields["ExceptionDetails"]!;
+        Assert.That(details, Does.Contain(typeof(HttpRequestException).FullName).And.Contain("BotHttpClient").And.Contain("HandleResponseAsync"));
+        using HttpResponseMessage receipt = await fixture.Status(id);
+        Assert.That(Json.Read<MessageReplyReceipt>(await receipt.Content.ReadAsStringAsync()).State, Is.EqualTo("failed"));
+        Assert.That(capture.Messages.Any(message => message.Contains(Canary) || message.Contains(TeamsWebhookFixture.ServiceUrl)), Is.False);
+    }
+
+    /// <summary>Checks the original database failure is logged after native acceptance without changing uncertain receipt semantics.</summary>
+    /// <returns>The asynchronous test operation.</returns>
+    [Test, Parallelizable]
+    public async Task ReplyAsync_ReceiptPersistenceFailure_LogsOriginalCauseBeforeDiscard() {
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
+        TeamsLogCapture capture = new();
+        using TeamsRoutingFixture fixture = new(database, configureServices: services => services.AddLogging(logging => logging.AddProvider(capture)));
+        long id = await Receive(fixture);
+        await database.Entities.DBClient.NonQueryAsync("CREATE TRIGGER fail_reply_receipt BEFORE UPDATE ON teamsmessageorigin WHEN NEW.outboundactivityid IS NOT NULL BEGIN SELECT RAISE(ABORT, 'synthetic receipt persistence failure'); END");
+
+        using HttpResponseMessage response = await fixture.Reply(id);
+
+        Assert.That(fixture.Host.Connector.Bodies, Has.Count.EqualTo(1));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadGateway));
+        Assert.That(await response.Content.ReadAsStringAsync(), Does.Contain("reply_outcome_unknown").And.Contain("local receipt could not be confirmed"));
+        (LogLevel Level, Exception? Exception, IReadOnlyDictionary<string, object?> Fields) logged = capture.Entries.Single(entry =>
+            entry.Fields.TryGetValue("Stage", out object? stage) && Equals(stage, "receipt_persist"));
+        Assert.That(logged.Level, Is.EqualTo(LogLevel.Error));
+        Assert.That(logged.Fields["MessageId"], Is.EqualTo(id));
+        Assert.That(logged.Exception, Is.TypeOf<Pooshit.Ocelot.Errors.StatementException>());
+        Assert.That(logged.Exception!.InnerException, Is.TypeOf<Microsoft.Data.Sqlite.SqliteException>());
+        Assert.That(logged.Exception!.StackTrace, Does.Contain(nameof(TeamsMessageService.ReplyAsync)));
+        TeamsMessageOrigin origin = await database.Entities.Load<TeamsMessageOrigin>().Where(value => value.MessageId == id).ExecuteEntityAsync();
+        Assert.That(origin.ReplyState, Is.EqualTo(TeamsReplyState.Sending));
+        Assert.That(origin.OutboundActivityId, Is.Null);
+        long? expiredAttempt = DateTimeOffset.UtcNow.AddSeconds(-20).ToUnixTimeSeconds();
+        await database.Entities.Update<TeamsMessageOrigin>().Set(value => value.ReplyAttemptStartedAt == expiredAttempt).Where(value => value.MessageId == id).ExecuteAsync();
+        using HttpResponseMessage receipt = await fixture.Status(id);
+        Assert.That(Json.Read<MessageReplyReceipt>(await receipt.Content.ReadAsStringAsync()).State, Is.EqualTo("unknown"));
+        using HttpResponseMessage denied = await fixture.Reply(id);
+        Assert.That(denied.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+        Assert.That(fixture.Host.Connector.Bodies, Has.Count.EqualTo(1));
+    }
+
     /// <summary>Checks bounded lazy cleanup and hard expiry even when an expired row remains.</summary>
     /// <returns>The asynchronous test operation.</returns>
     [Test, Parallelizable]
@@ -459,6 +581,14 @@ public class TeamsRoutingTests {
         config[field] = "legacy-value";
         Assert.Throws<InvalidOperationException>(() => new TeamsRoutingOptions(
             new ConfigurationBuilder().AddInMemoryCollection(config).Build()));
+    }
+
+    static Exception ThrowDiagnosticFailure(Exception failure) {
+        try {
+            throw failure;
+        } catch (Exception thrown) {
+            return thrown;
+        }
     }
 
     static async Task<long> Receive(TeamsRoutingFixture fixture) {
