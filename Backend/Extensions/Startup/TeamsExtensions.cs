@@ -15,7 +15,7 @@ using Microsoft.Teams.Core.Schema;
 
 namespace Backend.Extensions.Startup;
 
-/// <summary>Registers the isolated public Azure Teams setup webhook.</summary>
+/// <summary>Registers the isolated public Azure Teams activity webhook.</summary>
 public static class TeamsExtensions {
     const string Scheme = "TeamsBot";
     const string CredentialTenant = "botframework.com";
@@ -145,11 +145,11 @@ public static class TeamsExtensions {
         if (!configuration.GetValue<bool>("Teams:Enabled"))
             return;
         HashSet<Guid> tenants = AllowedTenants(configuration);
-        endpoints.MapPost("/api/teams/messages", (HttpContext context, TeamsSetupBot bot) =>
-            ProcessAsync(context, bot, tenants)).RequireAuthorization(Scheme);
+        endpoints.MapPost("/api/teams/messages", (Func<HttpContext, Task<IResult>>)(context =>
+            ProcessAsync(context, tenants))).RequireAuthorization(Scheme);
     }
 
-    static async Task<IResult> ProcessAsync(HttpContext context, TeamsSetupBot bot, HashSet<Guid> tenants) {
+    static async Task<IResult> ProcessAsync(HttpContext context, HashSet<Guid> tenants) {
         if (!context.Items.TryGetValue(endorsement, out object endorsed) || endorsed is not true)
             return Results.StatusCode(StatusCodes.Status403Forbidden);
         if (context.Request.ContentLength > MaximumBodyBytes)
@@ -198,17 +198,7 @@ public static class TeamsExtensions {
         if (string.IsNullOrWhiteSpace(activity.Conversation?.Id) || string.IsNullOrWhiteSpace(activity.From?.Id) ||
             string.IsNullOrWhiteSpace(activity.Recipient?.Id))
             return Results.BadRequest();
-        TeamsRoutingOptions routing = context.RequestServices.GetRequiredService<TeamsRoutingOptions>();
-        if (routing.IsBound) {
-            await context.RequestServices.GetRequiredService<TeamsMessageService>().ReceiveAsync(message, context.RequestAborted);
-            return Results.Ok();
-        }
-        try {
-            await bot.ProcessAsync(received, context.User, null, context.RequestAborted);
-            return Results.Ok();
-        } catch (BotHandlerException exception) {
-            return Results.StatusCode(exception.InnerException is OperationCanceledException or TimeoutException
-                ? StatusCodes.Status504GatewayTimeout : StatusCodes.Status502BadGateway);
-        }
+        await context.RequestServices.GetRequiredService<TeamsMessageService>().ReceiveAsync(message, context.RequestAborted);
+        return Results.Ok();
     }
 }

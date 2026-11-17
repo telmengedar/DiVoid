@@ -27,11 +27,7 @@ public sealed class TeamsRoutingFixture : IDisposable {
         Action<IServiceCollection>? configureServices = null) {
         Database = database;
         key = new RsaSecurityKey(rsa) { KeyId = "routing-keycloak" };
-        Dictionary<string, string?> config = new() {
-            ["Teams:Target:UserId"] = database.RecipientId.ToString(),
-            ["Teams:Target:Tag"] = "divoid",
-            ["Teams:BridgeUserId"] = database.BridgeId.ToString()
-        };
+        Dictionary<string, string?> config = new();
         if (overrides != null)
             foreach (KeyValuePair<string, string?> item in overrides)
                 config[item.Key] = item.Value;

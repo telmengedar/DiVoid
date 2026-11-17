@@ -1,5 +1,8 @@
 using Backend.Models.Auth;
 using Backend.Models.Messages;
+using Backend.Models.Nodes;
+using System.Security.Cryptography;
+using System.Text;
 using Backend.Models.Users;
 using Microsoft.Data.Sqlite;
 using Npgsql;
@@ -11,8 +14,9 @@ using Pooshit.Ocelot.Schemas;
 
 namespace Backend.tests.Fixtures;
 
-/// <summary>An isolated message-only SQLite or PostgreSQL schema for Teams transport checks.</summary>
+/// <summary>An isolated graph-and-message SQLite or PostgreSQL schema for Teams transport checks.</summary>
 public sealed class TeamsRoutingDatabase : IDisposable {
+    static readonly SemaphoreSlim postgresFixtures = new(1, 1);
     readonly string connectionString;
     readonly string? schema;
     readonly string? sqlitePath;
@@ -27,10 +31,13 @@ public sealed class TeamsRoutingDatabase : IDisposable {
     /// <summary>The isolated application entity manager.</summary>
     public IEntityManager Entities { get; }
 
+    /// <summary>The initial protected graph binding.</summary>
+    public long BindingId { get; private set; }
+
     /// <summary>The enabled original recipient.</summary>
     public long RecipientId { get; private set; }
 
-    /// <summary>The disabled credentialless external author.</summary>
+    /// <summary>A disabled actor for negative authorization checks.</summary>
     public long BridgeId { get; private set; }
 
     /// <summary>An enabled unrelated administrator.</summary>
@@ -48,6 +55,7 @@ public sealed class TeamsRoutingDatabase : IDisposable {
             string? supplied = Environment.GetEnvironmentVariable("POSTGRES_CONNECTION");
             if (string.IsNullOrEmpty(supplied))
                 Assert.Ignore("POSTGRES_CONNECTION is required for the isolated Teams PostgreSQL checks.");
+            await postgresFixtures.WaitAsync();
             schema = "teams_" + Guid.NewGuid().ToString("N");
             using NpgsqlConnection connection = new(supplied);
             await connection.OpenAsync();
@@ -69,14 +77,53 @@ public sealed class TeamsRoutingDatabase : IDisposable {
             await schemas.CreateOrUpdateSchema<ApiKey>();
             await schemas.CreateOrUpdateSchema<Message>();
             await schemas.CreateOrUpdateSchema<TeamsMessageOrigin>();
+            await schemas.CreateOrUpdateSchema<NodeType>();
+            await schemas.CreateOrUpdateSchema<NodeHook>();
+            if (postgres)
+                entities.DBClient.NonQuery("CREATE TABLE node (id BIGSERIAL PRIMARY KEY, typeid BIGINT NOT NULL, name TEXT, contenttype TEXT, content BYTEA, substance TEXT, skipembedding BOOLEAN NOT NULL DEFAULT TRUE, status TEXT, severity INTEGER, refinement TEXT, x DOUBLE PRECISION NOT NULL DEFAULT 0, y DOUBLE PRECISION NOT NULL DEFAULT 0, ownerid BIGINT NOT NULL DEFAULT 0, access INTEGER NOT NULL DEFAULT 3, rootnodeid BIGINT, created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, lastupdate TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)");
+            else
+                await schemas.CreateOrUpdateSchema<Node>();
             database.RecipientId = await database.AddUserAsync(true, ["read", "write"]);
             database.BridgeId = await database.AddUserAsync(false, []);
             database.OtherId = await database.AddUserAsync(true, ["admin"]);
+            database.BindingId = await database.AddBindingAsync(database.RecipientId, database.RecipientId, "divoid");
             return database;
         } catch {
             database.Dispose();
             throw;
         }
+    }
+
+    /// <summary>Creates a protected graph record with a node-bound synthetic credential proof.</summary>
+    /// <param name="ownerId">The actual graph record owner.</param>
+    /// <param name="recipientId">The selected enabled recipient.</param>
+    /// <param name="tag">The receiving session tag.</param>
+    /// <param name="secret">The synthetic active bot secret.</param>
+    /// <returns>The new graph node identifier.</returns>
+    public async Task<long> AddBindingAsync(long ownerId, long recipientId, string tag, string secret = "synthetic-fixture-secret") {
+        long? typeId = await Entities.Load<NodeType>(type => type.Id).Where(type => type.Type == "teams-bot-binding").ExecuteScalarAsync<long?>();
+        typeId ??= await Entities.Insert<NodeType>().Columns(type => type.Type).Values("teams-bot-binding").ReturnID().ExecuteAsync();
+        long id = await Entities.Insert<Node>().Columns(node => node.TypeId, node => node.Name, node => node.OwnerId,
+            node => node.Access, node => node.SkipEmbedding, node => node.Created, node => node.LastUpdate,
+            node => node.X, node => node.Y)
+            .Values(typeId.Value, TeamsWebhookFixture.ClientId, ownerId, NodeAccess.Read, true, DateTime.UtcNow, DateTime.UtcNow, 0d, 0d).ReturnID().ExecuteAsync();
+        await SetBindingAsync(id, ownerId, recipientId, tag, secret);
+        return id;
+    }
+
+    /// <summary>Updates the concrete fixture graph JSON using the independent bootstrap recipe.</summary>
+    /// <param name="nodeId">The actual record identifier.</param>
+    /// <param name="ownerId">The actual owner bound by the proof.</param>
+    /// <param name="recipientId">The receiving identity.</param>
+    /// <param name="tag">The receiving tag.</param>
+    /// <param name="secret">The synthetic active secret.</param>
+    /// <returns>The asynchronous graph write.</returns>
+    public Task SetBindingAsync(long nodeId, long ownerId, long recipientId, string tag, string secret = "synthetic-fixture-secret") {
+        string canonical = string.Join((char)10, new[] { "DiVoid/TeamsGraphBinding/v1", TeamsWebhookFixture.ClientId,
+            nodeId.ToString(System.Globalization.CultureInfo.InvariantCulture), ownerId.ToString(System.Globalization.CultureInfo.InvariantCulture), "" });
+        string proof = "hmac-sha256-v1:" + Convert.ToHexString(HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+        byte[] content = Encoding.UTF8.GetBytes(Json.WriteString(new Dictionary<string, object> { ["botId"] = TeamsWebhookFixture.ClientId, ["userId"] = recipientId, ["tag"] = tag, ["proof"] = proof }));
+        return Entities.Update<Node>().Set(node => node.Content == content, node => node.ContentType == "application/json").Where(node => node.Id == nodeId).ExecuteAsync();
     }
 
     /// <summary>Creates an independent connection to this disposable PostgreSQL schema.</summary>
@@ -103,6 +150,7 @@ public sealed class TeamsRoutingDatabase : IDisposable {
             using NpgsqlCommand command = new($"DROP SCHEMA IF EXISTS {schema} CASCADE", connection);
             command.ExecuteNonQuery();
             NpgsqlConnection.ClearPool(connection);
+            postgresFixtures.Release();
         } else {
             using SqliteConnection pool = new(connectionString);
             SqliteConnection.ClearPool(pool);

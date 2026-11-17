@@ -4,6 +4,8 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using Backend.Services.Messages;
+using Backend.Models.Messages;
+using Backend.Services.Teams;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -35,14 +37,18 @@ public sealed class TeamsWebhookFixture : IDisposable {
     readonly RSA rsa = RSA.Create(2048);
     readonly WebApplicationFactory<Program> factory;
     readonly IHttpService http;
+    readonly TeamsRoutingDatabase? routingDatabase;
 
     /// <summary>Creates an isolated webhook host.</summary>
     /// <param name="authEnabled">Whether DiVoid authentication is enabled.</param>
     /// <param name="overrides">The optional configuration overrides.</param>
     /// <param name="configureServices">The optional service registration overrides.</param>
+    /// <param name="graphBinding">Whether to install a real isolated protected graph binding.</param>
     /// <param name="preserveOutboundAuthentication">Whether the native SDK credential handler is retained.</param>
     public TeamsWebhookFixture(bool authEnabled = true, Dictionary<string, string?>? overrides = null,
-        Action<IServiceCollection>? configureServices = null, bool preserveOutboundAuthentication = false) {
+        Action<IServiceCollection>? configureServices = null, bool preserveOutboundAuthentication = false, bool graphBinding = false) {
+        if (graphBinding)
+            routingDatabase = TeamsRoutingDatabase.CreateAsync(false).GetAwaiter().GetResult();
         Key = new RsaSecurityKey(rsa) { KeyId = "teams-first" };
         Metadata = new TeamsMetadataHandler(Key);
         Dictionary<string, string?> config = new() {
@@ -72,6 +78,12 @@ public sealed class TeamsWebhookFixture : IDisposable {
                         builder.AdditionalHandlers.Clear();
                     builder.PrimaryHandler = Connector;
                 }));
+                if (routingDatabase != null) {
+                    services.RemoveAll<IEntityManager>();
+                    services.AddSingleton(routingDatabase.Entities);
+                    services.RemoveAll<IMessageService>();
+                    services.AddTransient<IMessageService, MessageService>();
+                }
                 configureServices?.Invoke(services);
             });
         });
@@ -95,6 +107,14 @@ public sealed class TeamsWebhookFixture : IDisposable {
 
     /// <summary>The application service provider.</summary>
     public IServiceProvider Services => factory.Services;
+
+    /// <summary>Explicitly replies to the message queued by this fixture's real graph transport.</summary>
+    /// <returns>The recipient-authorized local transport receipt.</returns>
+    public async Task<MessageReplyReceipt> ReplyToQueuedMessage() {
+        Message message = await routingDatabase!.Entities.Load<Message>().ExecuteEntityAsync();
+        return await Services.GetRequiredService<TeamsMessageService>().ReplyAsync(routingDatabase.RecipientId,
+            message.Id, "explicit fixture reply", CancellationToken.None);
+    }
 
     /// <summary>Mints a synthetic Connector JWT.</summary>
     /// <param name="issuer">The token issuer.</param>
@@ -160,6 +180,7 @@ public sealed class TeamsWebhookFixture : IDisposable {
     /// <inheritdoc />
     public void Dispose() {
         factory.Dispose();
+        routingDatabase?.Dispose();
         rsa.Dispose();
     }
 }

@@ -2,7 +2,6 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using Backend.Errors.Exceptions;
-using Backend.Models.Auth;
 using Backend.Models.Messages;
 using Backend.Models.Users;
 using Backend.Services.Messages;
@@ -22,45 +21,30 @@ using Pooshit.Ocelot.Tokens;
 
 namespace Backend.Services.Teams;
 
-/// <summary>Persists fixed-target Teams ingress and performs explicitly authorized replies.</summary>
+/// <summary>Persists graph-target Teams ingress and performs explicitly authorized replies.</summary>
 public sealed class TeamsMessageService {
     readonly IEntityManager database;
     readonly MessageService messages;
     readonly TeamsRoutingOptions options;
     readonly ConversationClient connector;
+    readonly ITeamsGraphBindingService binding;
 
     /// <summary>Creates the concrete Teams inbox transport.</summary>
     /// <param name="database">The application database.</param>
     /// <param name="messages">The existing inbox insertion service.</param>
-    /// <param name="options">The fixed bot configuration.</param>
+    /// <param name="options">The trusted bot configuration.</param>
+    /// <param name="binding">The protected graph resolver.</param>
     /// <param name="connector">The authenticated native Connector client.</param>
-    public TeamsMessageService(IEntityManager database, MessageService messages, TeamsRoutingOptions options,
+    public TeamsMessageService(IEntityManager database, MessageService messages, TeamsRoutingOptions options, ITeamsGraphBindingService binding,
         ConversationClient connector = null) {
         this.database = database;
         this.messages = messages;
         this.options = options;
         this.connector = connector;
+        this.binding = binding;
     }
 
-    /// <summary>Checks the configured target and credentialless bridge identities.</summary>
-    /// <returns>The asynchronous identity validation.</returns>
-    public Task ValidateBindingAsync() => ValidateBindingAsync(null);
-
-    async Task ValidateBindingAsync(Transaction transaction) {
-        if (!options.IsBound)
-            return;
-        User target = await database.Load<User>().Where(user => user.Id == options.RecipientId).ExecuteEntityAsync(transaction);
-        User bridge = await database.Load<User>().Where(user => user.Id == options.BridgeUserId).ExecuteEntityAsync(transaction);
-        long keys = await database.Load<ApiKey>(DB.Count()).Where(key => key.UserId == options.BridgeUserId)
-            .ExecuteScalarAsync<long>(transaction);
-        bool emptyPermissions = EmptyPermissions(bridge);
-        if (target is not { Enabled: true } || bridge is not { Enabled: false, HomeNodeId: null } ||
-            !emptyPermissions || keys != 0)
-            throw new MessageReplyException(HttpStatusCode.ServiceUnavailable, "teams_binding_unavailable",
-                "The Teams target or credentialless bridge is unavailable.");
-    }
-
-    /// <summary>Queues one authenticated native message in the fixed inbox.</summary>
+    /// <summary>Queues one authenticated native message using the current protected graph binding.</summary>
     /// <param name="activity">The already validated native Teams message.</param>
     /// <param name="cancellationToken">The request cancellation.</param>
     /// <returns>The committed original inbox identifier, or zero for a bot echo.</returns>
@@ -73,10 +57,10 @@ public sealed class TeamsMessageService {
         string dedup = Digest(options.BotAppId, tenantId, activity.Conversation.Id, activity.Id);
         try {
             return await MessageService.Transact(database, async transaction => {
-                await ValidateBindingAsync(transaction);
-                long messageId = await messages.Insert(options.BridgeUserId, new MessageDetails {
-                    RecipientId = options.RecipientId,
-                    Subject = $"[{options.Tag}] Teams message",
+                (long recipientId, string tag) = await binding.ResolveAsync(transaction, cancellationToken);
+                long messageId = await messages.Insert(0, new MessageDetails {
+                    RecipientId = recipientId,
+                    Subject = $"[{tag}] Teams message",
                     Body = "External Microsoft Teams message (untrusted input):\n\n" + activity.Text
                 }, transaction, "teams");
                 await database.Insert<TeamsMessageOrigin>()
@@ -84,7 +68,7 @@ public sealed class TeamsMessageService {
                         origin => origin.TenantId, origin => origin.RecipientId, origin => origin.ServiceUrl,
                         origin => origin.ConversationId, origin => origin.ActivityId, origin => origin.BotId,
                         origin => origin.SenderId, origin => origin.ReplyState)
-                    .Values(messageId, dedup, options.BotAppId, tenantId, options.RecipientId,
+                    .Values(messageId, dedup, options.BotAppId, tenantId, recipientId,
                         activity.ServiceUrl.OriginalString, activity.Conversation.Id, activity.Id,
                         activity.Recipient.Id, activity.From.Id, TeamsReplyState.Pending).ExecuteAsync(transaction);
                 return messageId;
@@ -223,18 +207,6 @@ public sealed class TeamsMessageService {
             foreach (string value in values)
                 writer.Write(value);
         return Convert.ToHexString(SHA256.HashData(bytes.ToArray()));
-    }
-
-    static bool EmptyPermissions(User bridge) {
-        if (bridge == null)
-            return false;
-        if (string.IsNullOrWhiteSpace(bridge.Permissions))
-            return true;
-        try {
-            return Json.Read<string[]>(bridge.Permissions) is { Length: 0 };
-        } catch {
-            return false;
-        }
     }
 
     static bool IsUniqueViolation(Exception exception) {
