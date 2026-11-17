@@ -131,6 +131,7 @@ public sealed class TeamsMessageService {
                 ReplyToId = origin.ActivityId,
                 Recipient = new ChannelAccount { Id = origin.SenderId }
             };
+            reply.Properties["from"] = new ChannelAccount { Id = origin.BotId };
             sent = await connector.SendActivityAsync(origin.ConversationId, reply, new Uri(origin.ServiceUrl),
                 requestContext: new BotRequestContext { BotAppId = options.BotAppId }, cancellationToken: timeout.Token);
         } catch (Exception exception) {

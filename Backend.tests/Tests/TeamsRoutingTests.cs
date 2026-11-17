@@ -88,12 +88,15 @@ public class TeamsRoutingTests {
     public async Task ReplyAsync_ConsumedDifferentConversations_UsesOriginalReferenceAndRecipient(bool postgres) {
         using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(postgres);
         using TeamsRoutingFixture fixture = new(database);
-        using HttpResponseMessage first = await fixture.Host.Post(fixture.Host.Token());
+        Dictionary<string, object?> initial = TeamsWebhookFixture.Activity();
+        initial["recipient"] = new Dictionary<string, object> { ["id"] = "28:original-bot-channel-account" };
+        using HttpResponseMessage first = await fixture.Host.Post(fixture.Host.Token(), initial);
         Assert.That(first.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         Message original = await database.Entities.Load<Message>().ExecuteEntityAsync();
         Dictionary<string, object?> other = TeamsWebhookFixture.Activity();
         other["id"] = "activity-other";
         other["conversation"] = new Dictionary<string, object> { ["id"] = "conversation-other", ["tenantId"] = TeamsWebhookFixture.TenantId };
+        other["recipient"] = new Dictionary<string, object> { ["id"] = "28:other-bot-channel-account" };
         using HttpResponseMessage second = await fixture.Host.Post(fixture.Host.Token(), other);
         Assert.That(second.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         Message another = await database.Entities.Load<Message>().Where(message => message.Id != original.Id).ExecuteEntityAsync();
@@ -117,7 +120,17 @@ public class TeamsRoutingTests {
         Assert.That(targets, Has.Length.EqualTo(2));
         Assert.That(targets[0].AbsoluteUri, Does.Contain("conversation-1"));
         Assert.That(targets[1].AbsoluteUri, Does.Contain("conversation-other"));
-        Assert.That(rebound.Host.Connector.Bodies.First(), Does.Contain("activity-1"));
+        Dictionary<string, object>[] sent = rebound.Host.Connector.Bodies
+            .Select(body => Json.Read<Dictionary<string, object>>(body)).ToArray();
+        Assert.That(sent, Has.Length.EqualTo(2));
+        Assert.That(sent[0].ContainsKey("from"), Is.True);
+        Assert.That(sent[1].ContainsKey("from"), Is.True);
+        Assert.That(((Dictionary<string, object>)sent[0]["from"])["id"], Is.EqualTo(retained.BotId));
+        Assert.That(retained.BotId, Is.EqualTo("28:original-bot-channel-account").And.Not.EqualTo(TeamsWebhookFixture.ClientId));
+        Assert.That(((Dictionary<string, object>)sent[1]["from"])["id"], Is.EqualTo("28:other-bot-channel-account"));
+        Assert.That(((Dictionary<string, object>)sent[0]["recipient"])["id"], Is.EqualTo(retained.SenderId));
+        Assert.That(sent[0]["replyToId"], Is.EqualTo(retained.ActivityId));
+        Assert.That(sent[1]["replyToId"], Is.EqualTo("activity-other"));
         using HttpResponseMessage replay = await fixture.Host.Post(fixture.Host.Token());
         Assert.That(replay.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         Assert.That(await Count<Message>(database), Is.EqualTo(1));
