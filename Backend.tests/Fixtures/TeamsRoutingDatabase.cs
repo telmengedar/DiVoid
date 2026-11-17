@@ -53,7 +53,7 @@ public sealed class TeamsRoutingDatabase : IDisposable {
             await connection.OpenAsync();
             using NpgsqlCommand command = new($"CREATE SCHEMA {schema}", connection);
             await command.ExecuteNonQueryAsync();
-            connectionString = new NpgsqlConnectionStringBuilder(supplied) { SearchPath = schema }.ConnectionString;
+            connectionString = new NpgsqlConnectionStringBuilder(supplied) { SearchPath = schema, ApplicationName = schema }.ConnectionString;
             entities = new EntityManager(ClientFactory.Create(() => new NpgsqlConnection(connectionString), new PostgreInfo(), true));
         } else {
             string directory = Path.GetFullPath("../../../../.claude/tmp/teams-routing", AppContext.BaseDirectory);
@@ -78,6 +78,11 @@ public sealed class TeamsRoutingDatabase : IDisposable {
             throw;
         }
     }
+
+    /// <summary>Creates an independent connection to this disposable PostgreSQL schema.</summary>
+    /// <returns>The unopened fixture-owned connection.</returns>
+    public NpgsqlConnection CreatePostgresConnection() => schema == null
+        ? throw new InvalidOperationException("This fixture uses SQLite.") : new NpgsqlConnection(connectionString);
 
     /// <summary>Adds an explicitly configured actor to this isolated schema.</summary>
     /// <param name="enabled">Whether the actor is enabled.</param>

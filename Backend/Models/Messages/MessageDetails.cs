@@ -38,6 +38,7 @@ public class MessageDetails {
     /// UTC timestamp when the message was created
     /// </summary>
     public DateTime CreatedAt { get; set; }
+
     /// <summary>The internally assigned external reply transport.</summary>
     public string ReplyTransport { get; set; }
 }
