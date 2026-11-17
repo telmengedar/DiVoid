@@ -271,6 +271,7 @@ public class Startup
     public virtual void Configure(IApplicationBuilder app, IWebHostEnvironment env)
     {
         app.UseRouting();
+        app.UseTeamsWebhookDiagnostics();
         app.UseMiddleware<ErrorHandlerMiddleware>();
         app.UseDivoidCors();
 
