@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text;
 using Pooshit.Json;
@@ -18,12 +19,46 @@ namespace Backend.Extensions.Startup;
 /// <summary>Registers the isolated public Azure Teams setup webhook.</summary>
 public static class TeamsExtensions {
     const string Scheme = "TeamsBot";
+    internal const string DiagnosticsCategory = "Backend.TeamsWebhook";
     const string CredentialTenant = "botframework.com";
     const string CredentialInstance = "https://login.microsoftonline.com/";
     const string Issuer = "https://api.botframework.com";
     const string Metadata = "https://login.botframework.com/v1/.well-known/openid-configuration";
     const int MaximumBodyBytes = 256 * 1024;
     static readonly object endorsement = new();
+
+    /// <summary>Records sanitized Teams-path arrival and final response metadata.</summary>
+    /// <param name="app">The pipeline after routing and before error handling.</param>
+    /// <returns>The application pipeline.</returns>
+    public static IApplicationBuilder UseTeamsWebhookDiagnostics(this IApplicationBuilder app) => app.Use(async (context, next) => {
+        if (!context.Request.Path.Equals(new PathString("/api/teams/messages")) &&
+            !context.Request.Path.Equals(new PathString("/api/teams/messages/"))) {
+            await next(context);
+            return;
+        }
+        ILogger logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(DiagnosticsCategory);
+        Microsoft.AspNetCore.Http.Endpoint endpoint = context.GetEndpoint();
+        bool teamsPolicy = endpoint?.Metadata.GetOrderedMetadata<Microsoft.AspNetCore.Authorization.IAuthorizeData>()
+            .Any(data => data.Policy == Scheme) == true;
+        string endpointKind = teamsPolicy ? "teams" : endpoint == null ? "none" : "other";
+        string method = context.Request.Method switch { "POST" => "POST", "GET" => "GET", _ => "other" };
+        long started = Stopwatch.GetTimestamp();
+        bool unhandled = false;
+        logger.LogInformation("event=teams.webhook.arrived request={Request} method={Method} endpoint={Endpoint} teamsPolicy={TeamsPolicy}",
+            context.TraceIdentifier, method, endpointKind, teamsPolicy);
+        try {
+            await next(context);
+        } catch {
+            unhandled = true;
+            throw;
+        } finally {
+            string outcome = context.RequestAborted.IsCancellationRequested ? "aborted" : unhandled ? "unhandled" : "completed";
+            logger.LogInformation("event=teams.webhook.completed request={Request} endpoint={Endpoint} teamsPolicy={TeamsPolicy} status={Status} authenticated={Authenticated} outcome={Outcome} elapsedMs={ElapsedMs}",
+                context.TraceIdentifier, endpointKind, teamsPolicy, context.Response.StatusCode,
+                context.User.Identities.Any(identity => identity.IsAuthenticated), outcome,
+                Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+        }
+    });
 
     /// <summary>Registers optional Teams authentication and SDK clients.</summary>
     /// <param name="services">The application service registrations.</param>
@@ -151,15 +186,15 @@ public static class TeamsExtensions {
 
     static async Task<IResult> ProcessAsync(HttpContext context, TeamsSetupBot bot, HashSet<Guid> tenants) {
         if (!context.Items.TryGetValue(endorsement, out object endorsed) || endorsed is not true)
-            return Results.StatusCode(StatusCodes.Status403Forbidden);
+            return Decision(context, "endorsement_rejected", StatusCodes.Status403Forbidden);
         if (context.Request.ContentLength > MaximumBodyBytes)
-            return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+            return Decision(context, "body_too_large", StatusCodes.Status413PayloadTooLarge);
         using MemoryStream body = new();
         byte[] buffer = new byte[8192];
         int read;
         while ((read = await context.Request.Body.ReadAsync(buffer, context.RequestAborted)) != 0) {
             if (body.Length + read > MaximumBodyBytes)
-                return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+                return Decision(context, "body_too_large", StatusCodes.Status413PayloadTooLarge);
             await body.WriteAsync(buffer.AsMemory(0, read), context.RequestAborted);
         }
         TeamsActivity activity;
@@ -170,19 +205,19 @@ public static class TeamsExtensions {
             Dictionary<string, object> fields = Json.Read<Dictionary<string, object>>(json);
             if (fields == null || !fields.TryGetValue("type", out object type) ||
                 type is not string text || string.IsNullOrWhiteSpace(text))
-                return Results.BadRequest();
+                return Decision(context, "invalid_activity", StatusCodes.Status400BadRequest);
             activity = TeamsActivity.FromActivity(received);
             if (string.IsNullOrWhiteSpace(activity.Id))
-                return Results.BadRequest();
+                return Decision(context, "invalid_activity", StatusCodes.Status400BadRequest);
         } catch (Exception exception) when (exception is JsonException or FormatException or ArgumentException or InvalidOperationException) {
-            return Results.BadRequest();
+            return Decision(context, "invalid_activity", StatusCodes.Status400BadRequest);
         }
         if (activity.ChannelId != "msteams" ||
             !Guid.TryParse(activity.ChannelData?.Tenant?.Id, out Guid activityTenant) || activityTenant == Guid.Empty ||
             (tenants.Count > 0 && !tenants.Contains(activityTenant)) ||
             (activity.Conversation?.TenantId is string conversationTenant &&
                 (!Guid.TryParse(conversationTenant, out Guid parsedTenant) || parsedTenant != activityTenant)))
-            return Results.StatusCode(StatusCodes.Status403Forbidden);
+            return Decision(context, "tenant_or_channel_rejected", StatusCodes.Status403Forbidden);
         Uri serviceUrl = activity.ServiceUrl;
         string[] claims = context.User.Claims.Where(claim => claim.Type is "serviceUrl" or "serviceurl")
             .Select(claim => claim.Value).ToArray();
@@ -190,25 +225,35 @@ public static class TeamsExtensions {
             !string.IsNullOrEmpty(serviceUrl.UserInfo) || !string.IsNullOrEmpty(serviceUrl.Query) ||
             !string.IsNullOrEmpty(serviceUrl.Fragment) || claims.Length == 0 ||
             claims.Any(claim => string.IsNullOrWhiteSpace(claim) || claim != serviceUrl.OriginalString))
-            return Results.StatusCode(StatusCodes.Status403Forbidden);
+            return Decision(context, "service_url_rejected", StatusCodes.Status403Forbidden);
         if (activity.Type == "invoke")
-            return Results.StatusCode(StatusCodes.Status501NotImplemented);
+            return Decision(context, "invoke_unsupported", StatusCodes.Status501NotImplemented);
         if (activity is not MessageActivity message || string.IsNullOrWhiteSpace(message.Text))
-            return Results.Ok();
+            return Decision(context, "activity_ignored", StatusCodes.Status200OK);
         if (string.IsNullOrWhiteSpace(activity.Conversation?.Id) || string.IsNullOrWhiteSpace(activity.From?.Id) ||
             string.IsNullOrWhiteSpace(activity.Recipient?.Id))
-            return Results.BadRequest();
+            return Decision(context, "invalid_activity", StatusCodes.Status400BadRequest);
         TeamsRoutingOptions routing = context.RequestServices.GetRequiredService<TeamsRoutingOptions>();
         if (routing.IsBound) {
-            await context.RequestServices.GetRequiredService<TeamsMessageService>().ReceiveAsync(message, context.RequestAborted);
-            return Results.Ok();
+            long queued = await context.RequestServices.GetRequiredService<TeamsMessageService>().ReceiveAsync(message, context.RequestAborted);
+            return Decision(context, queued == 0 ? "bound_echo_ignored" : "bound_queued", StatusCodes.Status200OK);
         }
+        context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(DiagnosticsCategory)
+            .LogInformation("event=teams.webhook.setup_dispatch request={Request}", context.TraceIdentifier);
         try {
             await bot.ProcessAsync(received, context.User, null, context.RequestAborted);
-            return Results.Ok();
+            return Decision(context, "setup_completed", StatusCodes.Status200OK);
         } catch (BotHandlerException exception) {
-            return Results.StatusCode(exception.InnerException is OperationCanceledException or TimeoutException
+            return Decision(context, "setup_failed", exception.InnerException is OperationCanceledException or TimeoutException
                 ? StatusCodes.Status504GatewayTimeout : StatusCodes.Status502BadGateway);
         }
+    }
+
+    static IResult Decision(HttpContext context, string outcome, int status) {
+        ILogger logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(DiagnosticsCategory);
+        logger.Log(status >= 400 ? LogLevel.Warning : LogLevel.Information,
+            "event=teams.webhook.decision request={Request} outcome={Outcome} status={Status}",
+            context.TraceIdentifier, outcome, status);
+        return Results.StatusCode(status);
     }
 }
