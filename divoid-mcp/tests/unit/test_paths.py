@@ -155,7 +155,7 @@ def test_gate_accepts_relative_path_resolved_against_cwd(tmp_path, monkeypatch):
     assert os.path.samefile(resolved, tmp_path / "relative.txt")
 
 
-def test_gate_accepts_case_variant_of_path_realpath_can_canonicalize(tmp_path):
+def test_gate_case_variant_of_existing_path_follows_platform_case_semantics(tmp_path):
     paths.init(env={"DIVOID_MCP_FILE_ROOT": str(tmp_path)})
     sub = tmp_path / "Sub"
     sub.mkdir()
@@ -163,19 +163,34 @@ def test_gate_accepts_case_variant_of_path_realpath_can_canonicalize(tmp_path):
     target.write_bytes(b"x")
 
     upper_variant = str(target).upper()
-    resolved = paths.gate(upper_variant)
+    assert upper_variant != str(target)
 
+    if sys.platform != "win32":
+        with pytest.raises(InvariantViolation) as exc_info:
+            paths.gate(upper_variant)
+        assert exc_info.value.code == "path_outside_root"
+        return
+
+    resolved = paths.gate(upper_variant)
     assert os.path.samefile(resolved, target)
 
 
-def test_gate_normcase_folds_case_mismatch_on_non_existent_root_and_tail(tmp_path):
-    """Root and candidate tail both non-existent, so realpath cannot canonicalize case on disk; only normcase makes them compare equal."""
+def test_gate_case_mismatch_on_non_existent_root_and_tail_follows_platform(tmp_path):
+    """Absent roots isolate Windows normcase folding and POSIX distinct-root rejection."""
     root_dir = tmp_path / "NonExistentRoot"
     paths.init(env={"DIVOID_MCP_FILE_ROOT": str(root_dir)})
 
     candidate = str(tmp_path / "nonexistentroot" / "file.txt")
-    resolved = paths.gate(candidate)
+    assert not root_dir.exists()
+    assert not os.path.exists(os.path.dirname(candidate))
 
+    if sys.platform != "win32":
+        with pytest.raises(InvariantViolation) as exc_info:
+            paths.gate(candidate)
+        assert exc_info.value.code == "path_outside_root"
+        return
+
+    resolved = paths.gate(candidate)
     assert os.path.normcase(os.path.dirname(resolved)) == os.path.normcase(str(root_dir))
 
 
@@ -524,6 +539,7 @@ def test_gate_rejects_trailing_space_component_as_a_property_not_a_platform_beha
     assert exc_info.value.code == "path_denied_sensitive"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="8.3 short names require the Windows API")
 def test_gate_rejects_dot_git_via_8dot3_short_name(tmp_path):
     """8.3 short-name generation resolves before the pattern match, so a short-name
     spelling of .git cannot bypass the refusal. Skipped if 8dot3 is disabled on this volume."""
@@ -760,24 +776,20 @@ def test_gate_sensitive_denial_message_names_component_and_forbids_copy_workarou
 
 
 @pytest.mark.parametrize(
-    "case_variant_relative",
+    "case_variant_relative,sensitive_on_posix",
     [
-        os.path.join("sub", ".MCP.JSON"),
-        os.path.join("sub", "Settings.JSON"),
-        os.path.join("sub", "ID_RSA"),
+        (os.path.join("sub", ".MCP.JSON"), False),
+        (os.path.join("sub", "Settings.JSON"), False),
+        (os.path.join("sub", "ID_RSA"), False),
+        (os.path.join("sub", ".mcp.json"), True),
+        (os.path.join("sub", "settings.json"), True),
+        (os.path.join("sub", "id_rsa"), True),
     ],
 )
-def test_gate_rejects_case_variant_of_sensitive_component_that_does_not_exist_on_disk(
-    tmp_path, case_variant_relative
+def test_gate_sensitive_case_matching_on_non_existent_components_follows_platform(
+    tmp_path, case_variant_relative, sensitive_on_posix
 ):
-    r"""
-    Pins normcase in the sensitive-name comparison (DiVoid #10773 W-1). Neither the
-    root nor the tail exists on disk, so os.path.realpath cannot canonicalize the
-    caller's case -- this is exactly divoid_download_content's write-target shape,
-    where the file being refused does not yet exist. Without normcase folding this
-    silently ACCEPTS (measured in #10773: sub\.MCP.JSON, sub\Settings.JSON,
-    sub\ID_RSA all resolve with case preserved when the component is absent).
-    """
+    """Pins Windows folding (#10773 W-1) and POSIX identity (#10543 §10.6) without on-disk canonicalization."""
     root_dir = tmp_path / "workspace"
     paths.init(env={"DIVOID_MCP_FILE_ROOT": str(root_dir)})
 
@@ -787,9 +799,12 @@ def test_gate_rejects_case_variant_of_sensitive_component_that_does_not_exist_on
         "case and this test would not isolate the normcase fold"
     )
 
-    with pytest.raises(InvariantViolation) as exc_info:
-        paths.gate(candidate)
-    assert exc_info.value.code == "path_denied_sensitive"
+    if sys.platform == "win32" or sensitive_on_posix:
+        with pytest.raises(InvariantViolation) as exc_info:
+            paths.gate(candidate)
+        assert exc_info.value.code == "path_denied_sensitive"
+    else:
+        assert paths.gate(candidate) == candidate
 
 
 def test_gate_allows_ordinary_non_sensitive_case_variant_that_does_not_exist_on_disk(tmp_path):
