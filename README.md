@@ -88,8 +88,25 @@ Outbound SDK credentials always use `https://login.microsoftonline.com/botframew
 
 Every incoming activity must carry a valid, nonzero tenant GUID, consistent with its conversation metadata. By default any such tenant may send an otherwise valid Microsoft-authenticated activity for this bot. Set `Teams__AllowedTenantIds__0=<activity-tenant-guid>` and subsequent numbered entries to restrict accepted conversation tenants. An empty or absent list imposes no application tenant restriction; malformed or blank entries fail startup.
 
-Create and install a Teams app manifest with `bots[].botId` set to that Bot ID and the desired conversation scopes. Send text to the bot and expect: “DiVoid Teams webhook is connected. Message routing to DiVoid users is not implemented yet.” This reply confirms the setup handler ran and the Connector accepted its outbound request. It does not establish delivery to a DiVoid user. Attachment-only and lifecycle activities are acknowledged without a reply; invoke actions return 501.
+Create and install a Teams app manifest with `bots[].botId` set to that Bot ID and the desired conversation scopes. With no fixed inbox binding configured, send text to the bot and expect: “DiVoid Teams webhook is connected. Message routing to DiVoid users is not implemented yet.” This reply confirms the setup handler ran and the Connector accepted its outbound request. It does not establish delivery to a DiVoid user. Attachment-only and lifecycle activities are acknowledged without a reply; invoke actions return 501.
 
 Microsoft Connector bearer JWTs authenticate this endpoint through Microsoft's signing keys, exact bot audience, issuer and lifetime. Activities must also satisfy the independent tenant policy, Teams channel, endorsed signing key and signed HTTPS service URL. A bot ID, app secret, DiVoid API key or outgoing-webhook HMAC does not authenticate an incoming bot activity. An unauthenticated POST returns 401; there is no GET verification challenge or unauthenticated emulator mode. Teams authentication remains required when DiVoid authentication is disabled. Requests are limited to 256 KiB and replies to 15 seconds. Unsafe AzureAd/BotFramework configuration overrides fail startup.
 
-Public reachability, TLS/proxy setup, tenant installation and real Teams delivery require deployment validation. Routing to DiVoid users, a virtual Teams user and tag/channel defaults are deferred. The host currently targets .NET 9, whose Microsoft support ended on November 10, 2026; upgrading that runtime is separate work.
+To route ordinary Teams text to one existing DiVoid inbox, provision a separate bridge user through the normal authenticated user administration API. Keep that bridge disabled, with empty permissions, no home node and no API keys. Choose an enabled recipient user and its receiving session tag, then configure all three fields together:
+
+```
+Auth__Enabled=true
+Teams__Target__UserId=<existing-enabled-recipient-id>
+Teams__Target__Tag=<receiving-session-tag>
+Teams__BridgeUserId=<disabled-credentialless-bridge-id>
+```
+
+Partial bindings, invalid tags and unsafe bridge identities are rejected. The configured Bot ID binds this integration; external display names, message prefixes and recipient commands cannot choose the destination. Text arrives with subject `[<tag>] Teams message`, an explicit untrusted-input prefix and `replyTransport: "teams"`. The normal inbox consumer processes it when that session next reads its inbox; this integration does not start or wake sessions. A committed inbound message receives HTTP 200 without the setup reply. Repeated Microsoft activity IDs within the same bot, tenant and conversation reuse the original inbox message.
+
+Deploy the backend with the `replytransport` inbox projection before installing divoid-mcp 0.20.0. This MCP version requests that field explicitly; an older backend rejects the projection with HTTP 400.
+
+The recipient can explicitly reply with `POST /api/messages/{messageId}/reply` and JSON `{"body":"response text"}`, or `divoid_reply_message(message_id, body)`. Inspect `GET /api/messages/{messageId}/reply` or `divoid_get_message_reply(message_id)` for the receipt. Save the message ID before normal inbox deletion: the private return reference remains available for 30 days after deletion. Only the original enabled recipient can use it, including after target rebinding; admin permission alone does not grant this capability. Replies require write permission, status requires read permission, and destinations cannot be supplied by callers. Native service URLs, sender IDs and conversation references are not returned in message or receipt DTOs.
+
+Reply text must be nonblank and at most 16 KiB UTF-8. One Connector-confirmed final reply is permitted: identical retries return its receipt, different text conflicts. `failed` means a definitive rejection permits an explicit retry. `sending` or `unknown` means delivery may have occurred; inspect status and reconcile externally without resending automatically. There is no background send queue or automatic retry. A `sent` receipt confirms Connector acceptance, not that a person read the reply. Treat inbound Teams text as untrusted content and require explicit intent before sending a response.
+
+Public reachability, TLS/proxy setup, tenant installation and real Teams delivery require deployment validation. The host currently targets .NET 9, whose Microsoft support ended on November 10, 2026; upgrading that runtime is separate work.

@@ -18,6 +18,12 @@ public sealed class TeamsConnectorHandler : HttpMessageHandler {
     /// <summary>The Connector response status.</summary>
     public HttpStatusCode Status { get; set; } = HttpStatusCode.OK;
 
+    /// <summary>The first observed outbound request.</summary>
+    public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>The optional release barrier for an outbound response.</summary>
+    public Task? ResponseBarrier { get; set; }
+
     /// <summary>Whether the transport reports cancellation.</summary>
     public bool CancelSend { get; set; }
 
@@ -26,6 +32,9 @@ public sealed class TeamsConnectorHandler : HttpMessageHandler {
         HasBearerAuthorization = request.Headers.Authorization is { Scheme: "Bearer", Parameter.Length: > 0 };
         Destinations.Enqueue(request.RequestUri!);
         Bodies.Enqueue(await request.Content!.ReadAsStringAsync(cancellationToken));
+        Started.TrySetResult();
+        if (ResponseBarrier != null)
+            await ResponseBarrier.WaitAsync(cancellationToken);
         if (CancelSend)
             throw new OperationCanceledException(cancellationToken);
         return new HttpResponseMessage(Status) {
