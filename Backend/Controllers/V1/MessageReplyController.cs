@@ -36,7 +36,7 @@ public class MessageReplyController : ControllerBase {
     /// <param name="messageId">The original inbox message identifier.</param>
     /// <param name="cancellationToken">The caller request cancellation.</param>
     /// <returns>The safe Connector read outcome without members or private routing data.</returns>
-    [HttpPost("diagnose"), Authorize(Policy = "write")]
+    [HttpPost("diagnosis"), Authorize(Policy = "write")]
     public Task<MessageReplyDiagnosis> Diagnose(long messageId, CancellationToken cancellationToken) =>
         transport.DiagnoseAsync(User.GetDivoidUserId(), messageId, cancellationToken);
 }
