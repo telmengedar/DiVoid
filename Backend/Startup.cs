@@ -231,7 +231,7 @@ public class Startup
         }
 
         services.AddSingleton(new TeamsRoutingOptions(Configuration));
-        services.AddTransient<TeamsGraphBindingService>();
+        services.AddTransient<ITeamsGraphBindingService, TeamsGraphBindingService>();
         services.AddTransient<TeamsMessageService>();
         services.AddTeamsWebhook(Configuration);
 

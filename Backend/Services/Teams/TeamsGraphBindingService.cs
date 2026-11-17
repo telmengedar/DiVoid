@@ -14,7 +14,7 @@ using Pooshit.Ocelot.Tokens;
 namespace Backend.Services.Teams;
 
 /// <summary>Resolves one protected, cryptographically authorized graph binding per incoming message.</summary>
-public sealed class TeamsGraphBindingService {
+public sealed class TeamsGraphBindingService : ITeamsGraphBindingService {
     readonly IEntityManager database;
     readonly TeamsRoutingOptions options;
     readonly byte[] proofKey;
@@ -29,10 +29,7 @@ public sealed class TeamsGraphBindingService {
         proofKey = Encoding.UTF8.GetBytes(configuration["AzureAd:ClientCredentials:0:ClientSecret"] ?? "");
     }
 
-    /// <summary>Reads one bounded graph snapshot and validates current owner and target eligibility.</summary>
-    /// <param name="transaction">The existing inbox insertion transaction.</param>
-    /// <param name="cancellationToken">The incoming request cancellation.</param>
-    /// <returns>The original recipient and trusted subject tag for this message.</returns>
+    /// <inheritdoc />
     public async Task<(long RecipientId, string Tag)> ResolveAsync(Transaction transaction, CancellationToken cancellationToken) {
         ISqlToken length = DB.CustomFunction("length", DB.Property<Node>(node => node.Content));
         ISqlToken bounded = DB.Case([DB.When(DB.Predicate<Node>(node =>
@@ -88,15 +85,15 @@ public sealed class TeamsGraphBindingService {
     }
 
     bool ValidProof(string proof, long nodeId, long ownerId) {
-        const string prefix = "hmac-sha256-v1:";
-        if (nodeId <= 0 || ownerId <= 0 || proofKey.Length == 0 || proof.Length != prefix.Length + 64 ||
-            !proof.StartsWith(prefix, StringComparison.Ordinal) ||
-            proof[prefix.Length..].Any(character => character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f')))
+        const string ProofPrefix = "hmac-sha256-v1:";
+        if (nodeId <= 0 || ownerId <= 0 || proofKey.Length == 0 || proof.Length != ProofPrefix.Length + 64 ||
+            !proof.StartsWith(ProofPrefix, StringComparison.Ordinal) ||
+            proof[ProofPrefix.Length..].Any(character => character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f')))
             return false;
         string message = "DiVoid/TeamsGraphBinding/v1\n" + options.BotAppId + "\n" +
             nodeId.ToString(CultureInfo.InvariantCulture) + "\n" + ownerId.ToString(CultureInfo.InvariantCulture) + "\n";
         byte[] expected = HMACSHA256.HashData(proofKey, Encoding.UTF8.GetBytes(message));
-        return CryptographicOperations.FixedTimeEquals(expected, Convert.FromHexString(proof[prefix.Length..]));
+        return CryptographicOperations.FixedTimeEquals(expected, Convert.FromHexString(proof[ProofPrefix.Length..]));
     }
 
     static MessageReplyException Unavailable() => new(HttpStatusCode.ServiceUnavailable,

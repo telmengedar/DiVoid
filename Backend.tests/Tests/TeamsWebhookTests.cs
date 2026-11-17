@@ -234,6 +234,7 @@ public class TeamsWebhookTests {
 
     /// <summary>Checks acknowledgment and unsupported activity outcomes.</summary>
     /// <param name="type">The activity type scenario.</param>
+    /// <param name="status">The expected HTTP status.</param>
     /// <returns>The asynchronous test operation.</returns>
     [TestCase("conversationUpdate", 200), TestCase("invoke", 501), TestCase("attachment", 200)]
     [Parallelizable]

@@ -25,10 +25,26 @@ public class TeamsGraphBindingTests {
         using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(postgres);
         using TeamsRoutingFixture fixture = new(database);
         await database.Entities.Update<Node>().Set(node => node.Access == access).Where(node => node.Id == database.BindingId).ExecuteAsync();
-        (long recipient, string tag) = await fixture.Host.Services.GetRequiredService<TeamsGraphBindingService>()
+        (long recipient, string tag) = await fixture.Host.Services.GetRequiredService<ITeamsGraphBindingService>()
             .ResolveAsync(null, CancellationToken.None);
         Assert.That(recipient, Is.EqualTo(database.RecipientId));
         Assert.That(tag, Is.EqualTo("divoid"));
+    }
+
+    /// <summary>Checks the inclusive receiving-tag limit on both providers.</summary>
+    /// <param name="postgres">Whether to exercise PostgreSQL.</param>
+    /// <returns>The asynchronous test operation.</returns>
+    [TestCase(false), TestCase(true), Parallelizable]
+    public async Task ResolveAsync_TagAtInclusiveLimit_ReturnsExactToken(bool postgres) {
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(postgres);
+        string expectedTag = new('t', 128);
+        await database.SetBindingAsync(database.BindingId, database.RecipientId, database.RecipientId, expectedTag);
+        Assert.That(expectedTag, Has.Length.EqualTo(128));
+        using TeamsRoutingFixture fixture = new(database);
+        (long recipient, string tag) = await fixture.Host.Services.GetRequiredService<ITeamsGraphBindingService>()
+            .ResolveAsync(null, CancellationToken.None);
+        Assert.That(recipient, Is.EqualTo(database.RecipientId));
+        Assert.That(tag, Is.EqualTo(expectedTag));
     }
 
     /// <summary>Checks authority rejects modified persisted identity, malformed envelopes and unsafe actor state.</summary>
@@ -155,15 +171,15 @@ public class TeamsGraphBindingTests {
     [TestCase(false), TestCase(true), Parallelizable]
     public async Task ResolveAsync_ContentBoundaryAndUntrimmedSecret_AcceptsOnlyBoundedEnvelope(bool postgres) {
         using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(postgres);
-        const string secret = " synthetic-fixture-secret ";
-        await database.SetBindingAsync(database.BindingId, database.RecipientId, database.RecipientId, "divoid", secret);
+        const string Secret = " synthetic-fixture-secret ";
+        await database.SetBindingAsync(database.BindingId, database.RecipientId, database.RecipientId, "divoid", Secret);
         Node node = await database.Entities.Load<Node>(value => value.Content).Where(value => value.Id == database.BindingId).ExecuteEntityAsync();
         string json = Encoding.UTF8.GetString(node.Content);
         byte[] boundary = Encoding.UTF8.GetBytes(json + new string(' ', 8192 - node.Content.Length));
         Assert.That(boundary, Has.Length.EqualTo(8192));
         await WriteContent(database, database.BindingId, boundary);
-        using TeamsRoutingFixture fixture = new(database, new() { ["AzureAd:ClientCredentials:0:ClientSecret"] = secret });
-        TeamsGraphBindingService resolver = fixture.Host.Services.GetRequiredService<TeamsGraphBindingService>();
+        using TeamsRoutingFixture fixture = new(database, new() { ["AzureAd:ClientCredentials:0:ClientSecret"] = Secret });
+        ITeamsGraphBindingService resolver = fixture.Host.Services.GetRequiredService<ITeamsGraphBindingService>();
         (long recipient, _) = await resolver.ResolveAsync(null, CancellationToken.None);
         Assert.That(recipient, Is.EqualTo(database.RecipientId));
         await WriteContent(database, database.BindingId, boundary.Concat(new byte[] { 32 }).ToArray());
@@ -263,19 +279,28 @@ public class TeamsGraphBindingTests {
         Assert.That(await Count<Message>(database), Is.EqualTo(2));
     }
 
-    /// <summary>Checks bounded candidate discovery never silently chooses a partial result.</summary>
+    /// <summary>Checks the inclusive candidate limit and rejects populations that exceed it.</summary>
     /// <param name="postgres">Whether to exercise PostgreSQL.</param>
+    /// <param name="population">The actual number of matching graph records.</param>
+    /// <param name="accepted">Whether ingress must accept the bounded population.</param>
     /// <returns>The asynchronous test operation.</returns>
-    [TestCase(false), TestCase(true), Parallelizable]
-    public async Task ReceiveAsync_CandidateFlood_ExceedsBoundAndFailsClosed(bool postgres) {
+    [TestCase(false, 128, true), TestCase(true, 128, true)]
+    [TestCase(false, 129, false), TestCase(true, 129, false), Parallelizable]
+    public async Task ReceiveAsync_CandidateBound_AcceptsOnlySafePopulation(bool postgres, int population, bool accepted) {
         using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(postgres);
         using TeamsRoutingFixture fixture = new(database);
-        for (int index = 0; index < 128; index++)
+        for (int index = 1; index < population; index++)
             await database.AddBindingAsync(database.OtherId, database.OtherId, "forged", "wrong-secret");
-        Assert.That(await Count<Node>(database), Is.EqualTo(129));
+        Assert.That(await Count<Node>(database), Is.EqualTo(population));
         using HttpResponseMessage response = await fixture.Host.Post(fixture.Host.Token());
-        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.ServiceUnavailable));
-        Assert.That(await Count<Message>(database), Is.Zero);
+        Assert.That(response.StatusCode, Is.EqualTo(accepted ? HttpStatusCode.OK : HttpStatusCode.ServiceUnavailable));
+        Assert.That(await Count<Message>(database), Is.EqualTo(accepted ? 1 : 0));
+        Assert.That(await Count<TeamsMessageOrigin>(database), Is.EqualTo(accepted ? 1 : 0));
+        if (accepted) {
+            Message message = await database.Entities.Load<Message>().ExecuteEntityAsync();
+            Assert.That(message.RecipientId, Is.EqualTo(database.RecipientId));
+            Assert.That(message.Subject, Is.EqualTo("[divoid] Teams message"));
+        }
         Assert.That(fixture.Host.Connector.Bodies, Is.Empty);
     }
 

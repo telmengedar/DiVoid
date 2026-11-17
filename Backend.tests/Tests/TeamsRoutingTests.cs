@@ -443,15 +443,20 @@ public class TeamsRoutingTests {
         Assert.That(fixture.Host.Connector.Bodies, Is.Empty);
     }
 
-    /// <summary>Checks that old environment fields cannot remain a competing authority.</summary>
+    /// <summary>Checks old environment fields cannot remain a competing authority in either transport state.</summary>
     /// <param name="field">The legacy routing field.</param>
-    [TestCase("Teams:Target:UserId"), TestCase("Teams:BridgeUserId"), TestCase("Teams:Target:Tag"), Parallelizable]
-    public void TeamsRoutingOptions_LegacyRoutingField_RejectsStartup(string field) {
-        Dictionary<string, string?> config = new() { ["Teams:Enabled"] = "true", ["AzureAd:ClientId"] = TeamsWebhookFixture.ClientId };
+    /// <param name="enabled">Whether Teams transport is enabled.</param>
+    [TestCase("Teams:Target:UserId", true), TestCase("Teams:BridgeUserId", true), TestCase("Teams:Target:Tag", true)]
+    [TestCase("Teams:Target:UserId", false), TestCase("Teams:BridgeUserId", false), TestCase("Teams:Target:Tag", false), Parallelizable]
+    public void TeamsRoutingOptions_LegacyRoutingField_RejectsStartup(string field, bool enabled) {
+        Dictionary<string, string?> config = new() {
+            ["Teams:Enabled"] = enabled.ToString(), ["AzureAd:ClientId"] = TeamsWebhookFixture.ClientId
+        };
         TeamsRoutingOptions valid = new(new ConfigurationBuilder().AddInMemoryCollection(config).Build());
-        Assert.That(valid.Enabled, Is.True);
+        Assert.That(valid.Enabled, Is.EqualTo(enabled));
+        config[field] = "";
+        Assert.DoesNotThrow(() => new TeamsRoutingOptions(new ConfigurationBuilder().AddInMemoryCollection(config).Build()));
         config[field] = "legacy-value";
-
         Assert.Throws<InvalidOperationException>(() => new TeamsRoutingOptions(
             new ConfigurationBuilder().AddInMemoryCollection(config).Build()));
     }

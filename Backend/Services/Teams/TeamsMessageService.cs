@@ -27,15 +27,15 @@ public sealed class TeamsMessageService {
     readonly MessageService messages;
     readonly TeamsRoutingOptions options;
     readonly ConversationClient connector;
-    readonly TeamsGraphBindingService binding;
+    readonly ITeamsGraphBindingService binding;
 
     /// <summary>Creates the concrete Teams inbox transport.</summary>
     /// <param name="database">The application database.</param>
     /// <param name="messages">The existing inbox insertion service.</param>
     /// <param name="options">The trusted bot configuration.</param>
-    /// <param name="binding">The concrete protected graph resolver.</param>
+    /// <param name="binding">The protected graph resolver.</param>
     /// <param name="connector">The authenticated native Connector client.</param>
-    public TeamsMessageService(IEntityManager database, MessageService messages, TeamsRoutingOptions options, TeamsGraphBindingService binding,
+    public TeamsMessageService(IEntityManager database, MessageService messages, TeamsRoutingOptions options, ITeamsGraphBindingService binding,
         ConversationClient connector = null) {
         this.database = database;
         this.messages = messages;
