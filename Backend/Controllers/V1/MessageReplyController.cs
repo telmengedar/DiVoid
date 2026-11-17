@@ -31,4 +31,12 @@ public class MessageReplyController : ControllerBase {
     [HttpPost, Authorize(Policy = "write")]
     public Task<MessageReplyReceipt> Reply(long messageId, [FromBody] MessageReplyBody reply, CancellationToken cancellationToken) =>
         transport.ReplyAsync(User.GetDivoidUserId(), messageId, reply.Body, cancellationToken);
+
+    /// <summary>Probes the original Connector conversation without sending an activity.</summary>
+    /// <param name="messageId">The original inbox message identifier.</param>
+    /// <param name="cancellationToken">The caller request cancellation.</param>
+    /// <returns>The safe Connector read outcome without members or private routing data.</returns>
+    [HttpPost("diagnose"), Authorize(Policy = "write")]
+    public Task<MessageReplyDiagnosis> Diagnose(long messageId, CancellationToken cancellationToken) =>
+        transport.DiagnoseAsync(User.GetDivoidUserId(), messageId, cancellationToken);
 }

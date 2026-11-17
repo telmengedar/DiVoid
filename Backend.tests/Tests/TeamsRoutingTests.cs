@@ -21,6 +21,183 @@ namespace Backend.tests.Tests;
 /// <summary>Exercises durable graph-target Teams routing and explicit external reply ownership.</summary>
 [TestFixture, Parallelizable]
 public class TeamsRoutingTests {
+    /// <summary>Checks linked caller cancellation stops the diagnostic read without changing the reply.</summary>
+    /// <returns>The asynchronous test operation.</returns>
+    [Test, Parallelizable]
+    public async Task DiagnoseAsync_CallerCancellation_PreservesReply() {
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
+        using TeamsRoutingFixture fixture = new(database);
+        long id = await Receive(fixture);
+        fixture.Host.Connector.ResponseBarrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task;
+        using CancellationTokenSource cancellation = new();
+        Task<MessageReplyDiagnosis> pending = fixture.Host.Services.GetRequiredService<TeamsMessageService>()
+            .DiagnoseAsync(database.RecipientId, id, cancellation.Token);
+        await fixture.Host.Connector.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        cancellation.Cancel();
+        MessageReplyDiagnosis result = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.That(fixture.Host.Connector.Methods.ToArray(), Is.EqualTo(new[] { HttpMethod.Get }));
+        Assert.That(result.Completed, Is.False);
+        Assert.That(result.Reason, Is.EqualTo("cancelled"));
+        Assert.That((await database.Entities.Load<TeamsMessageOrigin>().Where(origin => origin.MessageId == id).ExecuteEntityAsync()).ReplyState, Is.EqualTo(TeamsReplyState.Pending));
+    }
+
+    /// <summary>Checks explicit native reads preserve retained references and every reply state.</summary>
+    /// <param name="scenario">The retained reply lifecycle to preserve.</param>
+    /// <returns>The asynchronous test operation.</returns>
+    [TestCase("pending"), TestCase("failed"), TestCase("unknown"), TestCase("sending"), TestCase("sent"), TestCase("consumed"), Parallelizable]
+    public async Task DiagnoseAsync_OwnerRead_PreservesStateAndDiscardsMembers(string scenario) {
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
+        using TeamsRoutingFixture fixture = new(database);
+        long id = await Receive(fixture);
+        TeamsReplyState state = scenario switch {
+            "failed" => TeamsReplyState.Failed, "unknown" => TeamsReplyState.Unknown,
+            "sending" => TeamsReplyState.Sending, "sent" => TeamsReplyState.Sent, _ => TeamsReplyState.Pending
+        };
+        await database.Entities.Update<TeamsMessageOrigin>().Set(origin => origin.ReplyState == state,
+            origin => origin.ReplyBodyHash == "retained-private-hash", origin => origin.ErrorCategory == "retained-category",
+            origin => origin.OutboundActivityId == "retained-receipt").Where(origin => origin.MessageId == id).ExecuteAsync();
+        if (scenario == "consumed") {
+            using HttpResponseMessage consumed = await fixture.Host.Send(HttpMethod.Delete, Rest.Path("api/messages", id), fixture.UserToken(database.RecipientId));
+            Assert.That(consumed.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            await database.SetBindingAsync(database.BindingId, database.RecipientId, database.OtherId, "rebound");
+        }
+        TeamsMessageOrigin before = await database.Entities.Load<TeamsMessageOrigin>().Where(origin => origin.MessageId == id).ExecuteEntityAsync();
+        using HttpResponseMessage receipt = await fixture.Status(id);
+        Assert.That(receipt.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(fixture.Host.Connector.Methods, Is.Empty);
+        fixture.Host.Connector.ResponseBody = "[{\"id\":\"private-member-canary\",\"name\":\"private-name-canary\"}]";
+
+        using HttpResponseMessage response = await fixture.Diagnose(id);
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(fixture.Host.Connector.Methods.ToArray(), Is.EqualTo(new[] { HttpMethod.Get }));
+        Assert.That(fixture.Host.Connector.Destinations.Single().AbsoluteUri, Is.EqualTo(TeamsWebhookFixture.ServiceUrl.TrimEnd('/') + "/v3/conversations/" + Uri.EscapeDataString(before.ConversationId) + "/members"));
+        Assert.That(fixture.Host.Connector.Bodies, Is.Empty);
+        string json = await response.Content.ReadAsStringAsync();
+        MessageReplyDiagnosis result = Json.Read<MessageReplyDiagnosis>(json);
+        Assert.That(result.Completed, Is.True);
+        Assert.That(result.HttpStatus, Is.Null);
+        Assert.That(result.Reason, Is.EqualTo("connector_read_completed"));
+        Assert.That(Json.WriteString(await database.Entities.Load<TeamsMessageOrigin>().Where(origin => origin.MessageId == id).ExecuteEntityAsync()), Is.EqualTo(Json.WriteString(before)));
+        Assert.That(json.Contains("private-member") || json.Contains("private-name") || json.Contains(before.ConversationId) || json.Contains(before.ServiceUrl) || json.Contains(before.ActivityId) || json.Contains(before.SenderId), Is.False);
+    }
+
+    /// <summary>Checks original-recipient authorization precedes every diagnostic request.</summary>
+    /// <param name="scenario">The unavailable actor or retained route.</param>
+    /// <returns>The asynchronous test operation.</returns>
+    [TestCase("other"), TestCase("read-only"), TestCase("disabled"), TestCase("expired"), TestCase("bot"), TestCase("tenant"), TestCase("url"), TestCase("integration-off"), Parallelizable]
+    public async Task DiagnoseAsync_UnavailableOrigin_RejectsBeforeNetwork(string scenario) {
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
+        using TeamsRoutingFixture fixture = new(database);
+        long id = await Receive(fixture);
+        if (scenario == "read-only")
+            await database.Entities.Update<User>().Set(user => user.Permissions == "[\"read\"]").Where(user => user.Id == database.RecipientId).ExecuteAsync();
+        else if (scenario == "disabled")
+            await database.Entities.Update<User>().Set(user => user.Enabled == false).Where(user => user.Id == database.RecipientId).ExecuteAsync();
+        else if (scenario == "expired") {
+            long? expired = DateTimeOffset.UtcNow.AddSeconds(-1).ToUnixTimeSeconds();
+            await database.Entities.Update<TeamsMessageOrigin>().Set(origin => origin.ExpiresAt == expired).Where(origin => origin.MessageId == id).ExecuteAsync();
+        } else if (scenario == "bot")
+            await database.Entities.Update<TeamsMessageOrigin>().Set(origin => origin.BotAppId == "another-bot").Where(origin => origin.MessageId == id).ExecuteAsync();
+        else if (scenario == "tenant")
+            await database.Entities.Update<TeamsMessageOrigin>().Set(origin => origin.TenantId == "invalid-tenant").Where(origin => origin.MessageId == id).ExecuteAsync();
+        else if (scenario == "url")
+            await database.Entities.Update<TeamsMessageOrigin>().Set(origin => origin.ServiceUrl == "http://unsafe.invalid/").Where(origin => origin.MessageId == id).ExecuteAsync();
+        using TeamsRoutingFixture request = new(database, scenario == "integration-off" ? new() { ["Teams:Enabled"] = "false" } : null);
+
+        using HttpResponseMessage response = await request.Diagnose(id, scenario == "other" ? database.OtherId : null);
+
+        Assert.That(response.StatusCode, Is.EqualTo(scenario is "read-only" or "disabled" ? HttpStatusCode.Forbidden : HttpStatusCode.NotFound));
+        Assert.That(request.Host.Connector.Methods, Is.Empty);
+    }
+
+    /// <summary>Checks actual native provider errors retain useful fixed reasons without quoting input.</summary>
+    /// <param name="code">The synthetic vendor code.</param>
+    /// <param name="message">The fixed vendor wording.</param>
+    /// <param name="expectedCode">The permitted output code.</param>
+    /// <param name="reason">The permitted output reason.</param>
+    /// <returns>The asynchronous test operation.</returns>
+    [TestCase("Unauthorized", "Authorization has been denied for this request", "Unauthorized", "authorization_denied_generic")]
+    [TestCase("invalidAudience", "Invalid audience", "InvalidAudience", "invalid_audience")]
+    [TestCase("InvalidIssuer", "Invalid issuer", "InvalidIssuer", "invalid_issuer")]
+    [TestCase("InvalidToken", "signature validation failed", "InvalidToken", "signature_validation_failed")]
+    [TestCase("TokenExpired", "token has expired", "TokenExpired", "token_expired")]
+    [TestCase("BotNotInConversationRoster", "bot is not part of the conversation roster", "BotNotInConversationRoster", "bot_not_in_roster")]
+    [TestCase("Unauthorized", "Authorization header is missing", "Unauthorized", "authorization_header_missing")]
+    [TestCase("Unauthorized", "Missing Authorization header", "Unauthorized", "authorization_header_missing")]
+    [TestCase("InvalidBotId", "Invalid Bot AppId", "InvalidBotId", "invalid_bot_app_id")]
+    [TestCase("BotNotRegistered", "bot is not registered", "BotNotRegistered", "bot_not_registered")]
+    [TestCase("InvalidJwtToken", "Invalid JWT token", "InvalidJwtToken", "invalid_jwt_token")]
+    [TestCase("private-code-canary", "unrecognized provider wording", "unlisted_code", "connector_rejected"), Parallelizable]
+    public async Task DiagnoseAsync_NativeRejection_ClassifiesWithoutLeaking(string code, string message, string expectedCode, string reason) {
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
+        TeamsLogCapture capture = new();
+        using TeamsRoutingFixture fixture = new(database, configureServices: services => services.AddLogging(logging => logging.AddProvider(capture)));
+        long id = await Receive(fixture);
+        TeamsMessageOrigin before = await database.Entities.Load<TeamsMessageOrigin>().Where(origin => origin.MessageId == id).ExecuteEntityAsync();
+        const string Canary = "private-response-canary user@example.invalid eyJprivate.token.canary";
+        fixture.Host.Connector.Status = HttpStatusCode.Unauthorized;
+        fixture.Host.Connector.ResponseBody = Json.WriteString(new Dictionary<string, object> { ["error"] = new Dictionary<string, object> {
+            ["code"] = code, ["message"] = message + Canary + before.ServiceUrl + before.ConversationId
+        } });
+
+        using HttpResponseMessage response = await fixture.Diagnose(id);
+
+        Assert.That(fixture.Host.Connector.Methods.ToArray(), Is.EqualTo(new[] { HttpMethod.Get }));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        string json = await response.Content.ReadAsStringAsync();
+        MessageReplyDiagnosis result = Json.Read<MessageReplyDiagnosis>(json);
+        Assert.That(result.Completed, Is.False);
+        Assert.That(result.HttpStatus, Is.EqualTo(401));
+        Assert.That(result.ProviderCode, Is.EqualTo(expectedCode));
+        Assert.That(result.Reason, Is.EqualTo(reason));
+        (LogLevel Level, Exception? Exception, IReadOnlyDictionary<string, object?> Fields) logged = capture.Entries.Single(entry => entry.Fields.TryGetValue("Stage", out object? stage) && Equals(stage, "diagnose"));
+        Assert.That(logged.Level, Is.EqualTo(LogLevel.Error));
+        Assert.That(logged.Exception, Is.Null);
+        Assert.That(logged.Fields["HttpStatus"], Is.EqualTo(401));
+        Assert.That(logged.Fields["ExceptionDetails"], Does.Contain("BotHttpClient").And.Contain("HandleResponseAsync"));
+        Assert.That(Json.WriteString(await database.Entities.Load<TeamsMessageOrigin>().Where(origin => origin.MessageId == id).ExecuteEntityAsync()), Is.EqualTo(Json.WriteString(before)));
+        Assert.That(new[] { json }.Concat(capture.Messages).Any(value => value.Contains(Canary) || value.Contains(before.ServiceUrl) || value.Contains(before.ConversationId) || value.Contains("private-code-canary")), Is.False);
+    }
+
+    /// <summary>Checks malformed provider bodies and ordinary failures preserve safe logging and state.</summary>
+    /// <param name="scenario">The failure transport shape.</param>
+    /// <returns>The asynchronous test operation.</returns>
+    [TestCase("plain"), TestCase("malformed"), TestCase("top-level"), TestCase("non-string"), TestCase("timeout"), TestCase("ordinary"), TestCase("ordinary-http"), TestCase("redirect"), Parallelizable]
+    public async Task DiagnoseAsync_OtherFailure_IsBoundedAndPreservesState(string scenario) {
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
+        TeamsLogCapture capture = new();
+        using TeamsRoutingFixture fixture = new(database, configureServices: services => services.AddLogging(logging => logging.AddProvider(capture)));
+        long id = await Receive(fixture);
+        TeamsMessageOrigin before = await database.Entities.Load<TeamsMessageOrigin>().Where(origin => origin.MessageId == id).ExecuteEntityAsync();
+        fixture.Host.Connector.Status = scenario == "redirect" ? HttpStatusCode.Redirect : HttpStatusCode.ServiceUnavailable;
+        fixture.Host.Connector.ResponseBody = scenario switch {
+            "malformed" => "{private-malformed-canary", "top-level" => "{\"code\":\"ServiceError\",\"message\":\"private-provider-canary\"}",
+            "non-string" => "{\"error\":{\"code\":123,\"message\":\"private-provider-canary\"}}", _ => "private-provider-canary"
+        };
+        Exception? failure = scenario switch {
+            "timeout" => new TaskCanceledException("synthetic cancellation"), "ordinary" => new InvalidOperationException("synthetic safe failure"),
+            "ordinary-http" => new HttpRequestException("synthetic safe HTTP failure", null, HttpStatusCode.BadGateway), _ => null
+        };
+        fixture.Host.Connector.Failure = failure;
+
+        using HttpResponseMessage response = await fixture.Diagnose(id);
+
+        Assert.That(fixture.Host.Connector.Methods.ToArray(), Is.EqualTo(new[] { HttpMethod.Get }));
+        string json = await response.Content.ReadAsStringAsync();
+        MessageReplyDiagnosis result = Json.Read<MessageReplyDiagnosis>(json);
+        Assert.That(result.Completed, Is.False);
+        Assert.That(result.HttpStatus, Is.EqualTo(scenario == "ordinary-http" ? 502 : failure != null ? null : scenario == "redirect" ? 302 : 503));
+        Assert.That(result.Reason, Is.EqualTo(scenario switch { "timeout" => "timeout", "ordinary" => "request_failed", _ => "connector_rejected" }));
+        Assert.That(result.ProviderCode, Is.EqualTo(scenario switch { "malformed" => "unreadable_code", "top-level" => "ServiceError", _ => "absent" }));
+        (LogLevel Level, Exception? Exception, IReadOnlyDictionary<string, object?> Fields) logged = capture.Entries.Single(entry => entry.Fields.TryGetValue("Stage", out object? stage) && Equals(stage, "diagnose"));
+        Assert.That(logged.Exception, failure != null ? Is.SameAs(failure) : Is.Null);
+        Assert.That(Json.WriteString(await database.Entities.Load<TeamsMessageOrigin>().Where(origin => origin.MessageId == id).ExecuteEntityAsync()), Is.EqualTo(Json.WriteString(before)));
+        Assert.That(new[] { json }.Concat(capture.Messages).Any(value => value.Contains("private-provider-canary") || value.Contains("private-malformed-canary")), Is.False);
+    }
+
     /// <summary>Checks that authenticated ordinary text reaches only the configured inbox.</summary>
     /// <param name="postgres">Whether to use PostgreSQL.</param>
     /// <returns>The asynchronous test operation.</returns>

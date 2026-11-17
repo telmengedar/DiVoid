@@ -30,6 +30,7 @@ public sealed class TeamsMessageService {
     readonly ConversationClient connector;
     readonly ITeamsGraphBindingService binding;
     readonly ILogger<TeamsMessageService> logger;
+    readonly IHttpClientFactory httpClients;
 
     /// <summary>Creates the concrete Teams inbox transport.</summary>
     /// <param name="database">The application database.</param>
@@ -38,14 +39,16 @@ public sealed class TeamsMessageService {
     /// <param name="binding">The protected graph resolver.</param>
     /// <param name="logger">The application failure logger.</param>
     /// <param name="connector">The authenticated native Connector client.</param>
+    /// <param name="httpClients">The separately bounded diagnostic HTTP client factory.</param>
     public TeamsMessageService(IEntityManager database, MessageService messages, TeamsRoutingOptions options, ITeamsGraphBindingService binding, ILogger<TeamsMessageService> logger,
-        ConversationClient connector = null) {
+        ConversationClient connector = null, IHttpClientFactory httpClients = null) {
         this.database = database;
         this.messages = messages;
         this.options = options;
         this.connector = connector;
         this.binding = binding;
         this.logger = logger;
+        this.httpClients = httpClients;
     }
 
     /// <summary>Queues one authenticated native message using the current protected graph binding.</summary>
@@ -92,6 +95,70 @@ public sealed class TeamsMessageService {
     /// <param name="messageId">The original inbox identifier.</param>
     /// <returns>The public reply receipt.</returns>
     public async Task<MessageReplyReceipt> GetAsync(long callerId, long messageId) => Receipt(await AuthorizedOrigin(callerId, messageId));
+
+    /// <summary>Reads the original Connector conversation without changing its reply state.</summary>
+    /// <param name="callerId">The authenticated original DiVoid recipient.</param>
+    /// <param name="messageId">The original inbox identifier.</param>
+    /// <param name="cancellationToken">The requesting caller cancellation.</param>
+    /// <returns>The safe native Connector read outcome without member data.</returns>
+    public async Task<MessageReplyDiagnosis> DiagnoseAsync(long callerId, long messageId, CancellationToken cancellationToken) {
+        TeamsMessageOrigin origin = await AuthorizedOrigin(callerId, messageId);
+        cancellationToken.ThrowIfCancellationRequested();
+        using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(15));
+        using HttpClient http = httpClients.CreateClient("TeamsConnectorDiagnosis");
+        ConversationClient diagnostic = new(http);
+        try {
+            await diagnostic.GetConversationMembersAsync(origin.ConversationId, new Uri(origin.ServiceUrl),
+                requestContext: new BotRequestContext { BotAppId = options.BotAppId }, cancellationToken: timeout.Token);
+            return new MessageReplyDiagnosis { Completed = true, ProviderCode = "absent", Reason = "connector_read_completed" };
+        } catch (Exception exception) {
+            LogFailure(messageId, "diagnose", exception);
+            return DiagnoseFailure(exception, cancellationToken.IsCancellationRequested);
+        }
+    }
+
+    static MessageReplyDiagnosis DiagnoseFailure(Exception exception, bool callerCancelled) {
+        Exception[] causes = FailureCauses(exception).ToArray();
+        HttpRequestException response = causes.OfType<HttpRequestException>().FirstOrDefault(cause => cause.StatusCode.HasValue);
+        MessageReplyDiagnosis result = new() {
+            HttpStatus = response?.StatusCode is HttpStatusCode status ? (int)status : null,
+            ProviderCode = "absent",
+            Reason = causes.Any(cause => cause is OperationCanceledException) ? callerCancelled ? "cancelled" : "timeout" :
+                response == null ? "request_failed" : "connector_rejected"
+        };
+        if (response == null || !QuotesInput(response))
+            return result;
+        string[] codes = ["Unauthorized", "Forbidden", "InvalidToken", "InvalidAuthenticationToken", "AuthenticationFailed",
+            "AuthorizationFailed", "BotNotInConversationRoster", "BotNotInConversation", "BotNotRegistered", "InvalidBotId",
+            "InvalidJwtToken", "InvalidAudience", "InvalidIssuer", "TokenExpired", "BadArgument", "ServiceError"];
+        int start = response.Message.IndexOf('{');
+        if (start >= 0) {
+            try {
+                Dictionary<string, object> fields = Json.Read<Dictionary<string, object>>(response.Message[start..]);
+                if (fields.TryGetValue("error", out object error) && error is Dictionary<string, object> nested)
+                    fields = nested;
+                if (fields.TryGetValue("code", out object raw) && raw is string code)
+                    result.ProviderCode = codes.FirstOrDefault(allowed => allowed.Equals(code, StringComparison.OrdinalIgnoreCase)) ?? "unlisted_code";
+            } catch (Exception) {
+                result.ProviderCode = "unreadable_code";
+            }
+        }
+        foreach ((string text, string category) in new[] {
+            ("Authorization has been denied for this request", "authorization_denied_generic"),
+            ("Invalid audience", "invalid_audience"), ("Invalid issuer", "invalid_issuer"),
+            ("signature validation failed", "signature_validation_failed"), ("token has expired", "token_expired"),
+            ("bot is not part of the conversation roster", "bot_not_in_roster"),
+            ("Authorization header is missing", "authorization_header_missing"),
+            ("Missing Authorization header", "authorization_header_missing"),
+            ("Invalid Bot AppId", "invalid_bot_app_id"), ("bot is not registered", "bot_not_registered"),
+            ("Invalid JWT token", "invalid_jwt_token") })
+            if (response.Message.Contains(text, StringComparison.OrdinalIgnoreCase)) {
+                result.Reason = category;
+                break;
+            }
+        return result;
+    }
 
     /// <summary>Attempts one explicit final reply to the original Teams conversation.</summary>
     /// <param name="callerId">The authenticated DiVoid recipient.</param>

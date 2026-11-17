@@ -78,6 +78,10 @@ public static class TeamsExtensions {
         services.EnsureMsalServices(botConfig);
         services.AddBotClient<ConversationClient>(nameof(ConversationClient), botConfig);
         services.AddHttpClient(nameof(ConversationClient)).RemoveAllLoggers();
+        services.AddBotHttpClient("TeamsConnectorDiagnosis", botConfig);
+        services.AddHttpClient("TeamsConnectorDiagnosis", client => client.Timeout = TimeSpan.FromSeconds(15))
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+            .RemoveAllLoggers();
         services.AddBotClient<UserTokenClient>(nameof(UserTokenClient), botConfig);
         services.AddBotHttpClient(nameof(ApiClient), botConfig);
         services.AddTeamsApiClient(nameof(ApiClient));
