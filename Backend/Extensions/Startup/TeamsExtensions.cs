@@ -19,7 +19,7 @@ namespace Backend.Extensions.Startup;
 /// <summary>Registers the isolated public Azure Teams activity webhook.</summary>
 public static class TeamsExtensions {
     const string Scheme = "TeamsBot";
-    const string CredentialTenant = "botframework.com";
+    const string LegacyCredentialTenant = "botframework.com";
     const string CredentialInstance = "https://login.microsoftonline.com/";
     const string Issuer = "https://api.botframework.com";
     const string Metadata = "https://login.botframework.com/v1/.well-known/openid-configuration";
@@ -37,6 +37,7 @@ public static class TeamsExtensions {
         ValidateConfiguration(configuration);
         AllowedTenants(configuration);
         string clientId = configuration["AzureAd:ClientId"];
+        string credentialTenant = ResolveCredentialTenant(configuration);
         services.AddAuthentication().AddJwtBearer(Scheme, options => {
             options.MetadataAddress = Metadata;
             options.MapInboundClaims = false;
@@ -88,12 +89,12 @@ public static class TeamsExtensions {
         services.AddAuthentication().AddMicrosoftIdentityWebApi(_ => { }, options => {
             options.ClientId = clientId;
             options.Instance = CredentialInstance;
-            options.TenantId = CredentialTenant;
+            options.TenantId = credentialTenant;
             options.Authority = string.Empty;
         }, jwtBearerScheme: "AzureAd");
         services.PostConfigure<MicrosoftIdentityApplicationOptions>("AzureAd", options => {
             options.Instance = CredentialInstance;
-            options.TenantId = CredentialTenant;
+            options.TenantId = credentialTenant;
             options.Authority = string.Empty;
         });
         services.AddSingleton(new TeamsBotApplicationOptions {
@@ -122,9 +123,9 @@ public static class TeamsExtensions {
         if (credentials.Length != 1 || credentials[0]["SourceType"] != "ClientSecret" ||
             string.IsNullOrWhiteSpace(credentials[0]["ClientSecret"]))
             throw new InvalidOperationException("Teams requires one AzureAd:ClientCredentials ClientSecret credential.");
+        ResolveCredentialTenant(configuration);
         foreach ((string field, string expected) in new[] {
             ("AzureAd:Instance", CredentialInstance),
-            ("AzureAd:TenantId", CredentialTenant),
             ("BotFramework:OpenIdMetadataUrl", Metadata),
             ("BotFramework:BotTokenIssuer", Issuer),
             ("BotFramework:GraphBaseUrl", "https://graph.microsoft.com")
@@ -134,6 +135,15 @@ public static class TeamsExtensions {
         foreach (string field in new[] { "AzureAd:DangerouslyAllowUnauthenticatedRequests", "Teams:DangerouslyAllowUnauthenticatedRequests" })
             if (configuration[field] is string value && (!bool.TryParse(value, out bool bypass) || bypass))
                 throw new InvalidOperationException("Teams authentication cannot be disabled.");
+    }
+
+    internal static string ResolveCredentialTenant(IConfiguration configuration) {
+        string tenant = configuration["AzureAd:TenantId"];
+        if (tenant == null || tenant == LegacyCredentialTenant)
+            return LegacyCredentialTenant;
+        if (Guid.TryParse(tenant, out Guid id) && id != Guid.Empty)
+            return id.ToString("D");
+        throw new InvalidOperationException("AzureAd:TenantId must be a nonempty hosting tenant GUID or botframework.com when Teams is enabled.");
     }
 
     internal static HashSet<Guid> AllowedTenants(IConfiguration configuration) {

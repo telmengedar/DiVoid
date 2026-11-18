@@ -10,18 +10,20 @@ using Moq;
 
 namespace Backend.tests.Tests;
 
-/// <summary>Checks the shared Bot Framework credential authority independently of activity tenancy.</summary>
+/// <summary>Checks the selected Bot Framework credential authority independently of activity tenancy.</summary>
 [TestFixture, Parallelizable]
 public class TeamsManagedProfileTests {
-    /// <summary>Checks actual named SDK credential options without an owner directory GUID.</summary>
-    /// <param name="explicitTenant">Whether the fixed authority domain is explicitly configured.</param>
+    const string HostingTenant = "8165ad9e-f318-4192-b1bf-3ab83959819f";
+
+    /// <summary>Checks actual named SDK credential options for host and legacy profiles.</summary>
+    /// <param name="tenant">The optional configured credential tenant.</param>
     /// <returns>The asynchronous test operation.</returns>
-    [TestCase(false), TestCase(true), Parallelizable]
-    public async Task AddTeamsWebhook_ManagedCredentials_UsesFixedNativeOptions(bool explicitTenant) {
-        Dictionary<string, string?> config = explicitTenant
-            ? new() { ["AzureAd:TenantId"] = "botframework.com" }
-            : new();
-        using TeamsWebhookFixture fixture = new(overrides: config, graphBinding: true);
+    [TestCase(null), TestCase("botframework.com"), TestCase(HostingTenant)]
+    [TestCase("8165AD9E-F318-4192-B1BF-3AB83959819F"), Parallelizable]
+    public async Task AddTeamsWebhook_ManagedCredentials_UsesSelectedNativeOptions(string? tenant) {
+        Dictionary<string, string?> config = new() { ["AzureAd:TenantId"] = tenant };
+        string expected = tenant == null || tenant == "botframework.com" ? "botframework.com" : HostingTenant;
+        using TeamsWebhookFixture fixture = new(overrides: config, graphBinding: true, environmentName: Microsoft.Extensions.Hosting.Environments.Production);
         MicrosoftIdentityApplicationOptions options = fixture.Services
             .GetRequiredService<IOptionsMonitor<MicrosoftIdentityApplicationOptions>>().Get("AzureAd");
         IConfiguration original = fixture.Services.GetRequiredService<IConfiguration>();
@@ -29,22 +31,28 @@ public class TeamsManagedProfileTests {
         using HttpResponseMessage response = await fixture.Post(fixture.Token());
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(fixture.Services.GetRequiredService<Microsoft.Extensions.Hosting.IHostEnvironment>().EnvironmentName, Is.EqualTo("Production"));
+        Assert.That(original.GetValue<bool>("Auth:Enabled"), Is.True);
         Assert.That(options.Instance, Is.EqualTo("https://login.microsoftonline.com/"));
-        Assert.That(options.TenantId, Is.EqualTo("botframework.com"));
+        Assert.That(options.TenantId, Is.EqualTo(expected));
+        Assert.That(fixture.Services.GetRequiredService<IOptionsMonitor<Microsoft.Identity.Web.MicrosoftIdentityOptions>>()
+            .Get("AzureAd").TenantId, Is.EqualTo(expected));
         Assert.That(options.Authority, Is.Empty);
         Assert.That(options.ClientId, Is.EqualTo(TeamsWebhookFixture.ClientId));
         Assert.That(options.ClientCredentials!.Count(), Is.EqualTo(1));
-        Assert.That(options.ClientCredentials.Single().SourceType, Is.EqualTo(CredentialSource.ClientSecret));
-        Assert.That(options.ClientCredentials.Single().ClientSecret == original["AzureAd:ClientCredentials:0:ClientSecret"], Is.True);
-        Assert.That(original["AzureAd:TenantId"], explicitTenant ? Is.EqualTo("botframework.com") : Is.Null);
+        Assert.That(options.ClientCredentials!.Single().SourceType, Is.EqualTo(CredentialSource.ClientSecret));
+        Assert.That(options.ClientCredentials!.Single().ClientSecret == original["AzureAd:ClientCredentials:0:ClientSecret"], Is.True);
+        Assert.That(original["AzureAd:TenantId"], Is.EqualTo(tenant));
         Assert.That(fixture.Connector.Bodies, Is.Empty);
     }
 
     /// <summary>Checks the real SDK credential handler's scope and named authority selection.</summary>
     /// <param name="diagnostic">Whether the separately bounded diagnostic client issues the request.</param>
+    /// <param name="tenant">The configured credential tenant.</param>
     /// <returns>The asynchronous test operation.</returns>
-    [TestCase(false), TestCase(true), Parallelizable]
-    public async Task ProcessAsync_NativeCredentialHandler_UsesSharedOptionsAndConnectorScope(bool diagnostic) {
+    [TestCase(false, "botframework.com"), TestCase(true, "botframework.com")]
+    [TestCase(false, HostingTenant), TestCase(true, HostingTenant), Parallelizable]
+    public async Task ProcessAsync_NativeCredentialHandler_UsesSelectedOptionsAndConnectorScope(bool diagnostic, string tenant) {
         string? observedScope = null;
         string? observedName = null;
         Mock<IAuthorizationHeaderProvider> provider = new(MockBehavior.Strict);
@@ -54,7 +62,8 @@ public class TeamsManagedProfileTests {
                 observedScope = scope;
                 observedName = options.AcquireTokenOptions.AuthenticationOptionsName;
             }).ReturnsAsync("Bearer synthetic-sdk-credential");
-        using TeamsWebhookFixture fixture = new(graphBinding: true, preserveOutboundAuthentication: true, configureServices: services => {
+        using TeamsWebhookFixture fixture = new(overrides: new() { ["AzureAd:TenantId"] = tenant },
+            graphBinding: true, preserveOutboundAuthentication: true, configureServices: services => {
             services.RemoveAll<IAuthorizationHeaderProvider>();
             services.AddSingleton(provider.Object);
         });
@@ -81,7 +90,7 @@ public class TeamsManagedProfileTests {
         MicrosoftIdentityApplicationOptions effective = fixture.Services
             .GetRequiredService<IOptionsMonitor<MicrosoftIdentityApplicationOptions>>().Get(observedName!);
         Assert.That(effective.Instance, Is.EqualTo("https://login.microsoftonline.com/"));
-        Assert.That(effective.TenantId, Is.EqualTo("botframework.com"));
+        Assert.That(effective.TenantId, Is.EqualTo(tenant));
         Assert.That(effective.Authority, Is.Empty);
         Assert.That(fixture.Connector.HasBearerAuthorization, Is.True);
         Assert.That(fixture.Connector.Bodies, Has.Count.EqualTo(diagnostic ? 0 : 1));
@@ -91,11 +100,14 @@ public class TeamsManagedProfileTests {
 
     /// <summary>Checks real native token-provider selection reaches the approved authority without external traffic.</summary>
     /// <param name="nativeClient">Whether to traverse the native conversation client authentication handler.</param>
+    /// <param name="tenant">The configured credential tenant.</param>
     /// <returns>The asynchronous test operation.</returns>
-    [TestCase(false), TestCase(true), Parallelizable]
-    public async Task NativeAuthorizationProvider_RegisteredAzureAd_ReachesAuthorityBoundary(bool nativeClient) {
-        NativeAuthorityBoundary boundary = new();
-        using TeamsWebhookFixture fixture = new(preserveOutboundAuthentication: true, configureServices: services => {
+    [TestCase(false, "botframework.com"), TestCase(true, "botframework.com")]
+    [TestCase(false, HostingTenant), TestCase(true, HostingTenant), Parallelizable]
+    public async Task NativeAuthorizationProvider_RegisteredAzureAd_ReachesAuthorityBoundary(bool nativeClient, string tenant) {
+        NativeAuthorityBoundary boundary = new(tenant);
+        using TeamsWebhookFixture fixture = new(overrides: new() { ["AzureAd:TenantId"] = tenant },
+            preserveOutboundAuthentication: true, environmentName: Microsoft.Extensions.Hosting.Environments.Production, configureServices: services => {
             services.ConfigureAll<HttpClientFactoryOptions>(options => options.HttpMessageHandlerBuilderActions.Add(builder => {
                 builder.PrimaryHandler = boundary;
             }));
@@ -131,10 +143,11 @@ public class TeamsManagedProfileTests {
     }
 
     /// <summary>Checks that valid conversation tenants do not select the credential authority.</summary>
+    /// <param name="tenant">The configured credential tenant.</param>
     /// <returns>The asynchronous test operation.</returns>
-    [Test, Parallelizable]
-    public async Task ProcessAsync_TwoActivityTenants_UseSameSharedAuthority() {
-        using TeamsWebhookFixture fixture = new(graphBinding: true);
+    [TestCase("botframework.com"), TestCase(HostingTenant), Parallelizable]
+    public async Task ProcessAsync_TwoActivityTenants_UseSelectedAuthority(string tenant) {
+        using TeamsWebhookFixture fixture = new(graphBinding: true, overrides: new() { ["AzureAd:TenantId"] = tenant });
         using HttpResponseMessage first = await fixture.Post(fixture.Token());
         Dictionary<string, object?> second = ActivityFor(Guid.NewGuid().ToString());
 
@@ -145,16 +158,18 @@ public class TeamsManagedProfileTests {
         Assert.That(fixture.Connector.Bodies, Is.Empty);
         MicrosoftIdentityApplicationOptions options = fixture.Services
             .GetRequiredService<IOptionsMonitor<MicrosoftIdentityApplicationOptions>>().Get("AzureAd");
-        Assert.That(options.TenantId, Is.EqualTo("botframework.com"));
+        Assert.That(options.TenantId, Is.EqualTo(tenant));
         Assert.That(fixture.Database.Invocations, Is.Empty);
     }
 
     /// <summary>Checks that the optional allowlist narrows only activity tenants.</summary>
+    /// <param name="tenant">The configured credential tenant.</param>
     /// <returns>The asynchronous test operation.</returns>
-    [Test, Parallelizable]
-    public async Task ProcessAsync_ExplicitTenantAllowlist_RejectsOnlyUnlistedActivityTenant() {
+    [TestCase("botframework.com"), TestCase(HostingTenant), Parallelizable]
+    public async Task ProcessAsync_ExplicitTenantAllowlist_RejectsOnlyUnlistedActivityTenant(string tenant) {
         string secondTenant = Guid.NewGuid().ToString();
         using TeamsWebhookFixture fixture = new(graphBinding: true, overrides: new() {
+            ["AzureAd:TenantId"] = tenant,
             ["Teams:AllowedTenantIds:0"] = TeamsWebhookFixture.TenantId,
             ["Teams:AllowedTenantIds:1"] = secondTenant
         });
@@ -168,7 +183,7 @@ public class TeamsManagedProfileTests {
         Assert.That(denied.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
         Assert.That(fixture.Connector.Bodies, Is.Empty);
         Assert.That(fixture.Services.GetRequiredService<IOptionsMonitor<MicrosoftIdentityApplicationOptions>>()
-            .Get("AzureAd").TenantId, Is.EqualTo("botframework.com"));
+            .Get("AzureAd").TenantId, Is.EqualTo(tenant));
     }
 
     /// <summary>Checks mandatory activity tenant syntax and conversation consistency.</summary>
@@ -193,7 +208,10 @@ public class TeamsManagedProfileTests {
     /// <param name="value">The invalid configuration value.</param>
     [TestCase("AzureAd:TenantId", "common")]
     [TestCase("AzureAd:TenantId", "organizations")]
-    [TestCase("AzureAd:TenantId", TeamsWebhookFixture.TenantId)]
+    [TestCase("AzureAd:TenantId", "")]
+    [TestCase("AzureAd:TenantId", " ")]
+    [TestCase("AzureAd:TenantId", "00000000-0000-0000-0000-000000000000")]
+    [TestCase("AzureAd:TenantId", "8165ad9e-f318-4192-b1bf-3ab83959819z")]
     [TestCase("AzureAd:TenantId", "another.example")]
     [TestCase("AzureAd:Instance", "https://untrusted.invalid/")]
     [TestCase("AzureAd:Authority", "https://login.microsoftonline.com/common")]

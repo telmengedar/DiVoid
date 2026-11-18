@@ -115,6 +115,46 @@ public class TeamsDiagnosisObservationTests {
             value.Contains("private-token-canary") || token.Length > 0 && value.Contains(token)), Is.False);
     }
 
+    /// <summary>Checks the host profile observes its own issuer without adopting activity or shared-tenant issuers.</summary>
+    /// <param name="scenario">The synthetic token issuer profile.</param>
+    /// <param name="expected">The expected available issuer comparison.</param>
+    /// <returns>The asynchronous test operation.</returns>
+    [TestCase("v1", true), TestCase("v2", true), TestCase("legacy", false), TestCase("activity", false)]
+    [TestCase("opaque", null), TestCase("missing-claims", null), Parallelizable]
+    [Description("#33857: observe the configured hosting issuer independently of the activity tenant.")]
+    public async Task Diagnose_HostTenant_ObservesOnlySelectedIssuer(string scenario, bool? expected) {
+        const string HostingTenant = "8165ad9e-f318-4192-b1bf-3ab83959819f";
+        string issuer = scenario switch {
+            "v1" => Rest.Path("https://sts.windows.net", HostingTenant) + "/",
+            "v2" => Rest.Path("https://login.microsoftonline.com", HostingTenant, "v2.0"),
+            "activity" => Rest.Path("https://sts.windows.net", TeamsWebhookFixture.TenantId) + "/",
+            _ => "https://sts.windows.net/d6d49420-f39b-4df7-a1dc-d59a935871db/"
+        };
+        string token = Token(scenario, issuer);
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
+        TeamsLogCapture capture = new();
+        Mock<IAuthorizationHeaderProvider> provider = Provider("Bearer " + token);
+        using TeamsRoutingFixture fixture = Fixture(database, provider, capture, new() { ["AzureAd:TenantId"] = HostingTenant });
+        long id = await Receive(fixture);
+        TeamsMessageOrigin before = await database.Entities.Load<TeamsMessageOrigin>().ExecuteEntityAsync();
+        fixture.Host.Connector.ResponseBody = "[]";
+
+        using HttpResponseMessage response = await fixture.Diagnose(id);
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(fixture.Host.Connector.Methods.ToArray(), Is.EqualTo(new[] { HttpMethod.Get }));
+        string json = await response.Content.ReadAsStringAsync();
+        MessageReplyDiagnosis result = Json.Read<MessageReplyDiagnosis>(json);
+        Assert.That(result.Completed, Is.True);
+        Assert.That(result.HeaderSingleBearer, Is.True);
+        Assert.That(result.OutboundRouteMatchesRetainedOrigin, Is.True);
+        Assert.That(result.RequestContextBotMatchesConfiguredBot, Is.True);
+        Assert.That(result.IssuerMatchesKnownBotFrameworkIssuer, Is.EqualTo(expected));
+        Assert.That(Json.WriteString(await database.Entities.Load<TeamsMessageOrigin>().ExecuteEntityAsync()), Is.EqualTo(Json.WriteString(before)));
+        Assert.That(new[] { json }.Concat(capture.Messages).Any(value => value.Contains(token) ||
+            value.Contains(HostingTenant) || value.Contains(issuer) || value.Contains("private-token-canary")), Is.False);
+    }
+
     /// <summary>Checks response challenges expose only fixed classes without following supplied authorities.</summary>
     /// <param name="scenario">The response challenge syntax and profile.</param>
     /// <param name="challenge">The expected safe challenge class.</param>
@@ -177,8 +217,9 @@ public class TeamsDiagnosisObservationTests {
             value.Contains("private-authority.invalid") || value.Contains("private-resource.invalid")), Is.False);
     }
 
-    static TeamsRoutingFixture Fixture(TeamsRoutingDatabase database, Mock<IAuthorizationHeaderProvider> provider, TeamsLogCapture capture) =>
-        new(database, preserveOutboundAuthentication: true, configureServices: services => {
+    static TeamsRoutingFixture Fixture(TeamsRoutingDatabase database, Mock<IAuthorizationHeaderProvider> provider, TeamsLogCapture capture,
+        Dictionary<string, string?>? overrides = null) =>
+        new(database, overrides: overrides, preserveOutboundAuthentication: true, configureServices: services => {
             services.RemoveAll<IAuthorizationHeaderProvider>();
             services.AddSingleton(provider.Object);
             services.AddLogging(logging => logging.AddProvider(capture));
@@ -201,7 +242,7 @@ public class TeamsDiagnosisObservationTests {
         return (await fixture.Database.Entities.Load<Message>().ExecuteEntityAsync()).Id;
     }
 
-    static string Token(string scenario) {
+    static string Token(string scenario, string? issuer = null) {
         if (scenario == "opaque")
             return "private-token-canary";
         if (scenario == "malformed")
@@ -209,7 +250,7 @@ public class TeamsDiagnosisObservationTests {
         long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         Dictionary<string, object> claims = scenario == "missing-claims" ? new() : new() {
             ["aud"] = scenario == "wrong-audience" ? "https://private-resource.invalid" : "https://api.botframework.com",
-            ["iss"] = scenario switch {
+            ["iss"] = issuer ?? scenario switch {
                 "wrong-issuer" => "https://sts.windows.net/18a7a04d-95fb-488c-a94b-57c246064ac0/",
                 "v2-issuer" => "https://login.microsoftonline.com/d6d49420-f39b-4df7-a1dc-d59a935871db/v2.0",
                 _ => "https://sts.windows.net/d6d49420-f39b-4df7-a1dc-d59a935871db/"
