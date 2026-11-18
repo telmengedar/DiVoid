@@ -14,8 +14,10 @@ public sealed class TeamsRoutingOptions {
                 throw new InvalidOperationException($"Remove legacy routing field {field}; Teams routing is configured in the graph.");
         if (Enabled && !configuration.GetValue("Auth:Enabled", true))
             throw new InvalidOperationException("Teams graph routing requires Auth:Enabled=true to preserve graph write authority.");
-        if (Enabled)
+        if (Enabled) {
             AllowedTenantIds = TeamsExtensions.AllowedTenants(configuration);
+            CredentialTenant = TeamsExtensions.ResolveCredentialTenant(configuration);
+        }
     }
 
     /// <summary>Whether the Teams transport is enabled.</summary>
@@ -23,6 +25,8 @@ public sealed class TeamsRoutingOptions {
 
     /// <summary>The configured and normalized bot application identifier.</summary>
     public string BotAppId { get; }
+
+    internal string CredentialTenant { get; }
 
     /// <summary>The optional activity-tenant restriction, independent of credential authority.</summary>
     public IReadOnlySet<Guid> AllowedTenantIds { get; } = new HashSet<Guid>();

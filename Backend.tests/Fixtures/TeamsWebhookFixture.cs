@@ -7,6 +7,7 @@ using Backend.Services.Messages;
 using Backend.Models.Messages;
 using Backend.Services.Teams;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
@@ -45,8 +46,10 @@ public sealed class TeamsWebhookFixture : IDisposable {
     /// <param name="configureServices">The optional service registration overrides.</param>
     /// <param name="graphBinding">Whether to install a real isolated protected graph binding.</param>
     /// <param name="preserveOutboundAuthentication">Whether the native SDK credential handler is retained.</param>
+    /// <param name="environmentName">The application hosting environment.</param>
     public TeamsWebhookFixture(bool authEnabled = true, Dictionary<string, string?>? overrides = null,
-        Action<IServiceCollection>? configureServices = null, bool preserveOutboundAuthentication = false, bool graphBinding = false) {
+        Action<IServiceCollection>? configureServices = null, bool preserveOutboundAuthentication = false, bool graphBinding = false,
+        string? environmentName = null) {
         if (graphBinding)
             routingDatabase = TeamsRoutingDatabase.CreateAsync(false).GetAwaiter().GetResult();
         Key = new RsaSecurityKey(rsa) { KeyId = "teams-first" };
@@ -65,6 +68,8 @@ public sealed class TeamsWebhookFixture : IDisposable {
             foreach (KeyValuePair<string, string?> value in overrides)
                 config[value.Key] = value.Value;
         factory = TestSetup.CreateTestFactory().WithWebHostBuilder(builder => {
+            if (environmentName != null)
+                builder.UseEnvironment(environmentName);
             builder.ConfigureAppConfiguration((_, builderConfiguration) => builderConfiguration.AddInMemoryCollection(config));
             builder.ConfigureTestServices(services => {
                 services.RemoveAll<IHostedService>();

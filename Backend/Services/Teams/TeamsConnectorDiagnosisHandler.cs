@@ -2,13 +2,15 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Headers;
 using Backend.Models.Messages;
 using Microsoft.Teams.Core.Http;
+using Pooshit.Http.Paths;
 
 namespace Backend.Services.Teams;
 
 /// <summary>Observes one cloned native Connector read without retaining authentication or challenge values.</summary>
-sealed class TeamsConnectorDiagnosisHandler(HttpClient client, Uri expectedRoute, string botAppId, MessageReplyDiagnosis result) : HttpMessageHandler {
+sealed class TeamsConnectorDiagnosisHandler(HttpClient client, Uri expectedRoute, string botAppId, string credentialTenant, MessageReplyDiagnosis result) : HttpMessageHandler {
     const string Resource = "https://api.botframework.com";
     const string CredentialTenant = "d6d49420-f39b-4df7-a1dc-d59a935871db";
+    readonly string issuerTenant = credentialTenant == "botframework.com" ? CredentialTenant : credentialTenant;
     int requests;
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
@@ -60,9 +62,9 @@ sealed class TeamsConnectorDiagnosisHandler(HttpClient client, Uri expectedRoute
             result.AudienceMatchesConnectorResource = audiences.Length == 0 ? null : audiences.Length == 1 && audiences[0] == Resource;
             result.AuthorizedPartyMatchesConfiguredBot = parties.Length == 0 ? null : parties.All(party =>
                 Guid.TryParse(party, out Guid parsed) && parsed.ToString("D") == botAppId);
-            result.IssuerMatchesKnownBotFrameworkIssuer = string.IsNullOrEmpty(jwt.Issuer) ? null : jwt.Issuer is
-                "https://sts.windows.net/d6d49420-f39b-4df7-a1dc-d59a935871db/" or
-                "https://login.microsoftonline.com/d6d49420-f39b-4df7-a1dc-d59a935871db/v2.0";
+            result.IssuerMatchesKnownBotFrameworkIssuer = string.IsNullOrEmpty(jwt.Issuer) ? null :
+                jwt.Issuer == Rest.Path("https://sts.windows.net", issuerTenant, string.Empty) ||
+                jwt.Issuer == Rest.Path("https://login.microsoftonline.com", issuerTenant, "v2.0");
             result.ValidityWindowMatchesNow = notBefore.HasValue && expires.HasValue ? notBefore <= now && expires > now : null;
         } catch (Exception) {
             result.JwtReadable = false;

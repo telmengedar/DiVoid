@@ -111,7 +111,7 @@ public sealed class TeamsMessageService {
         MessageReplyDiagnosis result = new();
         Uri route = new(Rest.Path(new Uri(origin.ServiceUrl).ToString().TrimEnd('/'), "v3", "conversations",
             Uri.EscapeDataString(origin.ConversationId), "members"));
-        using HttpClient observed = new(new TeamsConnectorDiagnosisHandler(http, route, options.BotAppId, result));
+        using HttpClient observed = new(new TeamsConnectorDiagnosisHandler(http, route, options.BotAppId, options.CredentialTenant, result));
         ConversationClient diagnostic = new(observed);
         try {
             await diagnostic.GetConversationMembersAsync(origin.ConversationId, new Uri(origin.ServiceUrl),

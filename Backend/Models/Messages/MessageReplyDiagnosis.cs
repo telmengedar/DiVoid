@@ -26,7 +26,7 @@ public class MessageReplyDiagnosis {
     /// <summary>Whether every available decoded application identity matches the configured bot.</summary>
     public bool? AuthorizedPartyMatchesConfiguredBot { get; set; }
 
-    /// <summary>Whether the available decoded issuer matches the qualified Bot Framework tenant.</summary>
+    /// <summary>Whether the available decoded issuer matches the selected Connector credential tenant.</summary>
     public bool? IssuerMatchesKnownBotFrameworkIssuer { get; set; }
 
     /// <summary>Whether the available decoded validity interval includes the observation time.</summary>
