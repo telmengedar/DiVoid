@@ -6,8 +6,10 @@ using Backend.Services.Messages;
 using Backend.Services.Teams;
 using Backend.tests.Fixtures;
 using Microsoft.Extensions.DependencyInjection;
+using Pooshit.AspNetCore.Services.Errors;
 using Pooshit.Http.Paths;
 using Pooshit.Json;
+using Pooshit.Ocelot.Clients;
 using Pooshit.Ocelot.Entities;
 using Pooshit.Ocelot.Schemas;
 using Pooshit.Ocelot.Tokens;
@@ -101,7 +103,6 @@ public class TeamsMultipleReplyTests {
         TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         fixture.Host.Connector.ResponseBarrier = release.Task;
         Task<HttpResponseMessage> first = fixture.CreateReply(id, key);
-        // A previous rejected attempt already completed Started, so also wait for its new request.
         int expected = failedRetry ? 2 : 1;
         using CancellationTokenSource deadline = new(TimeSpan.FromSeconds(5));
         while (fixture.Host.Connector.Bodies.Count < expected)
@@ -304,6 +305,23 @@ public class TeamsMultipleReplyTests {
         Assert.That(await Count<TeamsMessageReply>(database), Is.Zero);
     }
 
+    /// <summary>Checks a literal null request is rejected before a logical claim or native send.</summary>
+    /// <returns>The asynchronous test operation.</returns>
+    [Test, Parallelizable]
+    public async Task MultipleReplyHttp_NullRequest_NoClaimOrNetwork() {
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
+        using TeamsRoutingFixture fixture = new(database);
+        long id = await Receive(fixture);
+        using HttpResponseMessage response = await fixture.Host.Send(HttpMethod.Post, Rest.Path("api/messages", id, "replies"),
+            fixture.UserToken(database.RecipientId), new StringContent("null", System.Text.Encoding.UTF8, "application/json"));
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        ErrorResponse error = Json.Read<ErrorResponse>(await response.Content.ReadAsStringAsync());
+        Assert.That(error.Code, Is.EqualTo("badparameter"));
+        Assert.That(fixture.Host.Connector.Bodies, Is.Empty);
+        Assert.That(await Count<TeamsMessageReply>(database), Is.Zero);
+    }
+
     /// <summary>Checks the unique pair survives schema reapplication and failed PostgreSQL transactions are disposed before reads.</summary>
     /// <param name="postgres">Whether to use PostgreSQL.</param>
     /// <returns>The asynchronous test operation.</returns>
@@ -336,7 +354,7 @@ public class TeamsMultipleReplyTests {
         using TeamsRoutingFixture fixture = new(database);
         long id = await Receive(fixture);
         Task<HttpResponseMessage> attempt;
-        using (var transaction = database.Entities.Transaction()) {
+        using (Transaction transaction = database.Entities.Transaction()) {
             long? expired = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             await database.Entities.Update<TeamsMessageOrigin>().Set(origin => origin.ExpiresAt == expired)
                 .Where(origin => origin.MessageId == id).ExecuteAsync(transaction);
@@ -436,7 +454,6 @@ public class TeamsMultipleReplyTests {
         await database.Entities.Update<User>().Set(user => user.Permissions == write).Where(user => user.Id == database.RecipientId).ExecuteAsync();
         using HttpResponseMessage deniedRead = await fixture.ReplyStatus(id, key);
         using HttpResponseMessage accepted = await fixture.CreateReply(id, key);
-        // Existing permission hierarchy is admin -> write -> read.
         Assert.That(deniedRead.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
         Assert.That(accepted.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         Assert.That(fixture.Host.Connector.Bodies, Has.Count.EqualTo(1));

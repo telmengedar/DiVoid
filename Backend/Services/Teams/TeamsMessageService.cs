@@ -238,7 +238,6 @@ public sealed class TeamsMessageService {
         try {
             claim = await ClaimReplyAsync(callerId, messageId, key, hash, true);
         } catch (Exception exception) when (IsUniqueViolation(exception)) {
-            // Transact has rolled back the failed insertion before PostgreSQL is read again.
             claim = await ClaimReplyAsync(callerId, messageId, key, hash, false);
         }
         if (!claim.send)
@@ -257,7 +256,6 @@ public sealed class TeamsMessageService {
     Task<(TeamsMessageOrigin origin, TeamsMessageReply reply, bool send)> ClaimReplyAsync(long callerId, long messageId, string key, string hash, bool allowInsert) =>
         MessageService.Transact(database, async transaction => {
             long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            // Lock only the retained parent; never copy stale consumption/expiry fields back.
             long locked = await database.Update<TeamsMessageOrigin>().Set(origin => origin.RecipientId == callerId)
                 .Where(origin => origin.MessageId == messageId && origin.RecipientId == callerId &&
                     (origin.ExpiresAt == null || origin.ExpiresAt > now)).ExecuteAsync(transaction);
@@ -424,7 +422,6 @@ public sealed class TeamsMessageService {
         if (ids.Count > 0)
             await MessageService.Transact(database, async transaction => {
                 foreach (long id in ids) {
-                    // Parent deletion serializes against claims before children are removed.
                     long removed = await database.Delete<TeamsMessageOrigin>()
                         .Where(origin => origin.MessageId == id && origin.ExpiresAt != null && origin.ExpiresAt <= now).ExecuteAsync(transaction);
                     if (removed != 0)

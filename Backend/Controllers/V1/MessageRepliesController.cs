@@ -3,6 +3,7 @@ using Backend.Models.Messages;
 using Backend.Services.Teams;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Pooshit.AspNetCore.Services.Errors;
 
 namespace Backend.Controllers.V1;
 
@@ -22,6 +23,12 @@ public class MessageRepliesController : ControllerBase {
     /// <param name="replyId">The saved logical-message UUID.</param>
     /// <returns>The safe receipt, without private origin fields.</returns>
     [HttpGet("{replyId}"), Authorize(Policy = "read")]
+    [ProducesResponseType(200, Type = typeof(MessageReplyDetails))]
+    [ProducesResponseType(400, Type = typeof(ErrorResponse))]
+    [ProducesResponseType(401, Type = typeof(ErrorResponse))]
+    [ProducesResponseType(403, Type = typeof(ErrorResponse))]
+    [ProducesResponseType(404, Type = typeof(ErrorResponse))]
+    [ProducesResponseType(500, Type = typeof(ErrorResponse))]
     public Task<MessageReplyDetails> Get(long messageId, string replyId) =>
         transport.GetReplyAsync(User.GetDivoidUserId(), messageId, ParseId(replyId));
 
@@ -31,8 +38,19 @@ public class MessageRepliesController : ControllerBase {
     /// <param name="cancellationToken">The requesting caller's cancellation.</param>
     /// <returns>The confirmed or previously accepted receipt.</returns>
     [HttpPost, Authorize(Policy = "write")]
-    public Task<MessageReplyDetails> Create(long messageId, [FromBody] MessageReplyRequest reply, CancellationToken cancellationToken) =>
-        transport.CreateReplyAsync(User.GetDivoidUserId(), messageId, ParseId(reply.ReplyId), reply.Body, cancellationToken);
+    [ProducesResponseType(200, Type = typeof(MessageReplyDetails))]
+    [ProducesResponseType(400, Type = typeof(ErrorResponse))]
+    [ProducesResponseType(401, Type = typeof(ErrorResponse))]
+    [ProducesResponseType(403, Type = typeof(ErrorResponse))]
+    [ProducesResponseType(404, Type = typeof(ErrorResponse))]
+    [ProducesResponseType(409, Type = typeof(ErrorResponse))]
+    [ProducesResponseType(500, Type = typeof(ErrorResponse))]
+    [ProducesResponseType(502, Type = typeof(ErrorResponse))]
+    public Task<MessageReplyDetails> Create(long messageId, [FromBody] MessageReplyRequest reply, CancellationToken cancellationToken) {
+        ArgumentNullException.ThrowIfNull(reply);
+        return transport.CreateReplyAsync(User.GetDivoidUserId(), messageId, ParseId(reply.ReplyId), reply.Body, cancellationToken);
+    }
+
     static Guid ParseId(string value) => Guid.TryParse(value, out Guid id) && id != Guid.Empty
         ? id : throw new ArgumentException("replyId must be a nonzero UUID.", nameof(value));
 }
