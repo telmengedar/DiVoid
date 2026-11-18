@@ -16,7 +16,7 @@ claude mcp add --transport stdio --scope user divoid -- ~/.divoid-mcp/venv/bin/d
 
 (Windows: `%USERPROFILE%\.divoid-mcp\venv`, `\Scripts\python.exe`, `\Scripts\divoid-mcp.exe`.) Registering the console script by absolute path, rather than `python -m divoid_mcp`, is deliberate — see `docs/install.md` Step 1 for why.
 
-## Tools (22)
+## Tools (27)
 
 | Tool | What it does |
 |---|---|
@@ -42,6 +42,29 @@ claude mcp add --transport stdio --scope user divoid -- ~/.divoid-mcp/venv/bin/d
 | `divoid_send_message` | Send a message to a DiVoid user's inbox |
 | `divoid_list_messages` | List messages in a user's inbox, optionally filtered by project |
 | `divoid_delete_message` | Delete a message from a user's inbox by message id |
+| `divoid_register_node_hook` | Register a tagged node-change subscription with an optional event filter |
+| `divoid_list_node_hooks` | List subscriptions visible to the caller |
+| `divoid_delete_node_hook` | Remove a caller-visible node subscription |
+| `divoid_reply_message` | Send an authorized original-origin response; optional saved `reply_id` selects one independently idempotent logical message |
+| `divoid_get_message_reply` | Read the legacy receipt or the logical receipt selected by the same saved `reply_id` |
+
+## Teams replies (0.21.0)
+
+The existing two reply tools now accept an optional nullable `reply_id`. Omitting it (or passing null) keeps the singular one-final-reply API unchanged. A supplied nonzero UUID selects the separate plural resource; this requires the compatible backend to be deployed first. A 404 from an older backend is an error: never retry by dropping the UUID or switching tools/modes.
+
+For acknowledgment, answer and delayed expert relay, save the original inbox message ID plus a distinct UUID and **exact text for each new stage** in the same authorized tracking task before its first send. Make only that minimal tracking write before acknowledgment; substantive work/delegation follows the acknowledgment. If tracking persistence fails, retain the inbox item and do not send an unrecorded key. Reuse a stage's saved UUID/text for receipt reconciliation; never generate a new UUID for a retry. Send intended stages sequentially; separate UUIDs have no server ordering guarantee.
+
+```python
+# The caller has already saved this UUID and exact text in its tracking task.
+divoid_reply_message(message_id=123, body="I am working on your request.",
+                     reply_id="a8260b3e-8867-49d0-bd52-dbc9e4158f5e")
+divoid_get_message_reply(message_id=123,
+                         reply_id="a8260b3e-8867-49d0-bd52-dbc9e4158f5e")
+```
+
+Sent confirms Connector acceptance, not Teams client display. Reusing a Sent key with identical text returns its receipt without sending; different text for that UUID conflicts in every state. Sending/Unknown must never be automatically resent. Failed permits only an understood, explicitly authorized same-key/same-text retry. A new UUID is for a genuinely new authorized message, never a replay workaround. Legacy and UUID replies are independent messages: the singular slot is not a fallback or latest/aggregate plural receipt.
+
+Only the original enabled recipient may use the saved origin, including after inbox consumption and graph recipient rebinding. Save correlation before deleting the inbox item. Consumed origins remain eligible for 30 days; sends do not extend expiry. No destination, tenant, recipient, channel, service URL or private origin can be supplied or exported by these tools. No automatic retries, background relay or exactly-once delivery guarantee is provided.
 
 Five MCP resources are also exposed for the canonical DiVoid reference documents: nodes #9 (onboarding), #190 (Hivemind Protocol), #8 (API reference), #493 (structural conventions), #435 (messaging system).
 

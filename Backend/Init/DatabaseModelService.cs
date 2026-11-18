@@ -45,6 +45,7 @@ public class DatabaseModelService : IHostedService {
         await schemaService.CreateOrUpdateSchema<NodeType>(transaction);
         await schemaService.CreateOrUpdateSchema<Message>(transaction);
         await schemaService.CreateOrUpdateSchema<TeamsMessageOrigin>(transaction);
+        await schemaService.CreateOrUpdateSchema<TeamsMessageReply>(transaction);
         await schemaService.CreateOrUpdateSchema<Metadata>(transaction);
 
         DateTime backfillNow = DateTime.UtcNow;

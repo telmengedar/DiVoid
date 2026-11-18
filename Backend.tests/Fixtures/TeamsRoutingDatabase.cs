@@ -77,6 +77,7 @@ public sealed class TeamsRoutingDatabase : IDisposable {
             await schemas.CreateOrUpdateSchema<ApiKey>();
             await schemas.CreateOrUpdateSchema<Message>();
             await schemas.CreateOrUpdateSchema<TeamsMessageOrigin>();
+            await schemas.CreateOrUpdateSchema<TeamsMessageReply>();
             await schemas.CreateOrUpdateSchema<NodeType>();
             await schemas.CreateOrUpdateSchema<NodeHook>();
             if (postgres)
