@@ -63,7 +63,7 @@ sealed class TeamsConnectorDiagnosisHandler(HttpClient client, Uri expectedRoute
             result.AuthorizedPartyMatchesConfiguredBot = parties.Length == 0 ? null : parties.All(party =>
                 Guid.TryParse(party, out Guid parsed) && parsed.ToString("D") == botAppId);
             result.IssuerMatchesKnownBotFrameworkIssuer = string.IsNullOrEmpty(jwt.Issuer) ? null :
-                jwt.Issuer == Rest.Path("https://sts.windows.net", issuerTenant) + "/" ||
+                jwt.Issuer == Rest.Path("https://sts.windows.net", issuerTenant, string.Empty) ||
                 jwt.Issuer == Rest.Path("https://login.microsoftonline.com", issuerTenant, "v2.0");
             result.ValidityWindowMatchesNow = notBefore.HasValue && expires.HasValue ? notBefore <= now && expires > now : null;
         } catch (Exception) {

@@ -125,9 +125,9 @@ public class TeamsDiagnosisObservationTests {
     public async Task Diagnose_HostTenant_ObservesOnlySelectedIssuer(string scenario, bool? expected) {
         const string HostingTenant = "8165ad9e-f318-4192-b1bf-3ab83959819f";
         string issuer = scenario switch {
-            "v1" => Rest.Path("https://sts.windows.net", HostingTenant) + "/",
+            "v1" => Rest.Path("https://sts.windows.net", HostingTenant, string.Empty),
             "v2" => Rest.Path("https://login.microsoftonline.com", HostingTenant, "v2.0"),
-            "activity" => Rest.Path("https://sts.windows.net", TeamsWebhookFixture.TenantId) + "/",
+            "activity" => Rest.Path("https://sts.windows.net", TeamsWebhookFixture.TenantId, string.Empty),
             _ => "https://sts.windows.net/d6d49420-f39b-4df7-a1dc-d59a935871db/"
         };
         string token = Token(scenario, issuer);

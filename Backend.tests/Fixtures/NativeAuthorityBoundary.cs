@@ -25,7 +25,7 @@ public sealed class NativeAuthorityBoundary(string tenant = "botframework.com") 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
         Uri? uri = request.RequestUri;
         bool allowed = uri is { Scheme: "https", Host: "login.microsoftonline.com", Port: 443 } &&
-            (uri.AbsoluteUri.StartsWith(Rest.Path("https://login.microsoftonline.com", tenant) + "/", StringComparison.Ordinal) ||
+            (uri.AbsoluteUri.StartsWith(Rest.Path("https://login.microsoftonline.com", tenant, string.Empty), StringComparison.Ordinal) ||
                 uri.AbsolutePath == "/common/discovery/instance");
         Observed.Enqueue(allowed);
         if (!allowed)
