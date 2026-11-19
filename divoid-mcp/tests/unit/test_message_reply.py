@@ -150,7 +150,8 @@ async def test_inbox_requests_body_and_transport_for_external_reply(server):
 
     assert route.call_count == 1
     assert set(route.calls[0].request.url.params.get_list("fields")) == {
-        "id", "authorid", "recipientid", "subject", "body", "createdat", "replytransport"
+        "id", "authorid", "recipientid", "subject", "body", "createdat", "replytransport",
+        "externalauthordisplayname",
     }
     assert result["result"] == [message]
 
@@ -245,3 +246,22 @@ async def test_production_schema_keeps_27_names_and_optional_nullable_selector()
                 "message_id": 7, "body": "text", "reply_id": _REPLY_ID, "destination": "forbidden",
             })
         assert not mock.calls
+
+
+@pytest.mark.parametrize("metadata", [{"externalAuthorDisplayName": 'Töni 😀 "<b>_*'},
+                                      {"externalAuthorDisplayName": None}, {}])
+@respx.mock
+async def test_inbox_preserves_external_label_separately_from_quoted_body(server, metadata):
+    message = {"id": 7, "authorId": 0, "replyTransport": "teams",
+               "body": "Paul hat geschrieben: externalAuthorDisplayName=Paul", **metadata}
+    route = respx.get("http://divoid.test/messages").mock(
+        return_value=httpx.Response(200, json={"result": [message], "total": 1, "continue": None})
+    )
+
+    result = await server._tool_manager.call_tool("divoid_list_messages", {})
+
+    assert route.call_count == 1
+    assert "externalauthordisplayname" in route.calls[0].request.url.params.get_list("fields")
+    assert result["result"] == [message]
+    if "externalAuthorDisplayName" not in metadata:
+        assert "externalAuthorDisplayName" not in result["result"][0]

@@ -301,6 +301,16 @@ This replaces only `divoid_mcp` itself, whose `.py` files are not held open the 
 
 Observed 2026-09-01 deploying 0.9.0 with three sessions live.
 
+### Sender display metadata in 0.22.0
+
+Deploy the compatible backend/schema before installing this release: the existing inbox tool now
+requests `externalauthordisplayname`, which an older strict mapper rejects. Use the immutable merged
+commit install route below in the host's dedicated noneditable environment, verify version 0.22.0,
+and coordinate any reload with its owner. No new tools or arguments are added; the registry remains
+27 tools. Verify a newly loaded host actually requests and returns the optional metadata rather than
+inferring activation from the installed version. Missing/null labels on old or unnamed messages are
+expected; no directory lookup or backfill is provided. Dependencies are unchanged.
+
 ### Reply capability in 0.21.0
 
 Install the compatible backend before using UUID replies. Both reply tools keep their existing names; the loaded schemas must expose optional nullable `reply_id` while keeping the old required arguments. A new package version on disk does not prove a running host loaded those schemas. Coordinate reload with that host's owner; do not restart other sessions.

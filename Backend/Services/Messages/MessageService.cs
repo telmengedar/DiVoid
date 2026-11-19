@@ -38,7 +38,7 @@ public class MessageService : IMessageService {
         return await GetById(callerId, isAdmin: true, id);
     }
 
-    internal async Task<long> Insert(long callerId, MessageDetails details, Transaction transaction = null, string replyTransport = null) {
+    internal async Task<long> Insert(long callerId, MessageDetails details, Transaction transaction = null, string replyTransport = null, string externalAuthorDisplayName = null) {
         if (details.RecipientId <= 0)
             throw new ArgumentException("RecipientId must be a valid user id", nameof(details));
 
@@ -58,8 +58,8 @@ public class MessageService : IMessageService {
 
         DateTime now = DateTime.UtcNow;
         long id = await database.Insert<Message>()
-                                .Columns(m => m.AuthorId, m => m.RecipientId, m => m.Subject, m => m.Body, m => m.CreatedAt, m => m.ReplyTransport)
-                                .Values(callerId, details.RecipientId, subject, details.Body, now, replyTransport)
+                                .Columns(m => m.AuthorId, m => m.RecipientId, m => m.Subject, m => m.Body, m => m.CreatedAt, m => m.ReplyTransport, m => m.ExternalAuthorDisplayName)
+                                .Values(callerId, details.RecipientId, subject, details.Body, now, replyTransport, externalAuthorDisplayName)
                                 .ReturnID()
                                 .ExecuteAsync(transaction);
 

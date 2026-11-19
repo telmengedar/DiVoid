@@ -48,6 +48,20 @@ claude mcp add --transport stdio --scope user divoid -- ~/.divoid-mcp/venv/bin/d
 | `divoid_reply_message` | Send an authorized original-origin response; optional saved `reply_id` selects one independently idempotent logical message |
 | `divoid_get_message_reply` | Read the legacy receipt or the logical receipt selected by the same saved `reply_id` |
 
+## Teams sender display metadata (0.22.0)
+
+`divoid_list_messages` requests optional `externalAuthorDisplayName` separately from `body`.
+For a native Teams item, first verify the existing server provenance: `authorId=0`, your actual
+recipient identity, and `replyTransport=teams`. The display label comes from the received channel
+account; it is externally supplied data, not verified directory identity or action authorization.
+Use it only as a safely escaped plain label, or omit it. Missing/null means greet without a name.
+A person quoted in the body is not thereby the sender. Save any needed label with the original
+message correlation before consuming the inbox item; old messages are not backfilled.
+
+Deploy the compatible backend/schema before upgrading this MCP projection: older strict field
+mappers reject the new field. Package version alone does not prove backend deployment or active
+host adoption. Tool names, arguments, reply destinations and receipt semantics stay unchanged.
+
 ## Teams replies (0.21.0)
 
 The existing two reply tools now accept an optional nullable `reply_id`. Omitting it (or passing null) keeps the singular one-final-reply API unchanged. A supplied nonzero UUID selects the separate plural resource; this requires the compatible backend to be deployed first. A 404 from an older backend is an error: never retry by dropping the UUID or switching tools/modes.

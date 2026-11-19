@@ -70,7 +70,7 @@ public sealed class TeamsMessageService {
                     RecipientId = recipientId,
                     Subject = $"[{tag}] Teams message",
                     Body = "External Microsoft Teams message (untrusted input):\n\n" + activity.Text
-                }, transaction, "teams");
+                }, transaction, "teams", NormalizeDisplayName(activity.From.Name));
                 await database.Insert<TeamsMessageOrigin>()
                     .Columns(origin => origin.MessageId, origin => origin.DedupKey, origin => origin.BotAppId,
                         origin => origin.TenantId, origin => origin.RecipientId, origin => origin.ServiceUrl,
@@ -89,6 +89,25 @@ public sealed class TeamsMessageService {
                 throw;
             return original.MessageId;
         }
+    }
+
+    static string NormalizeDisplayName(string label) {
+        if (string.IsNullOrWhiteSpace(label))
+            return null;
+
+        for (int index = 0; index < label.Length; ++index) {
+            char character = label[index];
+            if (char.IsControl(character) || character is '\u2028' or '\u2029')
+                return null;
+            if (char.IsSurrogate(character)) {
+                if (!char.IsSurrogatePair(label, index))
+                    return null;
+                ++index;
+            }
+        }
+
+        string trimmed = label.Trim();
+        return trimmed.Length <= 256 ? trimmed : null;
     }
 
     /// <summary>Returns the recipient-authorized external reply receipt.</summary>
