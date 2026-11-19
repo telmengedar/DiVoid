@@ -1,4 +1,5 @@
 using Backend.Models;
+using Backend.Services.MessageChanges;
 using Backend.Models.Auth;
 using Backend.Models.Messages;
 using Backend.Models.Nodes;
@@ -36,6 +37,7 @@ public class DatabaseModelService : IHostedService {
 
         ISchemaService schemaService = new SchemaService(database.DBClient);
         using Transaction transaction = database.Transaction();
+        await MessageChangeSchema.LockAsync(database, transaction);
 
         await schemaService.CreateOrUpdateSchema<ApiKey>(transaction);
         await schemaService.CreateOrUpdateSchema<User>(transaction);
@@ -47,6 +49,8 @@ public class DatabaseModelService : IHostedService {
         await schemaService.CreateOrUpdateSchema<TeamsMessageOrigin>(transaction);
         await schemaService.CreateOrUpdateSchema<TeamsMessageReply>(transaction);
         await schemaService.CreateOrUpdateSchema<Metadata>(transaction);
+
+        await MessageChangeSchema.InstallAsync(database, transaction);
 
         DateTime backfillNow = DateTime.UtcNow;
         await database.Update<Node>()

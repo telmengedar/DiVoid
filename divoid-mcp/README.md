@@ -48,6 +48,40 @@ claude mcp add --transport stdio --scope user divoid -- ~/.divoid-mcp/venv/bin/d
 | `divoid_reply_message` | Send an authorized original-origin response; optional saved `reply_id` selects one independently idempotent logical message |
 | `divoid_get_message_reply` | Read the legacy receipt or the logical receipt selected by the same saved `reply_id` |
 
+## Recipient inbox events (0.23.0)
+
+```sh
+divoid-mcp --inbox-events
+```
+
+This separate package mode uses the existing credential configuration and opens one authenticated
+`GET /api/v1/messagechanges`. Default MCP operation remains JSON-RPC with the same 27 tools and
+resources. The child does not list, process or delete messages, reconnect, or fall back to polling.
+It flushes only fixed NDJSON records: a backend-confirmed `ready` with version 1, coverage
+`postgres-database`, `replay=false`, `resyncRequired=true`, then `{"event":"invalidate"}` hints.
+No message payloads, identifiers, tags, names or credentials are emitted.
+
+Deploy the compatible PostgreSQL backend with transactional INSERT/DELETE and authority
+trigger/function initialization first. Each stream requires a persistent dedicated LISTEN session.
+SQLite is explicitly unsupported for this feed; ordinary inbox APIs still work.
+Budget eight sessions per API process and two per key, and qualify schema ownership, database/session
+connectivity and proxy behavior before adoption. The stream watches only its actual API-key owner,
+regardless of admin permission; tags stay consumer-side routing. Inserts and deletes wake it across
+ordinary, Teams, node-hook and other writers of the same initialized tables when producers are enabled.
+Privileged trigger/schema changes and UPDATE/TRUNCATE require maintenance resynchronization.
+
+The consumer keeps reading the stream while it bootstraps and handles work. Clear dirty **before**
+loading the complete authoritative inbox; a change during a load remains dirty. Reconnect always
+requires a new ready and complete resync. Keep read→handle→delete and original Teams correlation.
+There is no cursor, event history or exactly-once processing guarantee. The parent owns bounded
+reconnect and known-work retries; a clean idle consumer needs no periodic new-message scan. Its retry policy must distinguish known work from discovery; the package performs
+neither.
+
+Exit 2 means permanent configuration/auth/path/provider capability failure; exit 1 means
+transport/EOF/malformed continuity; exit 130 means cancellation or a broken parent output pipe.
+Stderr reports fixed codes only. Install from the reviewed immutable merged commit before qualifying
+an actual watcher switch. A source/package Ready state does not activate an installed notifier.
+
 ## Teams sender display metadata (0.22.0)
 
 `divoid_list_messages` requests optional `externalAuthorDisplayName` separately from `body`.

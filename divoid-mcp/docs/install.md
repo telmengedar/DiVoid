@@ -301,6 +301,24 @@ This replaces only `divoid_mcp` itself, whose `.py` files are not held open the 
 
 Observed 2026-09-01 deploying 0.9.0 with three sessions live.
 
+### Recipient inbox stream in 0.23.0
+
+Deploy the matching PostgreSQL backend/schema before selecting `divoid-mcp --inbox-events` through
+the existing configured package command/environment. Install the immutable reviewed merged package
+in its existing dedicated environment, then check the built version, help/mode support and actual
+backend ready before switching a watcher. No credential arguments, new tools or secret store are
+introduced. Default stdio MCP and all 27 tool signatures remain unchanged.
+
+The server requires trigger/function DDL rights and a dedicated persistent PostgreSQL LISTEN session
+per stream (eight/API process, two/key); transaction-pooled proxies and SQLite do not supply this
+capability. Qualify the real role, connectivity, proxy mode and total database budget across API replicas.
+Qualification, installed watcher changes/reloads and activation belong to their respective owners.
+No package installation or source version alone proves live event-driven delivery or permission to
+restart another session. This mode supplies no polling fallback or shared-daemon restart.
+
+See README's recipient-inbox-events section and the canonical API reference for bootstrap/resync,
+fixed NDJSON and permanent versus transient exit semantics. Dependencies are unchanged.
+
 ### Sender display metadata in 0.22.0
 
 Deploy the compatible backend/schema before installing this release: the existing inbox tool now

@@ -126,6 +126,10 @@ public sealed class TeamsWebhookFixture : IDisposable {
     /// <summary>The application service provider.</summary>
     public IServiceProvider Services => factory.Services;
 
+    /// <summary>Creates an owned native transport for streaming boundary checks.</summary>
+    /// <returns>The independent test-server handler.</returns>
+    public HttpMessageHandler CreateHandler() => factory.Server.CreateHandler();
+
     /// <summary>Explicitly replies to the message queued by this fixture's real graph transport.</summary>
     /// <returns>The recipient-authorized local transport receipt.</returns>
     public async Task<MessageReplyReceipt> ReplyToQueuedMessage() {

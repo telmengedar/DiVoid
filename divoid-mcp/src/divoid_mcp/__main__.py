@@ -1,10 +1,10 @@
 """
 Entry point for `python -m divoid_mcp`.
 
-One-liner shim — all logic lives in server.py.
+One-liner shim — mode selection lives in cli.py.
 """
 
-from .server import main
+from .cli import main
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

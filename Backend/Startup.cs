@@ -9,6 +9,7 @@ using Backend.Init;
 using Backend.Services.Auth;
 using Backend.Services.Embeddings;
 using Backend.Services.Messages;
+using Backend.Services.MessageChanges;
 using Backend.Services.Nodes;
 using Backend.Services.Users;
 using Backend.Services.Teams;
@@ -109,6 +110,8 @@ public class Startup
 
         services.AddEmbedding(Configuration);
 
+        services.AddSingleton<MessageChangeFeed>();
+        services.AddHostedService(provider => provider.GetRequiredService<MessageChangeFeed>());
         services.AddSingleton<NodeChangeFeed>();
         services.AddHostedService(provider => provider.GetRequiredService<NodeChangeFeed>());
         services.AddTransient<INodeService, NodeService>();
