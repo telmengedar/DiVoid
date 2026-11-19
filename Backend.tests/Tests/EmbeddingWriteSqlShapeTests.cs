@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System.Data;
 using System.Data.Common;
 using System.Text;
@@ -155,7 +156,7 @@ public class EmbeddingWriteSqlShapeTests
     static async Task<string[]> PatchNameEmbeddedTexts(string? storedName, string? contentType, byte[]? content)
     {
         Mock<IDBClient> client = CreateClient(() => NodeFields(storedName, contentType, content));
-        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
 
         await service.Patch(5, [new PatchOperation { Op = "replace", Path = "/name", Value = storedName }], callerId: 0, isAdmin: true, CancellationToken.None);
 
@@ -176,7 +177,7 @@ public class EmbeddingWriteSqlShapeTests
     public async Task CreateNode_WritesEmbeddingCutToDimension()
     {
         Mock<IDBClient> client = CreateClient(() => NameTable("x"));
-        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
 
         await service.CreateNode(new NodeDetails { Type = "task", Name = "named" }, callerId: 0);
 
@@ -188,7 +189,7 @@ public class EmbeddingWriteSqlShapeTests
     public async Task PatchName_WritesSharedEmbeddingUpdate()
     {
         Mock<IDBClient> client = CreateClient(() => NodeFields("renamed", "text/markdown", Encoding.UTF8.GetBytes("body")));
-        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
 
         await service.Patch(5, [new PatchOperation { Op = "replace", Path = "/name", Value = "renamed" }], callerId: 0, isAdmin: true, CancellationToken.None);
 
@@ -201,7 +202,7 @@ public class EmbeddingWriteSqlShapeTests
     public async Task PatchName_TextContent_EmbedsSameTextAsContentUpload()
     {
         Mock<IDBClient> uploadClient = CreateClient(() => NameTable("renamed"));
-        NodeService uploadService = new(new EntityManager(uploadClient.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService uploadService = new(new EntityManager(uploadClient.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
         await uploadService.UploadContent(5, "text/markdown", new MemoryStream(Encoding.UTF8.GetBytes("body")), callerId: 0, isAdmin: true);
 
         string[] patched = await PatchNameEmbeddedTexts("renamed", "text/markdown", Encoding.UTF8.GetBytes("body"));
@@ -217,7 +218,7 @@ public class EmbeddingWriteSqlShapeTests
     public async Task PatchName_NonTextContent_EmbedsSameTextAsCreate()
     {
         Mock<IDBClient> createClient = CreateClient(() => NameTable("same"));
-        NodeService createService = new(new EntityManager(createClient.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService createService = new(new EntityManager(createClient.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
         await createService.CreateNode(new NodeDetails { Type = "task", Name = "same" }, callerId: 0);
 
         string[] patched = await PatchNameEmbeddedTexts("same", "image/png", [0x89, 0x50]);
@@ -233,7 +234,7 @@ public class EmbeddingWriteSqlShapeTests
     public async Task PatchName_PaddedName_EmbedsSameTextAsCreate()
     {
         Mock<IDBClient> createClient = CreateClient(() => NameTable(" foo "));
-        NodeService createService = new(new EntityManager(createClient.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService createService = new(new EntityManager(createClient.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
         await createService.CreateNode(new NodeDetails { Type = "task", Name = " foo " }, callerId: 0);
 
         string[] patched = await PatchNameEmbeddedTexts(" foo ", "image/png", [0x89, 0x50]);
@@ -258,7 +259,7 @@ public class EmbeddingWriteSqlShapeTests
     public async Task PatchName_WhitespaceOnlyNameWithoutContent_WritesNull()
     {
         Mock<IDBClient> client = CreateClient(() => NodeFields("   ", null, null));
-        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
 
         await service.Patch(5, [new PatchOperation { Op = "replace", Path = "/name", Value = "   " }], callerId: 0, isAdmin: true, CancellationToken.None);
 
@@ -302,7 +303,7 @@ public class EmbeddingWriteSqlShapeTests
     public async Task PatchName_NonTextContent_DoesNotLoadContent()
     {
         Mock<IDBClient> client = CreateClient(() => NodeFields("renamed", "image/png", [0x89, 0x50]));
-        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
 
         await service.Patch(5, [new PatchOperation { Op = "replace", Path = "/name", Value = "renamed" }], callerId: 0, isAdmin: true, CancellationToken.None);
 
@@ -317,7 +318,7 @@ public class EmbeddingWriteSqlShapeTests
     public async Task PatchName_TextContent_LoadsContent()
     {
         Mock<IDBClient> client = CreateClient(() => NodeFields("renamed", "text/plain", Encoding.UTF8.GetBytes("body")));
-        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
 
         await service.Patch(5, [new PatchOperation { Op = "replace", Path = "/name", Value = "renamed" }], callerId: 0, isAdmin: true, CancellationToken.None);
 
@@ -329,7 +330,7 @@ public class EmbeddingWriteSqlShapeTests
     public async Task CreateNode_BlankName_WritesNoEmbedding()
     {
         Mock<IDBClient> client = CreateClient(() => NameTable("x"));
-        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
 
         await service.CreateNode(new NodeDetails { Type = "task", Name = "   " }, callerId: 0);
 
@@ -366,7 +367,7 @@ public class EmbeddingWriteSqlShapeTests
     public async Task UploadContent_WritesEmbeddingCutToDimension()
     {
         Mock<IDBClient> client = CreateClient(() => NameTable("named"));
-        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
 
         await service.UploadContent(5, "text/markdown", new MemoryStream(Encoding.UTF8.GetBytes("body")), callerId: 0, isAdmin: true);
 
@@ -378,7 +379,7 @@ public class EmbeddingWriteSqlShapeTests
     public async Task CreateNode_EmbeddingWriteTargetsCreatedNodeInsideTransaction()
     {
         Mock<IDBClient> client = CreateClient(() => NameTable("x"));
-        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
 
         await service.CreateNode(new NodeDetails { Type = "task", Name = "named" }, callerId: 0);
 
@@ -393,7 +394,7 @@ public class EmbeddingWriteSqlShapeTests
     public async Task PatchName_EmbeddingWriteTargetsPatchedNodeInsideTransaction()
     {
         Mock<IDBClient> client = CreateClient(() => NodeFields("renamed", "text/plain", Encoding.UTF8.GetBytes("body")));
-        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
 
         await service.Patch(5, [new PatchOperation { Op = "replace", Path = "/name", Value = "renamed" }], callerId: 0, isAdmin: true, CancellationToken.None);
 
@@ -408,7 +409,7 @@ public class EmbeddingWriteSqlShapeTests
     public async Task UploadContent_EmbeddingWriteTargetsUploadedNodeInsideTransaction()
     {
         Mock<IDBClient> client = CreateClient(() => NameTable("named"));
-        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
 
         await service.UploadContent(5, "text/markdown", new MemoryStream(Encoding.UTF8.GetBytes("body")), callerId: 0, isAdmin: true);
 
@@ -514,7 +515,7 @@ public class EmbeddingWriteSqlShapeTests
     public async Task UploadContent_LongContent_WritesWindowFold()
     {
         Mock<IDBClient> client = CreateClient(() => NameTable("named"));
-        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
 
         await service.UploadContent(5, "text/markdown", new MemoryStream(Encoding.UTF8.GetBytes(LongContent)), callerId: 0, isAdmin: true);
 
@@ -526,7 +527,7 @@ public class EmbeddingWriteSqlShapeTests
     public async Task PatchContent_LongContent_WritesWindowFold()
     {
         Mock<IDBClient> client = CreateClient(() => NodeFields("named", "text/markdown", Encoding.UTF8.GetBytes(LongContent)));
-        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
 
         await service.PatchContent(5, [new ContentEdit { Unit = ContentEditUnit.Char, Start = 0, Length = 0, Value = "y" }], callerId: 0, isAdmin: true, CancellationToken.None);
 
@@ -557,7 +558,7 @@ public class EmbeddingWriteSqlShapeTests
     public async Task PatchName_LongContent_WritesWindowFold()
     {
         Mock<IDBClient> client = CreateClient(() => NodeFields("named", "text/markdown", Encoding.UTF8.GetBytes(LongContent)));
-        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
 
         await service.Patch(5, [new PatchOperation { Op = "replace", Path = "/name", Value = "named" }], callerId: 0, isAdmin: true, CancellationToken.None);
 

@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 #nullable enable
 using System;
 using System.Collections.Generic;
@@ -147,7 +148,7 @@ public class UserMeHttpTests
             db,
             new KeyGenerator(),
             config,
-            NullLogger<ApiKeyService>.Instance);
+            NullLogger<ApiKeyService>.Instance, new NodeChangeFeed());
 
         // Key carries only "read" — deliberately different from user's "admin"
         ApiKeyDetails key = await svc.CreateApiKey(new ApiKeyParameters {

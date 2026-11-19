@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -83,7 +84,7 @@ public class LinkedToSqlShapeTests
             .Callback<string, object[]>((command, _) => captured ??= command)
             .ThrowsAsync(new SqlCapturedException());
         capturedSql = () => captured;
-        return new NodeService(new EntityManager(clientMock.Object), DisabledCapability, EmbeddingProducers.Function);
+        return new NodeService(new EntityManager(clientMock.Object), DisabledCapability, EmbeddingProducers.Function, new NodeChangeFeed());
     }
 
     [Test, Parallelizable]
@@ -98,7 +99,7 @@ public class LinkedToSqlShapeTests
             .ThrowsAsync(new SqlCapturedException());
 
         IEntityManager em = new EntityManager(clientMock.Object);
-        NodeService service = new(em, DisabledCapability, EmbeddingProducers.Function);
+        NodeService service = new(em, DisabledCapability, EmbeddingProducers.Function, new NodeChangeFeed());
         NodeFilter filter = new() { LinkedTo = [1L, 2L, 3L, 4L, 5L], Count = 20 };
 
         Assert.ThrowsAsync<SqlCapturedException>(() => service.ListPaged(filter, callerId: 0, isAdmin: true));

@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using Backend.Init;
 using Backend.tests.Fixtures;
 using Backend.Models.Auth;
@@ -39,8 +40,8 @@ public class ApiKeyLastUsedWriteTests
                 ["Auth:Enabled"] = "true"
             })
             .Build();
-        IApiKeyService keySvc = new ApiKeyService(entityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance);
-        UserDetails user = await new UserService(entityManager).CreateUser(new UserParameters { Name = "U" });
+        IApiKeyService keySvc = new ApiKeyService(entityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance, new NodeChangeFeed());
+        UserDetails user = await new UserService(entityManager, new NodeChangeFeed()).CreateUser(new UserParameters { Name = "U" });
         ApiKeyDetails created = await keySvc.CreateApiKey(new ApiKeyParameters { UserId = user.Id, Permissions = ["read"] });
 
         gate.Arm();

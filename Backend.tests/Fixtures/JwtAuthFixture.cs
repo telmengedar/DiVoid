@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Tokens;
 using Pooshit.Ocelot.Entities;
 
@@ -38,7 +39,11 @@ public sealed class JwtAuthFixture : IDisposable
     readonly HttpMessageHandler serverHandler;
     readonly FakeJwksHandlerPublic metadata;
 
-    public JwtAuthFixture()
+    /// <summary>Creates the isolated authenticated application pipeline.</summary>
+    /// <param name="database">The optional real provider override.</param>
+    /// <param name="configureServices">The optional test transport instrumentation.</param>
+    /// <param name="authEnabled">Whether normal authentication is enabled.</param>
+    public JwtAuthFixture(IEntityManager? database = null, Action<IServiceCollection>? configureServices = null, bool authEnabled = true)
     {
         rsa        = RSA.Create(2048);
         signingKey = new RsaSecurityKey(rsa) { KeyId = "test-key-1" };
@@ -52,7 +57,7 @@ public sealed class JwtAuthFixture : IDisposable
         factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder => {
             builder.ConfigureAppConfiguration((_, config) => {
                 config.AddInMemoryCollection(new Dictionary<string, string?> {
-                    ["Auth:Enabled"]                  = "true",
+                    ["Auth:Enabled"]                  = authEnabled ? "true" : "false",
                     ["DIVOID_KEY_PEPPER"]             = TestPepper,
                     ["Database:Type"]                 = "Sqlite",
                     ["Database:Source"]               = dbPath,
@@ -65,6 +70,11 @@ public sealed class JwtAuthFixture : IDisposable
             builder.ConfigureServices(services => {
                 // Replace the JwtBearer backchannel handler and override signing key directly
                 // so the middleware never makes a real network call to Keycloak.
+                if (database != null) {
+                    services.RemoveAll<IEntityManager>();
+                    services.AddSingleton(database);
+                }
+                configureServices?.Invoke(services);
                 services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options => {
                     options.BackchannelHttpHandler = metadata;
                     options.TokenValidationParameters.IssuerSigningKey  = signingKey;

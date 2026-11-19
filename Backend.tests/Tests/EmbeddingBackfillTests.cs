@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System.Text;
 using System.Threading.Tasks;
 using Backend.Models.Nodes;
@@ -23,7 +24,7 @@ public class EmbeddingBackfillTests
     static readonly IEmbeddingCapability EnabledCapability  = new EmbeddingCapability(true);
 
     static NodeService MakeNodeService(DatabaseFixture fixture)
-        => new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
+        => new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function, new NodeChangeFeed());
 
     static EmbeddingBackfillService MakeBackfill(DatabaseFixture fixture, IEmbeddingCapability capability)
         => new(fixture.EntityManager, capability, new EmbeddingModelGuard(fixture.EntityManager, capability, NullLogger<EmbeddingModelGuard>.Instance), NullLogger<EmbeddingBackfillService>.Instance, EmbeddingProducers.Function);

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Backend.Extensions;
+using Backend.Services.NodeChanges;
 using Backend.Models.Auth;
 using Backend.Models.Users;
 using Pooshit.AspNetCore.Services.Data;
@@ -19,13 +20,16 @@ namespace Backend.Services.Users;
 /// <inheritdoc />
 public class UserService : IUserService {
     readonly IEntityManager database;
+    readonly NodeChangeFeed feed;
 
     /// <summary>
     /// creates a new <see cref="UserService"/>
     /// </summary>
     /// <param name="database">access to database</param>
-    public UserService(IEntityManager database) {
+    /// <param name="feed">The process-local commit coordinator.</param>
+    public UserService(IEntityManager database, NodeChangeFeed feed) {
         this.database = database;
+        this.feed = feed;
     }
 
     /// <inheritdoc />
@@ -61,18 +65,21 @@ public class UserService : IUserService {
 
     /// <inheritdoc />
     public async Task<UserDetails> UpdateUser(long userId, params PatchOperation[] patches) {
-        if (await database.Update<User>()
-                          .Patch(patches)
-                          .Where(u => u.Id == userId)
-                          .ExecuteAsync() == 0)
-            throw new NotFoundException<User>(userId);
+        await feed.UpdateAuthorityAsync(database, async transaction => {
+            if (await database.Update<User>().Patch(patches).Where(user => user.Id == userId).ExecuteAsync(transaction) == 0)
+                throw new NotFoundException<User>(userId);
+            return true;
+        }, userId: userId);
         return await GetUserById(userId);
     }
 
     /// <inheritdoc />
     public async Task DeleteUser(long userId) {
-        if (await database.Delete<User>().Where(u => u.Id == userId).ExecuteAsync() == 0)
-            throw new NotFoundException<User>(userId);
+        await feed.UpdateAuthorityAsync(database, async transaction => {
+            if (await database.Delete<User>().Where(user => user.Id == userId).ExecuteAsync(transaction) == 0)
+                throw new NotFoundException<User>(userId);
+            return true;
+        }, userId: userId);
     }
 
     /// <inheritdoc />

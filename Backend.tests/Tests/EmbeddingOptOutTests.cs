@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System.Data;
 using System.Data.Common;
 using System.Text;
@@ -88,7 +89,7 @@ public class EmbeddingOptOutTests
                      .ToArray();
     }
 
-    static NodeService CreateService(Mock<IDBClient> client, RecordingEmbeddingProducer producer) => new(new EntityManager(client.Object), new EmbeddingCapability(true), producer);
+    static NodeService CreateService(Mock<IDBClient> client, RecordingEmbeddingProducer producer) => new(new EntityManager(client.Object), new EmbeddingCapability(true), producer, new NodeChangeFeed());
 
     static PatchOperation[] Replace(string path, object value) => [new PatchOperation { Op = "replace", Path = path, Value = value }];
 

@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using Backend.Models.Messages;
 using Backend.Models.Nodes;
 using Backend.Models.Users;
@@ -31,7 +32,7 @@ public class NodeHookPostgresTests {
         database = new();
         await database.Start();
         db = database.Entities;
-        service = new(db, new EmbeddingCapability(false), EmbeddingProducers.Function);
+        service = new(db, new EmbeddingCapability(false), EmbeddingProducers.Function, new NodeChangeFeed());
         userId = await db.Insert<User>().Columns(u => u.Name, u => u.Enabled, u => u.CreatedAt).Values("subscriber", true, DateTime.UtcNow).ReturnID().ExecuteAsync();
         nodeId = (await service.CreateNode(new NodeDetails { Name = "watched", Status = "open" }, userId)).Id;
     }

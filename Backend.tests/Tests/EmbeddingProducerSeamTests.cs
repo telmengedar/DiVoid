@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System.Data;
 using System.Data.Common;
 using System.Text;
@@ -104,7 +105,7 @@ public class EmbeddingProducerSeamTests
         Mock<IDBClient> client = new();
         client.SetupGet(c => c.DBInfo).Returns(new PostgreInfo());
         client.Setup(c => c.ReaderAsync(It.IsAny<Transaction>(), It.IsAny<string>(), It.IsAny<IEnumerable<object>>(), It.IsAny<CancellationToken>())).Throws<QueryExecuted>();
-        return new(new EntityManager(client.Object), new EmbeddingCapability(true), producer);
+        return new(new EntityManager(client.Object), new EmbeddingCapability(true), producer, new NodeChangeFeed());
     }
 
     [Test, Parallelizable]
@@ -124,7 +125,7 @@ public class EmbeddingProducerSeamTests
     {
         RecordingEmbeddingProducer producer = new();
         Mock<IDBClient> client = CreateClient(sql => sql.Contains("INNER JOIN nodetype") ? NodeRow() : NameTable("named"));
-        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), producer);
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), producer, new NodeChangeFeed());
 
         await service.UploadContent(5, "text/markdown", new MemoryStream(Encoding.UTF8.GetBytes("body")), callerId: 0, isAdmin: true);
 
@@ -137,7 +138,7 @@ public class EmbeddingProducerSeamTests
     {
         RecordingEmbeddingProducer producer = new();
         Mock<IDBClient> client = CreateClient(sql => sql.Contains("INNER JOIN nodetype") ? NodeRow() : NodeFields("renamed", "text/plain", Encoding.UTF8.GetBytes("body")));
-        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), producer);
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), producer, new NodeChangeFeed());
 
         await service.Patch(5, [new PatchOperation { Op = "replace", Path = "/name", Value = "renamed" }], callerId: 0, isAdmin: true, CancellationToken.None);
 
@@ -150,7 +151,7 @@ public class EmbeddingProducerSeamTests
     {
         RecordingEmbeddingProducer producer = new();
         Mock<IDBClient> client = CreateClient(sql => sql.Contains("INNER JOIN nodetype") ? NodeRow() : NameTable("named"));
-        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), producer);
+        NodeService service = new(new EntityManager(client.Object), new EmbeddingCapability(true), producer, new NodeChangeFeed());
 
         await service.CreateNode(new NodeDetails { Type = "task", Name = "named" }, callerId: 0);
 

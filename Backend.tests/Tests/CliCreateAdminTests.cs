@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -30,11 +31,11 @@ public class CliCreateAdminTests
                 ["Auth:Enabled"] = pepper != null ? "true" : "false"
             })
             .Build();
-        return new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance);
+        return new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance, new NodeChangeFeed());
     }
 
     static IUserService MakeUserService(DatabaseFixture fixture)
-        => new UserService(fixture.EntityManager);
+        => new UserService(fixture.EntityManager, new NodeChangeFeed());
 
     // -----------------------------------------------------------------------
     // Happy path — create-admin produces a working key end-to-end

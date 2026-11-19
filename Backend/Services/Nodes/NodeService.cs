@@ -8,6 +8,7 @@ using Backend.Models.Nodes;
 using Backend.Models.Users;
 using Backend.Query;
 using Backend.Services.Embeddings;
+using Backend.Services.NodeChanges;
 using Pooshit.AspNetCore.Services.Data;
 using Pooshit.AspNetCore.Services.Errors.Exceptions;
 using Pooshit.AspNetCore.Services.Formatters.DataStream;
@@ -23,11 +24,12 @@ using Pooshit.Ocelot.Tokens;
 namespace Backend.Services.Nodes;
 
 /// <inheritdoc />
-public class NodeService(IEntityManager database, IEmbeddingCapability embeddingCapability, IEmbeddingProducer embeddingProducer) : INodeService
+public class NodeService(IEntityManager database, IEmbeddingCapability embeddingCapability, IEmbeddingProducer embeddingProducer, NodeChangeFeed feed) : INodeService
 {
     readonly IEntityManager database = database;
     readonly IEmbeddingCapability embeddingCapability = embeddingCapability;
     readonly IEmbeddingProducer embeddingProducer = embeddingProducer;
+    readonly NodeChangeFeed feed = feed;
 
     const int MaxQueries = 10;
 
@@ -118,7 +120,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <inheritdoc />
     public async Task<NodeDetails> CreateNode(NodeDetails node, long callerId)
     {
-        long nodeId = await Mutate(async transaction => {
+        long nodeId = await Mutate(async (transaction, changes) => {
             long[] existingTargets = node.Links?.Distinct().ToArray() ?? [];
             await LockNodes(transaction, existingTargets);
             Dictionary<long, Node> targetsBefore = [];
@@ -152,8 +154,9 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             if (embeddingCapability.IsEnabled && node.SkipEmbedding != true && !string.IsNullOrWhiteSpace(node.Name))
                 await EmbeddingWrite.Build(database, nodeId, node.Name, null, null, embeddingProducer).ExecuteAsync(transaction);
 
+            await Notify(transaction, changes, null, await Snapshot(transaction, nodeId));
             foreach (long targetId in existingTargets)
-                await Notify(transaction, targetsBefore[targetId], await Snapshot(transaction, targetId), "Link added");
+                await Notify(transaction, changes, targetsBefore[targetId], await Snapshot(transaction, targetId), "Link added");
             return nodeId;
         });
         return await GetNodeById(nodeId, callerId, isAdmin: true);
@@ -188,7 +191,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (gate != null)
             predicate &= gate;
 
-        await Mutate(async transaction => {
+        await Mutate(async (transaction, changes) => {
             await LockNodes(transaction, nodeId);
             Node before = await Snapshot(transaction, nodeId);
             List<long> neighbors = [];
@@ -201,11 +204,11 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                              .ExecuteAsync(transaction) == 0)
                 throw new NotFoundException<Node>(nodeId);
             await database.Delete<NodeLink>().Where(l => l.SourceId == nodeId || l.TargetId == nodeId).ExecuteAsync(transaction);
-            await Notify(transaction, before, null);
+            await Notify(transaction, changes, before, null);
             await database.Delete<NodeHook>().Where(h => h.NodeId == nodeId).ExecuteAsync(transaction);
             foreach (long neighborId in neighborIds) {
                 Node neighbor = await Snapshot(transaction, neighborId);
-                await Notify(transaction, neighbor, neighbor, "Link removed");
+                await Notify(transaction, changes, neighbor, neighbor, "Link removed");
             }
         });
     }
@@ -241,7 +244,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (gate != null)
             sourcePredicate &= gate;
 
-        await Mutate(async transaction => {
+        await Mutate(async (transaction, changes) => {
             await LockNodes(transaction, sourceNodeId, targetNodeId);
             Node sourceBefore = await Snapshot(transaction, sourceNodeId);
             Node targetBefore = await Snapshot(transaction, targetNodeId);
@@ -258,8 +261,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                           .ExecuteAsync(transaction);
             await TryAnchorOrphanToPositioned(transaction, sourceNodeId, [targetNodeId]);
             await TryAnchorOrphanToPositioned(transaction, targetNodeId, [sourceNodeId]);
-            await Notify(transaction, sourceBefore, await Snapshot(transaction, sourceNodeId), "Link added");
-            await Notify(transaction, targetBefore, await Snapshot(transaction, targetNodeId), "Link added");
+            await Notify(transaction, changes, sourceBefore, await Snapshot(transaction, sourceNodeId), "Link added");
+            await Notify(transaction, changes, targetBefore, await Snapshot(transaction, targetNodeId), "Link added");
         });
     }
 
@@ -1053,7 +1056,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         PatchOperation[] remainingPatches = typeOp == null ? patches : patches.Where(p => p != typeOp).ToArray();
 
         bool embeddingTouched = embeddingCapability.IsEnabled && (TouchesName(patches) || TouchesPath(patches, "/skipEmbedding"));
-        await Mutate(async transaction => {
+        await Mutate(async (transaction, changes) => {
             await LockNodes(transaction, nodeId);
             Node before = await Snapshot(transaction, nodeId);
 
@@ -1088,7 +1091,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             if (embeddingTouched)
                 await RegenerateEmbedding(transaction, nodeId, ct);
 
-            await Notify(transaction, before, await Snapshot(transaction, nodeId));
+            await Notify(transaction, changes, before, await Snapshot(transaction, nodeId));
         }, ct);
         return await GetNodeById(nodeId, callerId, isAdmin: true);
     }
@@ -1127,7 +1130,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (gate != null)
             sourcePredicate &= gate;
 
-        await Mutate(async transaction => {
+        await Mutate(async (transaction, changes) => {
             await LockNodes(transaction, sourceNodeId, targetNodeId);
             if (await database.Load<Node>(DB.Count()).Where(sourcePredicate.Content).ExecuteScalarAsync<long>(transaction) == 0)
                 throw new NotFoundException<Node>(sourceNodeId);
@@ -1138,8 +1141,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             if (removed > 0) {
                 Node source = await Snapshot(transaction, sourceNodeId);
                 Node target = await Snapshot(transaction, targetNodeId);
-                await Notify(transaction, source, source, "Link removed");
-                await Notify(transaction, target, target, "Link removed");
+                await Notify(transaction, changes, source, source, "Link removed");
+                await Notify(transaction, changes, target, target, "Link removed");
             }
         });
     }
@@ -1154,7 +1157,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (gate != null)
             sourcePredicate &= gate;
 
-        return await Mutate(async transaction => {
+        return await Mutate(async (transaction, changes) => {
             await LockNodes(transaction, sourceNodeId, targetNodeId);
             if (await database.Load<Node>(DB.Count()).Where(sourcePredicate.Content).ExecuteScalarAsync<long>(transaction) == 0)
                 throw new NotFoundException<Node>(sourceNodeId);
@@ -1175,8 +1178,8 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
             if (before.LinkType != after.LinkType || before.Context != after.Context) {
                 Node source = await Snapshot(transaction, sourceNodeId);
                 Node target = await Snapshot(transaction, targetNodeId);
-                await Notify(transaction, source, source, "Link changed");
-                await Notify(transaction, target, target, "Link changed");
+                await Notify(transaction, changes, source, source, "Link changed");
+                await Notify(transaction, changes, target, target, "Link changed");
             }
             return after;
         }, ct);
@@ -1192,7 +1195,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (gate != null)
             predicate &= gate;
 
-        await Mutate(async transaction => {
+        await Mutate(async (transaction, changes) => {
             await LockNodes(transaction, nodeId);
             Node before = await Snapshot(transaction, nodeId, includeContent: true);
 
@@ -1205,7 +1208,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
             await RegenerateContentEmbedding(transaction, nodeId, blob, contentType, ct);
 
-            await Notify(transaction, before, await Snapshot(transaction, nodeId, includeContent: true));
+            await Notify(transaction, changes, before, await Snapshot(transaction, nodeId, includeContent: true));
         }, ct);
     }
 
@@ -1232,7 +1235,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         if (gate != null)
             predicate &= gate;
 
-        await Mutate(async transaction => {
+        await Mutate(async (transaction, changes) => {
             await LockNodes(transaction, nodeId);
             Node before = await Snapshot(transaction, nodeId, includeContent: true);
 
@@ -1254,7 +1257,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
 
             await RegenerateContentEmbedding(transaction, nodeId, edited, node.ContentType, ct);
 
-            await Notify(transaction, before, await Snapshot(transaction, nodeId, includeContent: true));
+            await Notify(transaction, changes, before, await Snapshot(transaction, nodeId, includeContent: true));
         }, ct);
         return await GetNodeById(nodeId, callerId, isAdmin: true);
     }
@@ -1309,22 +1312,29 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         return userId.Value;
     }
 
-    Task Mutate(Func<Transaction, Task> action, CancellationToken ct = default) =>
-        Mutate(async transaction => {
-            await action(transaction);
+    Task Mutate(Func<Transaction, List<NodeChangeDelta>, Task> action, CancellationToken ct = default) =>
+        Mutate(async (transaction, changes) => {
+            await action(transaction, changes);
             return true;
         }, ct);
 
-    async Task<T> Mutate<T>(Func<Transaction, Task<T>> action, CancellationToken ct = default) {
+    async Task<T> Mutate<T>(Func<Transaction, List<NodeChangeDelta>, Task<T>> action, CancellationToken ct = default) {
         for (int attempt = 0; ; attempt++) {
             ct.ThrowIfCancellationRequested();
+            bool commitStarted = false;
+            bool commitConfirmed = false;
             try {
                 Transaction transaction = MutationTransaction();
                 NpgsqlConnection connection = transaction.DbTransaction.Connection as NpgsqlConnection;
                 Exception failure = null;
                 try {
-                    T result = await action(transaction);
-                    transaction.Commit();
+                    List<NodeChangeDelta> changes = [];
+                    T result = await action(transaction, changes);
+                    await feed.CommitAsync(() => {
+                        commitStarted = true;
+                        transaction.Commit();
+                        commitConfirmed = true;
+                    }, changes, cancellationToken: ct);
                     return result;
                 }
                 catch (Exception exception) {
@@ -1332,17 +1342,10 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
                     throw;
                 }
                 finally {
-                    try {
-                        transaction.Dispose();
-                    }
-                    catch (InvalidOperationException) when (connection != null && failure != null) {
-                        // Pooshit.Ocelot 0.25.0-preview.1 rolls back completed Npgsql transactions during disposal (#24312).
-                        transaction.DbTransaction.Dispose();
-                        connection.Dispose();
-                    }
+                    await feed.DisposeTransactionAsync(transaction, connection, failure != null);
                 }
             }
-            catch (Exception exception) when (attempt < 7 && IsSerializationFailure(exception)) {
+            catch (Exception exception) when (attempt < 7 && !commitConfirmed && (!commitStarted || NodeChangeFeed.SerializationFailure(exception)) && IsSerializationFailure(exception)) {
                 await Task.Delay(Random.Shared.Next(10, Math.Min(200, 20 << attempt)), ct);
             }
         }
@@ -1414,7 +1417,13 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     }
 
 
-    async Task Notify(Transaction transaction, Node before, Node after, string edgeChange = null) {
+    async Task Notify(Transaction transaction, List<NodeChangeDelta> deltas, Node before, Node after, string edgeChange = null) {
+        NodeHookEvents events = before == null || after == null ? NodeHookEvents.All :
+            Changes(before, after).Aggregate((NodeHookEvents)0, (mask, change) => mask | change.Kind);
+        if (edgeChange != null)
+            events |= NodeHookEvents.Links;
+        if (events != 0)
+            deltas.Add(new NodeChangeDelta(await FeedFact(transaction, before), await FeedFact(transaction, after), events));
         if (before == null) return;
         List<(NodeHookEvents Kind, string Text)> changes = Changes(before, after);
         if (edgeChange != null) changes.Add((NodeHookEvents.Links, edgeChange));
@@ -1444,6 +1453,14 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     }
 
 
+    async Task<NodeChangeDelta.Fact> FeedFact(Transaction transaction, Node node) {
+        if (node == null)
+            return null;
+        string type = await database.Load<NodeType>(row => row.Type).Where(row => row.Id == node.TypeId).ExecuteScalarAsync<string>(transaction);
+        return new NodeChangeDelta.Fact(node.Id, node.RootNodeId, type, node.OwnerId, node.Access);
+    }
+
+
     static void ValidateHook(NodeHook hook, long callerId, bool isAdmin) {
         if (hook == null || hook.NodeId <= 0 || hook.UserId <= 0)
             throw new ArgumentException("Positive nodeId and userId are required");
@@ -1459,7 +1476,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
         ValidateHook(hook, callerId, isAdmin);
         if (((int)hook.Events & ~(int)NodeHookEvents.All) != 0) throw new ArgumentException("events contains unknown flags");
         if (hook.Events == 0) hook.Events = NodeHookEvents.All;
-        await Mutate(async transaction => {
+        await Mutate(async (transaction, changes) => {
             await LockNodes(transaction, hook.NodeId);
             Node node = await Snapshot(transaction, hook.NodeId);
             User recipient = await database.Load<User>(u => u.Id, u => u.Enabled, u => u.Permissions)
@@ -1493,7 +1510,7 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <inheritdoc />
     public async Task DeleteHook(NodeHook hook, long callerId, bool isAdmin) {
         ValidateHook(hook, callerId, isAdmin);
-        await Mutate(async transaction => {
+        await Mutate(async (transaction, changes) => {
             await LockNodes(transaction, hook.NodeId);
             await database.Delete<NodeHook>().Where(h => h.NodeId == hook.NodeId && h.UserId == hook.UserId && h.Tag == hook.Tag)
                           .ExecuteAsync(transaction);
@@ -1504,12 +1521,12 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <inheritdoc />
     public async Task PositionUnpositionedNode(long nodeId, double x, double y, CancellationToken ct) {
         ct.ThrowIfCancellationRequested();
-        await Mutate(async transaction => {
+        await Mutate(async (transaction, changes) => {
             await LockNodes(transaction, nodeId);
             Node before = await Snapshot(transaction, nodeId);
             if (before == null || before.X != 0 || before.Y != 0) return;
             await database.Update<Node>().Set(n => n.X == x, n => n.Y == y).Where(n => n.Id == nodeId).ExecuteAsync(transaction);
-            await Notify(transaction, before, await Snapshot(transaction, nodeId));
+            await Notify(transaction, changes, before, await Snapshot(transaction, nodeId));
         }, ct);
     }
 

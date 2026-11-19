@@ -74,6 +74,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
             string userIdString = details.UserId?.ToString() ?? "0";
             identity.AddClaim(new Claim(ClaimTypes.NameIdentifier, userIdString));
             identity.AddClaim(new Claim("divoid.user_id", userIdString));
+            identity.AddClaim(new Claim("divoid.api_key_id", details.Id.ToString()));
             foreach (string permission in details.Permissions ?? [])
                 identity.AddClaim(new Claim("permission", permission));
 

@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System;
 using System.Threading.Tasks;
 using Backend.Extensions.Startup;
@@ -184,6 +185,7 @@ public static class CliDispatcher {
     /// <returns>exit code of the verb, 1 if the schema could not be initialised</returns>
     static async Task<int> RunWithContainerAsync(Action<IServiceCollection, IConfiguration> register, Func<IServiceProvider, Task<int>> job) {
         IServiceCollection services = new ServiceCollection();
+        services.AddSingleton<NodeChangeFeed>();
 
         IConfiguration configuration = new ConfigurationBuilder()
             .AddJsonFile("appsettings.json", optional: true)

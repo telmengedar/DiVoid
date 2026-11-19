@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 #nullable enable
 using System;
 using System.Collections.Concurrent;
@@ -250,7 +251,7 @@ public class JwtAuthTests
             db,
             new KeyGenerator(),
             config,
-            NullLogger<ApiKeyService>.Instance);
+            NullLogger<ApiKeyService>.Instance, new NodeChangeFeed());
 
         ApiKeyDetails key = await svc.CreateApiKey(new ApiKeyParameters {
             UserId      = userId,

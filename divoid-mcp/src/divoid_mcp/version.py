@@ -15,6 +15,6 @@ See docs/drift-policy.md for the full procedure.
 
 __version__ = "0.21.0"
 
-# SHA-256 of the exact API reference staged at DiVoid #33982 for this release.
+# SHA-256 of the exact API reference staged at DiVoid #34170 for this release.
 # Publish those checked bytes to #8 after merge; drift remains warning-only until then.
-PINNED_API_REF_HASH = "e42c3285a675383d7a6c91828daf12321d3a94da48116a375795d3596847d117"
+PINNED_API_REF_HASH = "2748f17d7737b64f72df47be1b791186162e26ee59c9abb570bf754054757331"

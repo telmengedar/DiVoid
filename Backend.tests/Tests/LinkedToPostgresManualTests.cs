@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using Microsoft.Extensions.Logging.Abstractions;
 using System;
 using System.Collections.Generic;
@@ -39,7 +40,7 @@ public class LinkedToPostgresManualTests
         await svc.StartAsync(CancellationToken.None);
     }
 
-    static NodeService MakeService(IEntityManager em) => new(em, DisabledCapability, EmbeddingProducers.Function);
+    static NodeService MakeService(IEntityManager em) => new(em, DisabledCapability, EmbeddingProducers.Function, new NodeChangeFeed());
 
     static async Task<NodeDetails> Create(NodeService svc, string name)
         => await svc.CreateNode(new NodeDetails { Type = "task", Name = name }, callerId: 0);

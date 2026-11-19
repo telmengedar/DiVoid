@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System;
 using System.Text;
 using System.Security.Cryptography;
@@ -29,7 +30,7 @@ public class ApiKeyServiceTests
                 ["Auth:Enabled"] = "true"
             })
             .Build();
-        return new(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance);
+        return new(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance, new NodeChangeFeed());
     }
 
     // -----------------------------------------------------------------------
@@ -164,7 +165,7 @@ public class ApiKeyServiceTests
             .Build();
 
         Assert.Throws<MissingPepperException>(() =>
-            new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance));
+            new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance, new NodeChangeFeed()));
     }
 
     [Test]
@@ -179,7 +180,7 @@ public class ApiKeyServiceTests
             .Build();
 
         Assert.Throws<MissingPepperException>(() =>
-            new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance));
+            new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance, new NodeChangeFeed()));
     }
 
     [Test]
@@ -194,7 +195,7 @@ public class ApiKeyServiceTests
             .Build();
 
         Assert.DoesNotThrow(() =>
-            new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance));
+            new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance, new NodeChangeFeed()));
     }
 
     // -----------------------------------------------------------------------
