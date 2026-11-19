@@ -189,3 +189,56 @@ async def test_cli_cleanup_failure_never_leaks_exception(monkeypatch, capsys):
     assert captured.err == "inbox_events error=eof\ninbox_events error=close\n"
     assert "private" not in captured.err
     await original_close()
+
+
+class OpenInboxStream(httpx.AsyncByteStream):
+    def __init__(self):
+        self.release = asyncio.Event()
+        self.closed = asyncio.Event()
+
+    async def __aiter__(self):
+        yield FRAME
+        await self.release.wait()
+        yield DIRTY
+        await asyncio.Future()
+
+    async def aclose(self):
+        self.closed.set()
+
+
+@pytest.mark.asyncio
+async def test_real_httpx_iterator_delivers_short_frames_before_eof(monkeypatch):
+    stream = OpenInboxStream()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request:
+        httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=stream)))
+    monkeypatch.setattr(http_client, "_client", client)
+    monkeypatch.setattr(http_client, "_base_url", "http://divoid.test")
+    events = http_client.inbox_events()
+    try:
+        assert await asyncio.wait_for(anext(events), 1) == {"event": "ready", **READY}
+        assert not stream.closed.is_set()
+        stream.release.set()
+        assert await asyncio.wait_for(anext(events), 1) == {"event": "invalidate"}
+        assert not stream.closed.is_set()
+    finally:
+        await events.aclose()
+        await client.aclose()
+    assert stream.closed.is_set()
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_large_coalesced_transport_chunk_retains_bounded_valid_frames():
+    http_client.init("http://divoid.test", "dummy")
+    body = FRAME + DIRTY * 256
+    assert len(body) > 4096
+    respx.get("http://divoid.test/v1/messagechanges").mock(return_value=httpx.Response(
+        200, content=body, headers={"content-type": "text/event-stream"}))
+    records = []
+    try:
+        with pytest.raises(InboxEventError, match="eof"):
+            async for record in http_client.inbox_events():
+                records.append(record)
+    finally:
+        await http_client.close()
+    assert records == [{"event": "ready", **READY}] + [{"event": "invalidate"}] * 256

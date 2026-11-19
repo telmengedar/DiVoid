@@ -243,7 +243,14 @@ async def inbox_events() -> AsyncIterator[dict[str, Any]]:
             media_type = response.headers.get("content-type", "").split(";", 1)[0].strip()
             if media_type != "text/event-stream":
                 raise InboxEventError("protocol")
-            async for event in decode(response.aiter_bytes(chunk_size=1024)):
+            async for event in decode(_inbox_chunks(response)):
                 yield event
     except httpx.HTTPError:
         raise InboxEventError("transport") from None
+
+
+async def _inbox_chunks(response: httpx.Response) -> AsyncIterator[bytes]:
+    """Preserve immediate transport delivery while bounding each decoder input."""
+    async for chunk in response.aiter_bytes():
+        for offset in range(0, len(chunk), 4096):
+            yield chunk[offset:offset + 4096]
