@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -66,7 +67,7 @@ public class SemanticSearchMultiQuerySqlShapeTests
         client.SetupGet(c => c.DBInfo).Returns(new PostgreInfo());
         client.Setup(c => c.ReaderAsync(It.IsAny<Transaction>(), It.IsAny<string>(), It.IsAny<IEnumerable<object>>(), It.IsAny<CancellationToken>()))
               .Callback<Transaction, string, IEnumerable<object>, CancellationToken>((_, sql, parameters, _) => throw new StatementCaptured(sql, parameters.ToArray()));
-        return new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function);
+        return new(new EntityManager(client.Object), new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
     }
 
     static Statement CaptureList(NodeFilter filter)

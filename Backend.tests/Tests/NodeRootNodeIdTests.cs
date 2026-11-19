@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
@@ -39,7 +40,7 @@ public class NodeRootNodeIdTests
 {
     static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
 
-    static NodeService MakeService(DatabaseFixture fixture) => new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
+    static NodeService MakeService(DatabaseFixture fixture) => new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function, new NodeChangeFeed());
 
     static Task<NodeDetails> Create(NodeService svc, string type = "task", string name = "Test node")
         => svc.CreateNode(new NodeDetails { Type = type, Name = name }, callerId: 0);
@@ -360,7 +361,7 @@ public class NodeRootNodeIdTests
         Mock<IDBClient> clientMock = new();
         clientMock.SetupGet(c => c.DBInfo).Returns(new PostgreInfo());
         IEntityManager em = new EntityManager(clientMock.Object);
-        NodeService svc = new(em, new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService svc = new(em, new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
 
         NodeFilter filter = new() { Query = "hivemind protocol", RootNodeId = [42L], Count = 10 };
         NodeMapper mapper = new NodeMapper(filter);

@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using Backend.Extensions;
+using Backend.Services.NodeChanges;
 using Backend.Models.Auth;
 using Backend.Models.Users;
 using Microsoft.Extensions.Configuration;
@@ -24,6 +25,7 @@ public class ApiKeyService : IApiKeyService {
     readonly IKeyGenerator keyGenerator;
     readonly ILogger<ApiKeyService> logger;
     readonly byte[] pepper;
+    readonly NodeChangeFeed feed;
 
     /// <summary>
     /// creates a new <see cref="ApiKeyService"/>
@@ -32,10 +34,12 @@ public class ApiKeyService : IApiKeyService {
     /// <param name="keyGenerator">generator for random keys</param>
     /// <param name="configuration">application configuration (reads DIVOID_KEY_PEPPER)</param>
     /// <param name="logger">logger</param>
-    public ApiKeyService(IEntityManager database, IKeyGenerator keyGenerator, IConfiguration configuration, ILogger<ApiKeyService> logger) {
+    /// <param name="feed">The process-local commit coordinator.</param>
+    public ApiKeyService(IEntityManager database, IKeyGenerator keyGenerator, IConfiguration configuration, ILogger<ApiKeyService> logger, NodeChangeFeed feed) {
         this.database = database;
         this.keyGenerator = keyGenerator;
         this.logger = logger;
+        this.feed = feed;
 
         string pepperValue = configuration["DIVOID_KEY_PEPPER"];
         bool authEnabled = configuration.GetValue("Auth:Enabled", true);
@@ -179,19 +183,26 @@ public class ApiKeyService : IApiKeyService {
 
     /// <inheritdoc />
     public async Task<ApiKeyDetails> UpdateApiKey(long keyId, params PatchOperation[] patches) {
-        if (await database.Update<ApiKey>()
-                          .Patch(patches)
-                          .Where(k => k.Id == keyId)
-                          .ExecuteAsync() == 0)
-            throw new NotFoundException<ApiKey>(keyId);
+        await feed.UpdateAuthorityAsync(database, async transaction => {
+            ApiKey before = await database.Load<ApiKey>(key => key.UserId, key => key.Enabled, key => key.Permissions, key => key.ExpiresAt)
+                .Where(key => key.Id == keyId).ExecuteEntityAsync(transaction);
+            if (await database.Update<ApiKey>().Patch(patches).Where(key => key.Id == keyId).ExecuteAsync(transaction) == 0)
+                throw new NotFoundException<ApiKey>(keyId);
+            ApiKey after = await database.Load<ApiKey>(key => key.UserId, key => key.Enabled, key => key.Permissions, key => key.ExpiresAt)
+                .Where(key => key.Id == keyId).ExecuteEntityAsync(transaction);
+            return before.UserId != after.UserId || before.Enabled != after.Enabled || before.Permissions != after.Permissions || before.ExpiresAt != after.ExpiresAt;
+        }, keyId: keyId);
         return await GetApiKeyById(keyId);
     }
 
     /// <inheritdoc />
     public async Task DeleteApiKey(long keyId) {
         ApiKeyDetails key = await GetApiKeyById(keyId);
-        if (await database.Delete<ApiKey>().Where(k => k.Id == keyId).ExecuteAsync() == 0)
-            throw new NotFoundException<ApiKey>(keyId);
+        await feed.UpdateAuthorityAsync(database, async transaction => {
+            if (await database.Delete<ApiKey>().Where(key => key.Id == keyId).ExecuteAsync(transaction) == 0)
+                throw new NotFoundException<ApiKey>(keyId);
+            return true;
+        }, keyId: keyId);
         logger.LogInformation("event=apikey.deleted keyId={KeyId}", key.KeyId);
     }
 

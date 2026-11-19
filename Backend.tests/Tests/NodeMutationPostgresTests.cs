@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System.Text;
 using System.Data;
 using System.Linq.Expressions;
@@ -33,12 +34,12 @@ public class NodeMutationPostgresTests {
     [Description("Overlapping writes to distinct nodes all commit content and its immediately searchable vector.")]
     public async Task UploadContent_ConcurrentDistinctNodes_AllBodiesAndSearchVectorsCommit() {
         using EmbeddingPostgresDatabase database = await CreateDatabase();
-        NodeService setup = new(database.Entities, new EmbeddingCapability(true), new HashedWordEmbeddingProducer());
+        NodeService setup = new(database.Entities, new EmbeddingCapability(true), new HashedWordEmbeddingProducer(), new NodeChangeFeed());
         string[] words = ["bicycle", "gardening", "astronomy"];
         List<NodeDetails> nodes = [];
         foreach (string word in words) nodes.Add(await setup.CreateNode(new NodeDetails { Name = word, Type = "documentation" }, 0));
         using BarrierEmbeddingProducer producer = new(3);
-        NodeService service = new(database.Entities, new EmbeddingCapability(true), producer);
+        NodeService service = new(database.Entities, new EmbeddingCapability(true), producer, new NodeChangeFeed());
         byte[][] bodies = words.Select(word => Encoding.UTF8.GetBytes(string.Join(' ', Enumerable.Repeat(word, 220)))).ToArray();
 
         await Task.WhenAll(nodes.Select((node, index) => Task.Run(async () => {
@@ -78,7 +79,7 @@ public class NodeMutationPostgresTests {
     [Description("Only serialization aborts replay, at most eight attempts, with failed writes rolled back.")]
     public async Task UploadContent_DatabaseFailure_RetriesOnlySerializationAbort(string sqlState, int failures, long expectedAttempts, bool succeeds, bool atCommit) {
         using EmbeddingPostgresDatabase database = await CreateDatabase();
-        NodeService service = new(database.Entities, new EmbeddingCapability(false), EmbeddingProducers.Function);
+        NodeService service = new(database.Entities, new EmbeddingCapability(false), EmbeddingProducers.Function, new NodeChangeFeed());
         long nodeId = (await service.CreateNode(new NodeDetails { Name = "failure guard" }, 0)).Id;
         using MemoryStream initial = new("original"u8.ToArray());
         await service.UploadContent(nodeId, "text/plain", initial, 0, true);
@@ -116,7 +117,7 @@ public class NodeMutationPostgresTests {
     [Description("Concurrent relative content edits reread the committed body and send one notification per commit.")]
     public async Task PatchContent_ConcurrentSameNode_PreservesEveryEditAndOneNoticePerCommit() {
         using EmbeddingPostgresDatabase database = await CreateDatabase();
-        NodeService service = new(database.Entities, new EmbeddingCapability(false), EmbeddingProducers.Function);
+        NodeService service = new(database.Entities, new EmbeddingCapability(false), EmbeddingProducers.Function, new NodeChangeFeed());
         long userId = await database.Entities.Insert<User>().Columns(u => u.Name, u => u.Enabled, u => u.CreatedAt)
             .Values("subscriber", true, DateTime.UtcNow).ReturnID().ExecuteAsync();
         long nodeId = (await service.CreateNode(new NodeDetails { Name = "shared body" }, userId)).Id;
@@ -139,7 +140,7 @@ public class NodeMutationPostgresTests {
     [Description("An abort after inserting a first notification rolls back all effects before replay.")]
     public async Task UploadContent_NotificationSerializationAbort_RollsBackEarlierNoticeBeforeRetry() {
         using EmbeddingPostgresDatabase database = await CreateDatabase();
-        NodeService service = new(database.Entities, new EmbeddingCapability(false), EmbeddingProducers.Function);
+        NodeService service = new(database.Entities, new EmbeddingCapability(false), EmbeddingProducers.Function, new NodeChangeFeed());
         long userId = await database.Entities.Insert<User>().Columns(u => u.Name, u => u.Enabled, u => u.CreatedAt)
             .Values("subscriber", true, DateTime.UtcNow).ReturnID().ExecuteAsync();
         long nodeId = (await service.CreateNode(new NodeDetails { Name = "notification guard" }, userId)).Id;
@@ -167,7 +168,7 @@ public class NodeMutationPostgresTests {
     [Description("A cancelled mutation does not change the stored content.")]
     public async Task UploadContent_CancelledToken_LeavesContentUnchanged() {
         using EmbeddingPostgresDatabase database = await CreateDatabase();
-        NodeService service = new(database.Entities, new EmbeddingCapability(false), EmbeddingProducers.Function);
+        NodeService service = new(database.Entities, new EmbeddingCapability(false), EmbeddingProducers.Function, new NodeChangeFeed());
         long nodeId = (await service.CreateNode(new NodeDetails { Name = "cancel guard" }, 0)).Id;
         using MemoryStream data = new("cancelled"u8.ToArray());
         using CancellationTokenSource cancellation = new();
@@ -185,7 +186,7 @@ public class NodeMutationPostgresTests {
     [Description("A completed transaction closes its connection and preserves the primary failure without replay.")]
     public async Task UploadContent_CompletedTransactionFailure_ClosesConnectionAndPreservesPrimary(bool committed) {
         using EmbeddingPostgresDatabase database = await CreateDatabase();
-        NodeService setup = new(database.Entities, new EmbeddingCapability(false), EmbeddingProducers.Function);
+        NodeService setup = new(database.Entities, new EmbeddingCapability(false), EmbeddingProducers.Function, new NodeChangeFeed());
         long nodeId = (await setup.CreateNode(new NodeDetails { Name = "cleanup guard" }, 0)).Id;
         Transaction? transaction = null;
         NpgsqlConnection? connection = null;
@@ -208,7 +209,7 @@ public class NodeMutationPostgresTests {
             else transaction!.DbTransaction.Rollback();
             throw primary;
         });
-        NodeService service = new(entities.Object, new EmbeddingCapability(true), producer.Object);
+        NodeService service = new(entities.Object, new EmbeddingCapability(true), producer.Object, new NodeChangeFeed());
         using MemoryStream data = new("cleanup body"u8.ToArray());
 
         Exception observed = Assert.CatchAsync(() => service.UploadContent(nodeId, "text/plain", data, 0, true))!;

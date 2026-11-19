@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System.Text;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
@@ -19,7 +20,7 @@ public class ValueProducerPostgresManualTests {
 
     static async Task<NodeService> StartedService(PgvectorBareDatabase database) {
         await PgvectorBareDatabase.Start(database.AdminEntities);
-        return new NodeService(database.AdminEntities, new EmbeddingCapability(true), new HashedWordEmbeddingProducer());
+        return new NodeService(database.AdminEntities, new EmbeddingCapability(true), new HashedWordEmbeddingProducer(), new NodeChangeFeed());
     }
 
 

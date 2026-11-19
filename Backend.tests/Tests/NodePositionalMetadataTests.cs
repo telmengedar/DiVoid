@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System.Net.Http;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
@@ -424,7 +425,7 @@ public class LayoutNodesCliTests
     public async Task LayoutNodes_FirstRun_AssignsPositions()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
+        NodeService svc = new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function, new NodeChangeFeed());
         LayoutNodesService layoutSvc = new(fixture.EntityManager, Microsoft.Extensions.Logging.Abstractions.NullLogger<LayoutNodesService>.Instance, svc);
 
         // Create three unpositioned nodes and link them
@@ -454,7 +455,7 @@ public class LayoutNodesCliTests
     public async Task LayoutNodes_SecondRun_IsIdempotent()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
+        NodeService svc = new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function, new NodeChangeFeed());
         LayoutNodesService layoutSvc = new(fixture.EntityManager, Microsoft.Extensions.Logging.Abstractions.NullLogger<LayoutNodesService>.Instance, svc);
 
         NodeDetails a = await svc.CreateNode(new NodeDetails { Type = "task", Name = "IdempotentA" }, callerId: 0);
@@ -495,7 +496,7 @@ public class LayoutNodesCliTests
     public async Task LayoutNodes_AlreadyPositionedNodes_AreUntouched()
     {
         using DatabaseFixture fixture = new();
-        NodeService svc = new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
+        NodeService svc = new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function, new NodeChangeFeed());
         LayoutNodesService layoutSvc = new(fixture.EntityManager, Microsoft.Extensions.Logging.Abstractions.NullLogger<LayoutNodesService>.Instance, svc);
 
         // Create a node and manually set its position to a known non-zero value

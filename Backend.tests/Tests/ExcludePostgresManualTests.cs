@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System.IO;
 using Backend.tests.Fixtures;
 using Backend.Models.Nodes;
@@ -33,7 +34,7 @@ public class ExcludePostgresManualTests
     {
         using EmbeddingPostgresDatabase database = new();
         await database.Start();
-        NodeService service = new(database.Entities, new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService service = new(database.Entities, new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
         const string probe = "processor-run-probe";
         long[] excluded = new long[3];
         for (int i = 0; i < excluded.Length; i++)

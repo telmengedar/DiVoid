@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 #nullable enable
 using System;
 using System.Collections.Generic;
@@ -354,7 +355,7 @@ public class AuthErrorBodyTests
             db,
             new KeyGenerator(),
             config,
-            NullLogger<ApiKeyService>.Instance);
+            NullLogger<ApiKeyService>.Instance, new NodeChangeFeed());
 
         ApiKeyDetails key = await svc.CreateApiKey(new ApiKeyParameters {
             UserId      = userId,
@@ -404,7 +405,7 @@ public class AuthErrorBodyTests
             db,
             new KeyGenerator(),
             config,
-            NullLogger<ApiKeyService>.Instance);
+            NullLogger<ApiKeyService>.Instance, new NodeChangeFeed());
 
         ApiKeyDetails key = await svc.CreateApiKey(new ApiKeyParameters {
             UserId      = userId,
@@ -455,7 +456,7 @@ public class AuthErrorBodyTests
             db,
             new KeyGenerator(),
             config,
-            NullLogger<ApiKeyService>.Instance);
+            NullLogger<ApiKeyService>.Instance, new NodeChangeFeed());
 
         ApiKeyDetails key = await svc.CreateApiKey(new ApiKeyParameters {
             UserId      = userId,
@@ -503,7 +504,7 @@ public class AuthErrorBodyTests
             db,
             new KeyGenerator(),
             config,
-            NullLogger<ApiKeyService>.Instance);
+            NullLogger<ApiKeyService>.Instance, new NodeChangeFeed());
 
         ApiKeyDetails key = await svc.CreateApiKey(new ApiKeyParameters {
             UserId      = userId,

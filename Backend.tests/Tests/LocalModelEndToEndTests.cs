@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System.Text;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
@@ -54,7 +55,7 @@ public class LocalModelEndToEndTests {
         using PgvectorBareDatabase database = new();
         await PgvectorBareDatabase.Start(database.AdminEntities);
         await using ServiceProvider provider = await LocalModelEnvironment.PreparedProvider();
-        NodeService service = new(database.AdminEntities, new EmbeddingCapability(true), provider.GetRequiredService<IEmbeddingProducer>());
+        NodeService service = new(database.AdminEntities, new EmbeddingCapability(true), provider.GetRequiredService<IEmbeddingProducer>(), new NodeChangeFeed());
         long[] ids = new long[Topics.Length];
         for (int i = 0; i < Topics.Length; i++) {
             ids[i] = (await service.CreateNode(new NodeDetails { Type = "documentation", Name = Topics[i].Name }, callerId: 0)).Id;

@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System.Text;
 using Backend.tests.Fixtures;
 using Backend.Models.Nodes;
@@ -31,7 +32,7 @@ public class EmbeddingWindowsPostgresManualTests
     {
         using EmbeddingPostgresDatabase database = new();
         await database.Start();
-        NodeService service = new(database.Entities, new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService service = new(database.Entities, new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
         EmbeddingBackfillService backfill = new(database.Entities, new EmbeddingCapability(true), new EmbeddingModelGuard(database.Entities, new EmbeddingCapability(true), NullLogger<EmbeddingModelGuard>.Instance), NullLogger<EmbeddingBackfillService>.Instance, EmbeddingProducers.Function);
         byte[] body = "short body"u8.ToArray();
 
@@ -63,7 +64,7 @@ public class EmbeddingWindowsPostgresManualTests
     {
         using EmbeddingPostgresDatabase database = new();
         await database.Start();
-        NodeService service = new(database.Entities, new EmbeddingCapability(true), EmbeddingProducers.Function);
+        NodeService service = new(database.Entities, new EmbeddingCapability(true), EmbeddingProducers.Function, new NodeChangeFeed());
         byte[] body = Encoding.UTF8.GetBytes(string.Concat(Enumerable.Range(0, 5000).Select(i => $"w{i} "))[..20000]);
         string[] windows = EmbeddingInputComposer.ComposeWindows("long node", body, "text/markdown");
 

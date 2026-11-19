@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -40,7 +41,7 @@ public class NodeHookHttpTests {
     public async Task Setup() {
         fixture = new();
         db = fixture.EntityManager;
-        service = new(db, new EmbeddingCapability(false), EmbeddingProducers.Function);
+        service = new(db, new EmbeddingCapability(false), EmbeddingProducers.Function, new NodeChangeFeed());
         ownerId = await User("owner");
         readerId = await User("reader");
         adminId = await User("admin", "[\"admin\",\"write\",\"read\"]");

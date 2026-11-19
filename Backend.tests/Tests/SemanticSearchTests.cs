@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -52,7 +53,7 @@ public class SemanticSearchTests
     static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
 
     static NodeService MakeService(DatabaseFixture fixture, IEmbeddingCapability? capability = null)
-        => new(fixture.EntityManager, capability ?? DisabledCapability, EmbeddingProducers.Function);
+        => new(fixture.EntityManager, capability ?? DisabledCapability, EmbeddingProducers.Function, new NodeChangeFeed());
 
     static Task<NodeDetails> CreateNode(NodeService svc, string type = "task", string name = "node")
         => svc.CreateNode(new NodeDetails { Type = type, Name = name }, callerId: 0);

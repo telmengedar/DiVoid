@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System.Diagnostics;
 using System.Text;
 using Backend.Models.Nodes;
@@ -49,7 +50,7 @@ public class LocalModelLatencyTests {
 
         using PgvectorBareDatabase database = new();
         await PgvectorBareDatabase.Start(database.AdminEntities);
-        NodeService service = new(database.AdminEntities, new EmbeddingCapability(true), provider.GetRequiredService<IEmbeddingProducer>());
+        NodeService service = new(database.AdminEntities, new EmbeddingCapability(true), provider.GetRequiredService<IEmbeddingProducer>(), new NodeChangeFeed());
         long id = (await service.CreateNode(new NodeDetails { Type = "documentation", Name = "maximum windows" }, callerId: 0)).Id;
         byte[] body = Encoding.UTF8.GetBytes(TextOfLength(300000));
         string[] windows = EmbeddingInputComposer.ComposeWindows("maximum windows", body, "text/markdown");

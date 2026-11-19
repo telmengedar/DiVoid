@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -35,7 +36,7 @@ public class NodeLinkAutoPositionTests
 {
     static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
 
-    static NodeService MakeService(DatabaseFixture fixture) => new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
+    static NodeService MakeService(DatabaseFixture fixture) => new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function, new NodeChangeFeed());
 
     /// <summary>
     /// computes the expected auto-position — must stay in sync with NodeService.ComputeAutoPosition.

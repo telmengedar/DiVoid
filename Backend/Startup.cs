@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System.Linq;
 using Backend.Auth;
 using Backend.Errors;
@@ -89,6 +90,7 @@ public class Startup
         // auth pipeline exceptions to the canonical { code, text } shape at 401/403.
         services.AddTransient<IErrorHandler, AuthenticationFailedExceptionHandler>();
         services.AddTransient<IErrorHandler, MessageReplyExceptionHandler>();
+        services.AddTransient<IErrorHandler, NodeChangeExceptionHandler>();
         services.AddTransient<IErrorHandler, AuthorizationFailedExceptionHandler>();
         services.AddLogging(options =>
         {
@@ -107,6 +109,8 @@ public class Startup
 
         services.AddEmbedding(Configuration);
 
+        services.AddSingleton<NodeChangeFeed>();
+        services.AddHostedService(provider => provider.GetRequiredService<NodeChangeFeed>());
         services.AddTransient<INodeService, NodeService>();
         services.AddTransient<IKeyGenerator, KeyGenerator>();
         services.AddTransient<IUserService, UserService>();

@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -42,7 +43,7 @@ public class AuthHandlerTests
                 ["Auth:Enabled"] = "true"
             })
             .Build();
-        return new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance);
+        return new ApiKeyService(fixture.EntityManager, new KeyGenerator(), config, NullLogger<ApiKeyService>.Instance, new NodeChangeFeed());
     }
 
     static async Task<long> CreateUser(DatabaseFixture fixture, bool enabled = true)

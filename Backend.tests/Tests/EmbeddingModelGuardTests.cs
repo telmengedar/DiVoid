@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using Backend.Init;
 using Backend.Models;
 using Backend.Models.Nodes;
@@ -45,7 +46,7 @@ public class EmbeddingModelGuardTests
 
     static async Task<long> SeedNodeWithVector(DatabaseFixture fixture)
     {
-        NodeService service = new(fixture.EntityManager, Disabled, EmbeddingProducers.Function);
+        NodeService service = new(fixture.EntityManager, Disabled, EmbeddingProducers.Function, new NodeChangeFeed());
         NodeDetails node = await service.CreateNode(new NodeDetails { Type = "doc", Name = "vectored" }, callerId: 0);
         await fixture.EntityManager.DBClient.NonQueryAsync("UPDATE node SET embedding = x'00000000' WHERE id = @1", node.Id);
         return node.Id;
@@ -67,7 +68,7 @@ public class EmbeddingModelGuardTests
     public async Task Absent_NodesWithoutVectors_LocalProducer_InsertsConfigured()
     {
         using DatabaseFixture fixture = new();
-        NodeService service = new(fixture.EntityManager, Disabled, EmbeddingProducers.Function);
+        NodeService service = new(fixture.EntityManager, Disabled, EmbeddingProducers.Function, new NodeChangeFeed());
         await service.CreateNode(new NodeDetails { Type = "doc", Name = "unembedded" }, callerId: 0);
 
         Assert.DoesNotThrowAsync(() => MakeGuard(fixture.EntityManager).EnsureAsync(Gemma));
@@ -248,7 +249,7 @@ public class EmbeddingModelGuardTests
     public async Task Backfill_Mismatch_RefusesBeforeAnyWrite()
     {
         using DatabaseFixture fixture = new();
-        NodeService service = new(fixture.EntityManager, Disabled, EmbeddingProducers.Function);
+        NodeService service = new(fixture.EntityManager, Disabled, EmbeddingProducers.Function, new NodeChangeFeed());
         NodeDetails node = await service.CreateNode(new NodeDetails { Type = "doc", Name = "candidate" }, callerId: 0);
         await Record(fixture.EntityManager, Gemma);
         EmbeddingBackfillService backfill = MakeBackfill(fixture);

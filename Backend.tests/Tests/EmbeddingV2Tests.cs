@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System.Text;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
@@ -26,7 +27,7 @@ public class EmbeddingV2Tests
     static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
 
     static NodeService MakeService(DatabaseFixture fixture)
-        => new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
+        => new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function, new NodeChangeFeed());
 
 
     [Test]

@@ -1,3 +1,4 @@
+using Backend.Services.NodeChanges;
 using System.Text;
 using Backend.Models.Nodes;
 using Backend.Services.Embeddings;
@@ -20,7 +21,7 @@ public class EmbeddingTests
     static readonly IEmbeddingCapability DisabledCapability = new EmbeddingCapability(false);
 
     static NodeService MakeService(DatabaseFixture fixture)
-        => new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function);
+        => new(fixture.EntityManager, DisabledCapability, EmbeddingProducers.Function, new NodeChangeFeed());
 
     // -----------------------------------------------------------------------
     // 1. Capability flag — DI resolution in the SQLite test factory
