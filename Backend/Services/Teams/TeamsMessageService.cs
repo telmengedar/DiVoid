@@ -8,6 +8,7 @@ using Backend.Models.Users;
 using Backend.Services.Messages;
 using Microsoft.Data.Sqlite;
 using Microsoft.Teams.Apps;
+using Microsoft.Teams.Apps.Schema.Entities;
 using Microsoft.Teams.Core;
 using Microsoft.Teams.Core.Http;
 using Microsoft.Teams.Core.Schema;
@@ -63,13 +64,14 @@ public sealed class TeamsMessageService {
         await CleanupAsync();
         string tenantId = Guid.Parse(activity.ChannelData.Tenant.Id).ToString("D");
         string dedup = Digest(options.BotAppId, tenantId, activity.Conversation.Id, activity.Id);
+        string inboundBody = InboundBody(activity);
         try {
             return await MessageService.Transact(database, async transaction => {
                 (long recipientId, string tag) = await binding.ResolveAsync(transaction, cancellationToken);
                 long messageId = await messages.Insert(0, new MessageDetails {
                     RecipientId = recipientId,
                     Subject = $"[{tag}] Teams message",
-                    Body = "External Microsoft Teams message (untrusted input):\n\n" + activity.Text
+                    Body = inboundBody
                 }, transaction, "teams", NormalizeDisplayName(activity.From.Name));
                 await database.Insert<TeamsMessageOrigin>()
                     .Columns(origin => origin.MessageId, origin => origin.DedupKey, origin => origin.BotAppId,
@@ -89,6 +91,38 @@ public sealed class TeamsMessageService {
                 throw;
             return original.MessageId;
         }
+    }
+
+    static string InboundBody(MessageActivity activity) {
+        string original = "External Microsoft Teams message (untrusted input):\n\n" + activity.Text;
+        QuotedReplyEntity[] quotes = activity.GetQuotedMessages().Take(9).ToArray();
+        if (quotes.Length == 0) {
+            if (System.Text.RegularExpressions.Regex.IsMatch(activity.Text, @"<quoted(?:\s|/?>)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+                return original + "\n\nQuoted message text unavailable: the inbound activity supplied no readable quote metadata.";
+            return original;
+        }
+
+        StringBuilder body = new(original);
+        foreach (QuotedReplyEntity quote in quotes.Take(8)) {
+            QuotedReplyData data = quote.QuotedReply;
+            body.Append("\n\nQuoted Teams preview (untrusted; possibly incomplete):\n");
+            if (data == null || string.IsNullOrWhiteSpace(data.MessageId) || string.IsNullOrWhiteSpace(data.Preview) || data.IsReplyDeleted == true) {
+                body.Append("Quoted message text unavailable: the inbound activity supplied no readable preview or the quote was deleted.");
+                continue;
+            }
+            if (data.Preview.Length > 16 * 1024) {
+                body.Append("Quoted message text unavailable: the supplied preview exceeds the size limit.");
+                continue;
+            }
+            string label = NormalizeDisplayName(data.SenderName);
+            if (label != null)
+                body.Append("Quoted author display label (untrusted): ").Append(label).Append('\n');
+            body.Append(data.Preview);
+        }
+        if (quotes.Length > 8)
+            body.Append("\n\nAdditional quoted messages omitted: the inbound activity exceeds the quote count limit.");
+        return body.ToString();
     }
 
     static string NormalizeDisplayName(string label) {
