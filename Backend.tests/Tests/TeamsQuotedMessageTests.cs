@@ -152,6 +152,31 @@ public class TeamsQuotedMessageTests {
         Assert.That(fixture.Host.Connector.Bodies, Is.Empty);
     }
 
+    /// <summary>Checks the observed quoted-author placeholder is omitted without altering real labels or sender metadata.</summary>
+    /// <param name="quotedName">The native quoted-author display label.</param>
+    /// <param name="usable">Whether the label remains usable.</param>
+    /// <returns>The asynchronous check.</returns>
+    [TestCase("Display Name", false), TestCase("  display name  ", false), TestCase("DISPLAY NAME", false)]
+    [TestCase("Display Name Jr.", true), TestCase("Display Names", true), TestCase("Dísplay Name 😀", true), Parallelizable]
+    public async Task TeamsIngress_QuotedAuthorPlaceholder_OmitsOnlyObservedLabel(string quotedName, bool usable) {
+        using TeamsRoutingDatabase database = await TeamsRoutingDatabase.CreateAsync(false);
+        using TeamsRoutingFixture fixture = new(database);
+        Dictionary<string, object?> activity = Activity();
+        activity["from"] = new Dictionary<string, object?> { ["id"] = "private-sender-canary", ["name"] = "Display Name" };
+        activity["entities"] = new[] { Quote("question-id", quotedName, "quoted preview stays intact") };
+        using HttpResponseMessage response = await Post(fixture, activity);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Message stored = await database.Entities.Load<Message>().ExecuteEntityAsync();
+        Assert.That(stored.Body, Does.StartWith("External Microsoft Teams message (untrusted input):\n\n" + activity["text"]));
+        Assert.That(stored.Body, Does.EndWith("quoted preview stays intact"));
+        Assert.That(stored.ExternalAuthorDisplayName, Is.EqualTo("Display Name"));
+        if (usable)
+            Assert.That(stored.Body, Does.Contain("Quoted author display label (untrusted): " + quotedName));
+        else
+            Assert.That(stored.Body, Does.Not.Contain("Quoted author display label (untrusted):"));
+        Assert.That(fixture.Host.Connector.Bodies, Is.Empty);
+    }
+
     static Dictionary<string, object?> Activity() {
         Dictionary<string, object?> activity = TeamsWebhookFixture.Activity();
         activity["from"] = new Dictionary<string, object?> { ["id"] = "private-sender-canary", ["name"] = "Toni" };

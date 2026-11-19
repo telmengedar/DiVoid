@@ -116,7 +116,7 @@ public sealed class TeamsMessageService {
                 continue;
             }
             string label = NormalizeDisplayName(data.SenderName);
-            if (label != null)
+            if (label != null && !label.Equals("Display Name", StringComparison.OrdinalIgnoreCase))
                 body.Append("Quoted author display label (untrusted): ").Append(label).Append('\n');
             body.Append(data.Preview);
         }
