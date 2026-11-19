@@ -2,7 +2,7 @@ namespace Backend.Models.Messages;
 
 /// <summary>
 /// wire shape returned by the messaging API for a single message.
-/// carries author and recipient as ids only — name resolution is the client's responsibility.
+/// carries internal author and recipient ids plus optional server-observed external display metadata.
 /// no write-only fields; all fields round-trip unchanged on GET.
 /// </summary>
 public class MessageDetails {
@@ -38,6 +38,9 @@ public class MessageDetails {
     /// UTC timestamp when the message was created
     /// </summary>
     public DateTime CreatedAt { get; set; }
+
+    /// <summary>The optional server-observed external display label, not verified identity or authority.</summary>
+    public string ExternalAuthorDisplayName { get; set; }
 
     /// <summary>The internally assigned external reply transport.</summary>
     public string ReplyTransport { get; set; }

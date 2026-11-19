@@ -47,6 +47,10 @@ public class Message {
     [Index("recipient")]
     public DateTime CreatedAt { get; set; }
 
+    /// <summary>The optional server-observed external display label, not verified identity.</summary>
+    [Size(256)]
+    public string ExternalAuthorDisplayName { get; set; }
+
     /// <summary>The internally assigned external reply transport.</summary>
     public string ReplyTransport { get; set; }
 }

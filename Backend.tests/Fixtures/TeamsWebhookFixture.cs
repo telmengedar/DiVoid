@@ -99,6 +99,9 @@ public sealed class TeamsWebhookFixture : IDisposable {
         http = TestSetup.HttpServiceFor(factory);
     }
 
+    /// <summary>The supported HTTP service for native boundary checks.</summary>
+    public IHttpService Http => http;
+
     /// <summary>The synthetic Connector signing key.</summary>
     public RsaSecurityKey Key { get; }
 
