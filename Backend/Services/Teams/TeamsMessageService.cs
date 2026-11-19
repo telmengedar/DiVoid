@@ -195,6 +195,109 @@ public sealed class TeamsMessageService {
                 (route.ReplyState == TeamsReplyState.Pending || route.ReplyState == TeamsReplyState.Failed)).ExecuteAsync();
         if (claimed == 0)
             throw new MessageReplyException(HttpStatusCode.Conflict, "reply_in_progress", "Another reply attempt owns this message. Inspect reply status.");
+        string outbound = await SendReplyAsync(origin, body, cancellationToken, (state, category, activityId) =>
+            database.Update<TeamsMessageOrigin>()
+                .Set(route => route.ReplyState == state, route => route.ErrorCategory == category,
+                    route => route.OutboundActivityId == activityId)
+                .Where(route => route.MessageId == messageId).ExecuteAsync());
+        origin.ReplyState = TeamsReplyState.Sent;
+        origin.OutboundActivityId = outbound;
+        return Receipt(origin);
+    }
+
+    /// <summary>Reads one existing logical reply without creating or resetting it.</summary>
+    /// <param name="callerId">The authenticated original recipient.</param>
+    /// <param name="messageId">The retained inbox identifier.</param>
+    /// <param name="replyId">The saved logical-message UUID.</param>
+    /// <returns>The safe receipt for this UUID.</returns>
+    public async Task<MessageReplyDetails> GetReplyAsync(long callerId, long messageId, Guid replyId) {
+        await AuthorizedOrigin(callerId, messageId);
+        string key = ReplyKey(replyId);
+        TeamsMessageReply reply = await database.Load<TeamsMessageReply>()
+            .Where(row => row.MessageId == messageId && row.ReplyId == key).ExecuteEntityAsync();
+        if (reply == null)
+            throw new NotFoundException<Message>(messageId);
+        return Receipt(reply);
+    }
+
+    /// <summary>Claims and attempts one independently idempotent logical response.</summary>
+    /// <param name="callerId">The authenticated original recipient.</param>
+    /// <param name="messageId">The retained inbox identifier.</param>
+    /// <param name="replyId">The UUID persisted by the caller before sending.</param>
+    /// <param name="body">The immutable exact text for this UUID.</param>
+    /// <param name="cancellationToken">The requesting caller cancellation.</param>
+    /// <returns>The confirmed or already accepted receipt.</returns>
+    public async Task<MessageReplyDetails> CreateReplyAsync(long callerId, long messageId, Guid replyId, string body, CancellationToken cancellationToken) {
+        await AuthorizedOrigin(callerId, messageId);
+        string key = ReplyKey(replyId);
+        if (string.IsNullOrWhiteSpace(body) || new UTF8Encoding(false, true).GetByteCount(body) > 16 * 1024)
+            throw new ArgumentException("A reply must contain nonblank text of at most 16 KiB UTF-8.", nameof(body));
+        string hash = Digest(body);
+        cancellationToken.ThrowIfCancellationRequested();
+        (TeamsMessageOrigin origin, TeamsMessageReply reply, bool send) claim;
+        try {
+            claim = await ClaimReplyAsync(callerId, messageId, key, hash, true);
+        } catch (Exception exception) when (IsUniqueViolation(exception)) {
+            claim = await ClaimReplyAsync(callerId, messageId, key, hash, false);
+        }
+        if (!claim.send)
+            return Receipt(claim.reply);
+        long? started = claim.reply.AttemptStartedAt;
+        string outbound = await SendReplyAsync(claim.origin, body, cancellationToken, (state, category, activityId) =>
+            database.Update<TeamsMessageReply>()
+                .Set(row => row.State == state, row => row.ErrorCategory == category, row => row.OutboundActivityId == activityId)
+                .Where(row => row.MessageId == messageId && row.ReplyId == key && row.BodyHash == hash &&
+                    row.State == TeamsReplyState.Sending && row.AttemptStartedAt == started).ExecuteAsync(), key);
+        claim.reply.State = TeamsReplyState.Sent;
+        claim.reply.OutboundActivityId = outbound;
+        return Receipt(claim.reply);
+    }
+
+    Task<(TeamsMessageOrigin origin, TeamsMessageReply reply, bool send)> ClaimReplyAsync(long callerId, long messageId, string key, string hash, bool allowInsert) =>
+        MessageService.Transact(database, async transaction => {
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            long locked = await database.Update<TeamsMessageOrigin>().Set(origin => origin.RecipientId == callerId)
+                .Where(origin => origin.MessageId == messageId && origin.RecipientId == callerId &&
+                    (origin.ExpiresAt == null || origin.ExpiresAt > now)).ExecuteAsync(transaction);
+            if (locked == 0)
+                throw new NotFoundException<Message>(messageId);
+            TeamsMessageOrigin origin = await AuthorizedOrigin(callerId, messageId, transaction);
+            TeamsMessageReply reply = await database.Load<TeamsMessageReply>()
+                .Where(row => row.MessageId == messageId && row.ReplyId == key).ExecuteEntityAsync(transaction);
+            if (reply == null) {
+                if (!allowInsert)
+                    throw new MessageReplyException(HttpStatusCode.Conflict, "reply_in_progress", "The logical reply claim could not be confirmed. Inspect its receipt.");
+                reply = new TeamsMessageReply { MessageId = messageId, ReplyId = key, BodyHash = hash,
+                    State = TeamsReplyState.Sending, AttemptStartedAt = now };
+                await database.Insert<TeamsMessageReply>()
+                    .Columns(row => row.MessageId, row => row.ReplyId, row => row.BodyHash, row => row.State, row => row.AttemptStartedAt)
+                    .Values(messageId, key, hash, reply.State, reply.AttemptStartedAt).ExecuteAsync(transaction);
+                return (origin, reply, true);
+            }
+            if (reply.BodyHash != hash)
+                throw new MessageReplyException(HttpStatusCode.Conflict, "reply_conflict", "This reply UUID already identifies different text.");
+            if (reply.State == TeamsReplyState.Sent)
+                return (origin, reply, false);
+            if (reply.State != TeamsReplyState.Failed)
+                throw new MessageReplyException(HttpStatusCode.Conflict, "reply_outcome_unknown", "This reply is in progress or uncertain. Inspect its receipt; do not resend.");
+            long? previous = reply.AttemptStartedAt;
+            long? started = now;
+            long claimed = await database.Update<TeamsMessageReply>()
+                .Set(row => row.State == TeamsReplyState.Sending, row => row.AttemptStartedAt == started, row => row.ErrorCategory == null)
+                .Where(row => row.MessageId == messageId && row.ReplyId == key && row.BodyHash == hash &&
+                    row.State == TeamsReplyState.Failed && row.AttemptStartedAt == previous).ExecuteAsync(transaction);
+            if (claimed != 1)
+                throw new MessageReplyException(HttpStatusCode.Conflict, "reply_in_progress", "Another attempt owns this logical reply. Inspect its receipt.");
+            reply.State = TeamsReplyState.Sending;
+            reply.AttemptStartedAt = started;
+            return (origin, reply, true);
+        });
+
+    static string ReplyKey(Guid replyId) => replyId == Guid.Empty
+        ? throw new ArgumentException("replyId must be a nonzero UUID.", nameof(replyId)) : replyId.ToString("D");
+
+    async Task<string> SendReplyAsync(TeamsMessageOrigin origin, string body, CancellationToken cancellationToken,
+        Func<TeamsReplyState, string, string, Task<long>> persist, string replyId = null) {
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(15));
         SendActivityResponse sent;
@@ -208,46 +311,42 @@ public sealed class TeamsMessageService {
             sent = await connector.SendActivityAsync(origin.ConversationId, reply, new Uri(origin.ServiceUrl),
                 requestContext: new BotRequestContext { BotAppId = options.BotAppId }, cancellationToken: timeout.Token);
         } catch (Exception exception) {
-            LogFailure(messageId, "send", exception);
+            LogFailure(origin.MessageId, "send", exception, replyId);
             bool definitive = exception is ArgumentException ||
                 exception is HttpRequestException { StatusCode: >= HttpStatusCode.BadRequest and < HttpStatusCode.InternalServerError };
-            await SetState(messageId, definitive ? TeamsReplyState.Failed : TeamsReplyState.Unknown,
-                definitive ? "connector_rejected" : "outcome_unknown");
+            await persist(definitive ? TeamsReplyState.Failed : TeamsReplyState.Unknown,
+                definitive ? "connector_rejected" : "outcome_unknown", null);
             throw new MessageReplyException(HttpStatusCode.BadGateway,
                 definitive ? "reply_failed" : "reply_outcome_unknown",
                 definitive ? "The Connector definitively rejected the reply; an explicit retry is permitted." :
                     "The external reply outcome is unknown. Inspect reply status and reconcile externally; do not resend.");
         }
         if (string.IsNullOrWhiteSpace(sent?.Id)) {
-            await SetState(messageId, TeamsReplyState.Unknown, "outcome_unknown");
+            await persist(TeamsReplyState.Unknown, "outcome_unknown", null);
             throw new MessageReplyException(HttpStatusCode.BadGateway, "reply_outcome_unknown", "Connector confirmation is incomplete; do not resend.");
         }
         try {
-            TeamsReplyState accepted = TeamsReplyState.Sent;
-            await database.Update<TeamsMessageOrigin>()
-                .Set(route => route.ReplyState == accepted, route => route.OutboundActivityId == sent.Id,
-                    route => route.ErrorCategory == null).Where(route => route.MessageId == messageId).ExecuteAsync();
+            if (await persist(TeamsReplyState.Sent, null, sent.Id) != 1)
+                throw new InvalidOperationException("The retained reply claim is no longer available.");
         } catch (Exception exception) {
-            LogFailure(messageId, "receipt_persist", exception);
+            LogFailure(origin.MessageId, "receipt_persist", exception, replyId);
             throw new MessageReplyException(HttpStatusCode.BadGateway, "reply_outcome_unknown",
                 "The Connector accepted the reply but its local receipt could not be confirmed. Do not resend.");
         }
-        origin.ReplyState = TeamsReplyState.Sent;
-        origin.OutboundActivityId = sent.Id;
-        return Receipt(origin);
+        return sent.Id;
     }
 
-    void LogFailure(long messageId, string stage, Exception exception) {
+    void LogFailure(long messageId, string stage, Exception exception, string replyId = null) {
         Exception[] causes = FailureCauses(exception).ToArray();
         int? status = causes.OfType<HttpRequestException>().Where(cause => cause.StatusCode.HasValue)
             .Select(cause => (int?)cause.StatusCode.Value).FirstOrDefault();
         if (causes.Any(QuotesInput)) {
             string details = string.Join("\n", causes.Select(MessageFreeStack));
-            logger.LogError("Teams reply failure messageId={MessageId} stage={Stage} httpStatus={HttpStatus} exceptions={ExceptionDetails}",
-                messageId, stage, status, details);
+            logger.LogError("Teams reply failure messageId={MessageId} replyId={ReplyId} stage={Stage} httpStatus={HttpStatus} exceptions={ExceptionDetails}",
+                messageId, replyId, stage, status, details);
         } else
-            logger.LogError(exception, "Teams reply failure messageId={MessageId} stage={Stage} httpStatus={HttpStatus}",
-                messageId, stage, status);
+            logger.LogError(exception, "Teams reply failure messageId={MessageId} replyId={ReplyId} stage={Stage} httpStatus={HttpStatus}",
+                messageId, replyId, stage, status);
     }
 
     static bool QuotesInput(Exception exception) {
@@ -286,16 +385,17 @@ public sealed class TeamsMessageService {
         return details.ToString();
     }
 
-    async Task<TeamsMessageOrigin> AuthorizedOrigin(long callerId, long messageId) {
+    async Task<TeamsMessageOrigin> AuthorizedOrigin(long callerId, long messageId, Transaction transaction = null) {
         if (!options.Enabled || callerId <= 0)
             throw new NotFoundException<Message>(messageId);
-        await CleanupAsync();
+        if (transaction == null)
+            await CleanupAsync();
         long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         TeamsMessageOrigin origin = await database.Load<TeamsMessageOrigin>()
             .Where(route => route.MessageId == messageId && route.RecipientId == callerId &&
-                (route.ExpiresAt == null || route.ExpiresAt > now)).ExecuteEntityAsync();
+                (route.ExpiresAt == null || route.ExpiresAt > now)).ExecuteEntityAsync(transaction);
         User recipient = origin == null ? null : await database.Load<User>()
-            .Where(user => user.Id == callerId && user.Enabled).ExecuteEntityAsync();
+            .Where(user => user.Id == callerId && user.Enabled).ExecuteEntityAsync(transaction);
         if (origin == null || recipient == null || !options.Enabled ||
             origin.BotAppId != options.BotAppId ||
             !Guid.TryParse(origin.TenantId, out Guid tenant) || tenant == Guid.Empty ||
@@ -318,9 +418,27 @@ public sealed class TeamsMessageService {
         await foreach (TeamsMessageOrigin origin in database.Load<TeamsMessageOrigin>()
             .Where(route => route.ExpiresAt != null && route.ExpiresAt <= now).Limit(64).ExecuteEntitiesAsync())
             ids.Add(origin.MessageId);
+        ids.Sort();
         if (ids.Count > 0)
-            await database.Delete<TeamsMessageOrigin>().Where(origin => origin.MessageId.In(ids.ToArray())).ExecuteAsync();
+            await MessageService.Transact(database, async transaction => {
+                foreach (long id in ids) {
+                    long removed = await database.Delete<TeamsMessageOrigin>()
+                        .Where(origin => origin.MessageId == id && origin.ExpiresAt != null && origin.ExpiresAt <= now).ExecuteAsync(transaction);
+                    if (removed != 0)
+                        await database.Delete<TeamsMessageReply>().Where(reply => reply.MessageId == id).ExecuteAsync(transaction);
+                }
+                return true;
+            });
     }
+
+    static MessageReplyDetails Receipt(TeamsMessageReply reply) => new() {
+        MessageId = reply.MessageId,
+        ReplyId = Guid.Parse(reply.ReplyId),
+        Transport = "teams",
+        State = reply.State == TeamsReplyState.Sending && reply.AttemptStartedAt <= DateTimeOffset.UtcNow.AddSeconds(-15).ToUnixTimeSeconds()
+            ? "unknown" : reply.State.ToString().ToLowerInvariant(),
+        OutboundActivityId = reply.OutboundActivityId
+    };
 
     static MessageReplyReceipt Receipt(TeamsMessageOrigin origin) => new() {
         MessageId = origin.MessageId,

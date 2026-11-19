@@ -301,6 +301,18 @@ This replaces only `divoid_mcp` itself, whose `.py` files are not held open the 
 
 Observed 2026-09-01 deploying 0.9.0 with three sessions live.
 
+### Reply capability in 0.21.0
+
+Install the compatible backend before using UUID replies. Both reply tools keep their existing names; the loaded schemas must expose optional nullable `reply_id` while keeping the old required arguments. A new package version on disk does not prove a running host loaded those schemas. Coordinate reload with that host's owner; do not restart other sessions.
+
+For a reviewed release, replace the Git URL's revision with its immutable merged commit:
+
+```
+python -m pip install --upgrade --force-reinstall "git+https://github.com/telmengedar/DiVoid.git@<merged-commit>#subdirectory=divoid-mcp"
+```
+
+Run that command using the registered dedicated environment's Python. The unchanged dependencies remain `mcp==1.27.1` and `httpx>=0.27,<0.29`; compare actual installed dependencies before choosing the documented `--no-deps` Windows-lock workaround. Verify the package is noneditable, its module is in site-packages, its version is 0.21.0, and the freshly loaded server lists 27 tools including the optional selectors. See README's Teams replies section before sending; never fall back to a singular send after a plural error.
+
 ### Verify the upgrade
 
 ```

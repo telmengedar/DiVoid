@@ -73,6 +73,24 @@ public sealed class TeamsRoutingFixture : IDisposable {
     public Task<HttpResponseMessage> Status(long messageId, long? userId = null) =>
         Host.Send(HttpMethod.Get, Rest.Path("api/messages", messageId, "reply"), UserToken(userId ?? Database.RecipientId));
 
+    /// <summary>Attempts one saved logical message through the additive public resource.</summary>
+    /// <param name="messageId">The original inbox identifier.</param>
+    /// <param name="replyId">The saved logical-message key.</param>
+    /// <param name="body">The immutable text for that key.</param>
+    /// <param name="userId">The optional calling actor.</param>
+    /// <returns>The public HTTP response.</returns>
+    public Task<HttpResponseMessage> CreateReply(long messageId, Guid replyId, string body = "reply text", long? userId = null) =>
+        Host.Send(HttpMethod.Post, Rest.Path("api/messages", messageId, "replies"), UserToken(userId ?? Database.RecipientId),
+            new StringContent(Json.WriteString(new MessageReplyRequest { ReplyId = replyId.ToString("D"), Body = body }), Encoding.UTF8, "application/json"));
+
+    /// <summary>Reads one saved logical receipt without creating a row.</summary>
+    /// <param name="messageId">The original inbox identifier.</param>
+    /// <param name="replyId">The saved logical-message key.</param>
+    /// <param name="userId">The optional calling actor.</param>
+    /// <returns>The public HTTP response.</returns>
+    public Task<HttpResponseMessage> ReplyStatus(long messageId, Guid replyId, long? userId = null) =>
+        Host.Send(HttpMethod.Get, Rest.Path("api/messages", messageId, "replies", replyId.ToString("D")), UserToken(userId ?? Database.RecipientId));
+
     /// <summary>Explicitly probes the original Connector conversation without a request body.</summary>
     /// <param name="messageId">The retained original inbox identifier.</param>
     /// <param name="userId">The optional calling actor.</param>
