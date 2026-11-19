@@ -1,20 +1,19 @@
 using System.Threading.Channels;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Http.Features;
+using Backend.Services.ChangeStreams;
 using Backend.Models.Nodes;
 
 namespace Backend.Services.NodeChanges;
 
 internal sealed class NodeChangeSubscription : IAsyncDisposable {
     const string Ready = "event:ready\ndata:{\"version\":1,\"coverage\":\"this-process\",\"replay\":false,\"resyncRequired\":true}\n\n";
-    const string Invalidate = "event:invalidate\ndata:{}\n\n";
 
     readonly NodeChangeFeed owner;
     readonly Channel<bool> dirty = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) {
         FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true, AllowSynchronousContinuations = false
     });
     readonly CancellationTokenSource cancellation = new();
-    readonly Timer expiryTimer;
+    readonly ChangeStreamDeadline deadline;
     readonly TaskCompletionSource<Task> stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
     volatile bool closed;
     int cancellationStarted;
@@ -27,8 +26,7 @@ internal sealed class NodeChangeSubscription : IAsyncDisposable {
         Admin = admin;
         ExpiresAt = expiresAt;
         Filter = filter;
-        if (expiresAt.HasValue)
-            expiryTimer = new Timer(_ => Expire(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        deadline = new ChangeStreamDeadline(expiresAt, () => Closed, () => _ = owner.RemoveAsync(this));
     }
 
     internal long KeyId { get; }
@@ -49,22 +47,9 @@ internal sealed class NodeChangeSubscription : IAsyncDisposable {
 
     internal bool Expired => ExpiresAt.HasValue && ExpiresAt.Value <= DateTime.UtcNow;
 
-    internal void ArmExpiry() {
-        if (!ExpiresAt.HasValue || Closed)
-            return;
-        TimeSpan remaining = ExpiresAt.Value - DateTime.UtcNow;
-        try {
-            expiryTimer.Change(remaining <= TimeSpan.Zero ? TimeSpan.Zero : TimeSpan.FromMilliseconds(Math.Min(remaining.TotalMilliseconds, uint.MaxValue - 1d)), Timeout.InfiniteTimeSpan);
-        } catch (ObjectDisposedException) when (Closed) {
-        }
-    }
+    internal void ArmExpiry() => deadline.Arm();
 
-    void Expire() {
-        if (Expired)
-            _ = owner.RemoveAsync(this);
-        else
-            ArmExpiry();
-    }
+    void Expire() => deadline.Tick();
 
     internal bool Selects(NodeChangeFact fact) => fact != null && fact.Readable(UserId, Admin) &&
         ((fact.Id == Filter.RootNodeId && Filter.Id.Contains(fact.Id)) ||
@@ -95,53 +80,8 @@ internal sealed class NodeChangeSubscription : IAsyncDisposable {
             stopped.SetResult(cancellation.CancelAsync());
     }
 
-    internal async Task StreamAsync(HttpContext context, CancellationToken cancellationToken) {
-        context.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
-        context.Response.ContentType = "text/event-stream; charset=utf-8";
-        context.Response.Headers.CacheControl = "no-store";
-        context.Response.Headers["X-Accel-Buffering"] = "no";
-        using CancellationTokenSource lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, Cancellation);
-        try {
-            if (!await WriteAsync(context.Response, Ready, lifetime.Token))
-                return;
-            Task<bool> change = Reader.WaitToReadAsync(lifetime.Token).AsTask();
-            Task heartbeat = Task.Delay(TimeSpan.FromSeconds(15), lifetime.Token);
-            while (!lifetime.IsCancellationRequested) {
-                Task completed = await Task.WhenAny(change, heartbeat);
-                if (completed == change) {
-                    if (!await change)
-                        break;
-                    if (Reader.TryRead(out bool dirty) && !await WriteAsync(context.Response, Invalidate, lifetime.Token))
-                        break;
-                    change = Reader.WaitToReadAsync(lifetime.Token).AsTask();
-                } else {
-                    await heartbeat;
-                    if (!await WriteAsync(context.Response, ":keepalive\n\n", lifetime.Token))
-                        break;
-                    heartbeat = Task.Delay(TimeSpan.FromSeconds(15), lifetime.Token);
-                }
-            }
-        } catch (OperationCanceledException) when (lifetime.IsCancellationRequested) {
-        } catch (TimeoutException) {
-            context.Abort();
-        } finally {
-            await lifetime.CancelAsync();
-        }
-    }
-
-    async Task<bool> WriteAsync(HttpResponse response, string frame, CancellationToken cancellationToken) {
-        if (!await owner.AdmitAsync(this, cancellationToken))
-            return false;
-        using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(TimeSpan.FromSeconds(15));
-        try {
-            await response.WriteAsync(frame, deadline.Token).WaitAsync(deadline.Token);
-            await response.Body.FlushAsync(deadline.Token).WaitAsync(deadline.Token);
-        } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
-            throw new TimeoutException("The change-stream writer did not complete within its bound.");
-        }
-        return true;
-    }
+    internal Task StreamAsync(HttpContext context, CancellationToken cancellationToken) =>
+        ChangeStreamWriter.RunAsync(context, Reader, Ready, (_, token) => owner.AdmitAsync(this, token), Cancellation, cancellationToken);
 
     /// <inheritdoc />
     public async ValueTask DisposeAsync() {
@@ -149,8 +89,7 @@ internal sealed class NodeChangeSubscription : IAsyncDisposable {
             return;
         disposed = true;
         await owner.RemoveAsync(this);
-        if (expiryTimer != null)
-            await expiryTimer.DisposeAsync();
+        await deadline.DisposeAsync();
         await (await stopped.Task);
         cancellation.Dispose();
     }

@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-divoid-mcp = "divoid_mcp.__main__:main"
+divoid-mcp = "divoid_mcp.cli:main"
 
 [project.optional-dependencies]
 dev = [

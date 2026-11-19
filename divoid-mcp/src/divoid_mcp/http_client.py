@@ -18,9 +18,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
+
+from .inbox_event_error import InboxEventError
+from .inbox_sse import decode
 
 logger = logging.getLogger(__name__)
 
@@ -209,3 +213,37 @@ async def delete(path: str, body: Any = None) -> HttpResult:
 
 class DiVoidUnreachable(Exception):
     """Raised when the DiVoid API is not reachable (network / timeout)."""
+
+
+async def inbox_events() -> AsyncIterator[dict[str, Any]]:
+    """Own one streaming request using the existing bearer client; no reconnect or inbox read."""
+    client = _assert_ready()
+    timeout = httpx.Timeout(connect=5.0, read=45.0, write=5.0, pool=5.0)
+    try:
+        async with client.stream("GET", f"{_base_url}/v1/messagechanges", timeout=timeout,
+                                 follow_redirects=False) as response:
+            if response.status_code != 200:
+                permanent = (response.status_code in (400, 401, 403, 404, 405, 410, 501)
+                             or 300 <= response.status_code < 400)
+                if response.status_code == 503:
+                    body = b""
+                    async for chunk in response.aiter_bytes(chunk_size=1024):
+                        body += chunk
+                        if len(body) > 4096:
+                            break
+                    if len(body) <= 4096:
+                        import json
+                        try:
+                            value = json.loads(body)
+                            permanent = (isinstance(value, dict) and value.get("code") ==
+                                         "inbox_changes_provider_unsupported")
+                        except (ValueError, UnicodeError):
+                            pass
+                raise InboxEventError("capability" if permanent else "transport", permanent)
+            media_type = response.headers.get("content-type", "").split(";", 1)[0].strip()
+            if media_type != "text/event-stream":
+                raise InboxEventError("protocol")
+            async for event in decode(response.aiter_bytes(chunk_size=1024)):
+                yield event
+    except httpx.HTTPError:
+        raise InboxEventError("transport") from None

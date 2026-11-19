@@ -119,7 +119,7 @@ public sealed class NodeChangeFeedFixture : IDisposable {
         Name = "private-value-canary", Type = type, RootNodeId = RootId, Access = NodeAccess.None
     }, OwnerId)).Id;
 
-    internal T PostgresScalar<T>(string sql) => postgres!.Scalar<T>(sql);
+    internal T PostgresScalar<T>(string sql, params (string Name, object Value)[] parameters) => postgres!.Scalar<T>(sql, parameters);
 
     /// <inheritdoc />
     public void Dispose() {

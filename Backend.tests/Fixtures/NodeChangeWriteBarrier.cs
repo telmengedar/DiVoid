@@ -19,7 +19,7 @@ public sealed class NodeChangeWriteBarrier : IStartupFilter {
     public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app => {
         app.Use(async (context, invoke) => {
             try {
-                if (context.Request.Path == "/api/v1/nodechanges") {
+                if (context.Request.Path.Value is "/api/v1/nodechanges" or "/api/v1/messagechanges") {
                     if (BeforeHeaders) {
                         Entered.TrySetResult();
                         await Release.Task.WaitAsync(context.RequestAborted);

@@ -301,6 +301,31 @@ This replaces only `divoid_mcp` itself, whose `.py` files are not held open the 
 
 Observed 2026-09-01 deploying 0.9.0 with three sessions live.
 
+### Recipient inbox stream in 0.23.0
+
+Install the matching PostgreSQL backend/schema before selecting `divoid-mcp --inbox-events` through
+the existing configured package command/environment. No credential arguments or new secret store
+are introduced. Check the built package version, help/mode support and actual backend ready before
+switching a watcher. Default stdio MCP and all 27 tool signatures remain unchanged.
+
+The server requires trigger/function DDL rights and a dedicated persistent PostgreSQL LISTEN session
+per stream (eight/API process, two/key); transaction-pooled proxies and SQLite do not supply this
+capability. Qualification, installed watcher change and activation belong to their respective owners.
+No package installation alone proves live event delivery or permission to restart another session.
+See README's recipient-inbox-events section and the canonical API reference for bootstrap/resync,
+fixed NDJSON and permanent versus transient exit semantics. Dependencies are unchanged.
+
+### Inbox event bridge in 0.23.0
+
+Use the immutable reviewed merged package in the existing dedicated environment, then qualify
+`divoid-mcp --inbox-events` and an actual backend ready before adapting a watcher. The compatible
+backend needs PostgreSQL producer DDL privileges and a persistent LISTEN session per stream;
+transaction-pooled proxies and SQLite are unsupported. Check capacity/database budget across API
+replicas before activation. No new credential arguments, tools or secret source are introduced.
+Default MCP stays unchanged. The consumer owner adapts/reloads its watcher separately; installation
+or source version alone does not establish active event-driven delivery. No polling fallback or
+shared-daemon restart is supplied by this mode. Dependencies are unchanged.
+
 ### Sender display metadata in 0.22.0
 
 Deploy the compatible backend/schema before installing this release: the existing inbox tool now

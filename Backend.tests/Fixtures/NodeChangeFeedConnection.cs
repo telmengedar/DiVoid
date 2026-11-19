@@ -7,10 +7,13 @@ internal sealed class NodeChangeFeedConnection(NodeChangeRequestHandler handler,
 
     internal HttpResponseMessage Response => response;
 
-    internal static async Task<NodeChangeFeedConnection> OpenAsync(JwtAuthFixture host, string path, string token, CancellationToken cancellationToken = default) {
+    internal static Task<NodeChangeFeedConnection> OpenAsync(JwtAuthFixture host, string path, string token, CancellationToken cancellationToken = default) =>
+        OpenAsync(host.CreateHandler(), path, token, cancellationToken);
+
+    internal static async Task<NodeChangeFeedConnection> OpenAsync(HttpMessageHandler transport, string path, string token, CancellationToken cancellationToken = default) {
         CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cancellation.CancelAfter(TimeSpan.FromSeconds(60));
-        NodeChangeRequestHandler handler = new(host.CreateHandler(), cancellation.Token);
+        NodeChangeRequestHandler handler = new(transport, cancellation.Token);
         IHttpService http = new HttpService(handler) { Timeout = TimeSpan.FromSeconds(30) };
         HttpResponseMessage? response = null;
         try {

@@ -48,6 +48,65 @@ claude mcp add --transport stdio --scope user divoid -- ~/.divoid-mcp/venv/bin/d
 | `divoid_reply_message` | Send an authorized original-origin response; optional saved `reply_id` selects one independently idempotent logical message |
 | `divoid_get_message_reply` | Read the legacy receipt or the logical receipt selected by the same saved `reply_id` |
 
+## Recipient inbox events (0.23.0)
+
+```sh
+divoid-mcp --inbox-events
+```
+
+This separate package mode uses the existing credential configuration and opens one authenticated
+`GET /api/v1/messagechanges`. Default MCP operation remains JSON-RPC with the same 27 tools and
+resources. The child does not list, process or delete messages, reconnect, or fall back to polling.
+It flushes only fixed NDJSON records: a backend-confirmed `ready` with version 1, coverage
+`postgres-database`, `replay=false`, `resyncRequired=true`, then `{"event":"invalidate"}` hints.
+No message payloads, identifiers, tags, names or credentials are emitted.
+
+The compatible backend requires PostgreSQL trigger/function initialization and a persistent dedicated
+LISTEN session. SQLite is explicitly unsupported for this feed; ordinary inbox APIs still work.
+Budget eight sessions per API process and two per key, and qualify schema ownership, database/session
+connectivity and proxy behavior before adoption. The stream watches only its actual API-key owner,
+regardless of admin permission; tags stay consumer-side routing. Inserts and deletes wake it across
+writers of the same initialized tables. Privileged trigger/schema changes require maintenance resync.
+
+The consumer keeps reading the stream while it bootstraps and handles work. Clear dirty **before**
+loading the complete authoritative inbox; a change during a load remains dirty. Reconnect always
+requires a new ready and complete resync. Keep read→handle→delete and original Teams correlation.
+There is no cursor, event history or exactly-once processing guarantee. Parent reconnect/retry policy
+must distinguish known-work retries from periodic discovery; the package performs neither.
+
+Exit 2 means permanent configuration/auth/path/provider capability failure; exit 1 means
+transport/EOF/malformed continuity; exit 130 means cancellation or a broken parent output pipe.
+Stderr reports fixed codes only. Install from the reviewed immutable merged commit before qualifying
+an actual watcher switch. A source/package Ready state does not activate an installed notifier.
+
+## Recipient inbox events (0.23.0)
+
+```sh
+divoid-mcp --inbox-events
+```
+
+This separate package mode uses the existing credential configuration and opens one authenticated
+`GET /api/v1/messagechanges`. Default MCP remains JSON-RPC with the same 27 tools and resources.
+The child flushes only backend-confirmed ready/invalidate NDJSON and performs no inbox GET, delete,
+internal reconnect or polling fallback. No message payloads, routing identifiers or credentials leave
+on stdout. Exit 2 is permanent configuration/auth/path/provider failure; exit 1 is EOF/transport or
+malformed protocol; exit 130 is cancellation or a closed parent pipe. Error diagnostics stay fixed and
+sanitized on stderr.
+
+Deploy the compatible PostgreSQL backend with initialized transactional INSERT/DELETE and authority
+triggers first. SQLite is explicitly unsupported for this feed; finite message APIs still work.
+A stream owns a dedicated persistent LISTEN session: budget eight per API process and two per key,
+and qualify the real role, session connectivity, proxy behavior and total database budget. It always
+watches the actual API-key recipient; admin cannot choose another inbox. Tags remain consumer-side
+routing. Ordinary/Teams/node-hook and other same-table writers are covered when producers are enabled;
+privileged trigger/schema changes and UPDATE/TRUNCATE require maintenance resynchronization.
+
+Keep reading while performing the existing complete authorized bootstrap and processing work. Clear
+consumer dirty **before** a full inbox read; a change during the read must remain dirty. A reconnect
+requires a new ready and full resync. Preserve read→handle→delete and original Teams correlation.
+There is no cursor, event history or exactly-once processing guarantee. The parent owns bounded
+reconnect and known-work retries; a clean idle consumer needs no periodic new-message scan.
+
 ## Teams sender display metadata (0.22.0)
 
 `divoid_list_messages` requests optional `externalAuthorDisplayName` separately from `body`.
