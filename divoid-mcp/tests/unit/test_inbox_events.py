@@ -34,20 +34,30 @@ async def test_bounded_decoder_retains_actual_ready_and_invalidate_before_eof():
     assert received == [{"event": "ready", **READY}, {"event": "invalidate"}]
 
 
-@pytest.mark.parametrize("body", [
-    DIRTY, FRAME + FRAME, b"event:ready\n\n", b"id:1\n" + FRAME,
-    FRAME.replace(b'"replay": false', b'"replay": 0'),
-    FRAME.replace(b'"version": 1', b'"version": true'),
-    FRAME.replace(b'"version": 1', b'"version": 1,"version":1'),
-    FRAME.replace(b'"version": 1', b'"privateBody":"secret","version":1'),
-    b"x" * 4097, b":" + b"x" * 4097 + b"\n", b"\xff", b"event:ready\n",
-    FRAME + b"event:invalidate\ndata:{\"messageId\":7}\n\n",
+@pytest.mark.parametrize("body,prefix,code", [
+    (DIRTY, [], "protocol"),
+    (FRAME + FRAME, [{"event": "ready", **READY}], "protocol"),
+    (b"event:ready\n\n", [], "protocol"),
+    (b"id:1\n" + FRAME, [], "protocol"),
+    (FRAME.replace(b'"replay": false', b'"replay": 0'), [], "protocol"),
+    (FRAME.replace(b'"version": 1', b'"version": true'), [], "protocol"),
+    (FRAME.replace(b'"version": 1', b'"version": 1,"version":1'), [], "protocol"),
+    (FRAME.replace(b'"version": 1', b'"privateBody":"secret","version":1'), [], "protocol"),
+    (b"x" * 4097, [], "protocol"),
+    (b":" + b"x" * 4097 + b"\n", [], "protocol"),
+    (b"\xff", [], "protocol"),
+    (b"event:ready\n", [], "eof"),
+    (FRAME + b"event:invalidate\ndata:{\"messageId\":7}\n\n",
+     [{"event": "ready", **READY}], "protocol"),
 ])
 @pytest.mark.asyncio
-async def test_malformed_or_unbounded_frames_fail_without_payload_output(body):
-    with pytest.raises(InboxEventError):
+async def test_malformed_or_unbounded_frames_fail_without_payload_output(body, prefix, code):
+    emitted = []
+    with pytest.raises(InboxEventError, match=f"^{code}$"):
         async for event in inbox_sse.decode(chunks(body, 1024)):
-            assert event == {"event": "ready", **READY}
+            emitted.append(event)
+            assert emitted == prefix[:len(emitted)]
+    assert emitted == prefix
 
 
 @pytest.mark.parametrize("status,body,permanent", [
