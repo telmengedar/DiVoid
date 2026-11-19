@@ -18,6 +18,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Tokens;
 using Pooshit.Ocelot.Entities;
+using Pooshit.Http;
 
 namespace Backend.tests.Fixtures;
 
@@ -104,6 +105,14 @@ public sealed class JwtAuthFixture : IDisposable
     /// can set different <c>Authorization</c> headers independently.
     /// </summary>
     public HttpClient CreateClient() => new(serverHandler) { BaseAddress = new Uri(TestSetup.BaseUrl) };
+
+    /// <summary>Creates the required finite-request HTTP service for this real host.</summary>
+    /// <returns>The Pooshit HTTP service.</returns>
+    public IHttpService HttpService() => TestSetup.HttpServiceFor(factory);
+
+    /// <summary>Creates an owned handler for a streaming HTTP service.</summary>
+    /// <returns>The new test server handler.</returns>
+    public HttpMessageHandler CreateHandler() => factory.Server.CreateHandler();
 
     /// <summary>
     /// mints a signed JWT with the test RSA key, valid for 5 minutes by default

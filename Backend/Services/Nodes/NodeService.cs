@@ -1453,11 +1453,11 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     }
 
 
-    async Task<NodeChangeDelta.Fact> FeedFact(Transaction transaction, Node node) {
+    async Task<NodeChangeFact> FeedFact(Transaction transaction, Node node) {
         if (node == null)
             return null;
         string type = await database.Load<NodeType>(row => row.Type).Where(row => row.Id == node.TypeId).ExecuteScalarAsync<string>(transaction);
-        return new NodeChangeDelta.Fact(node.Id, node.RootNodeId, type, node.OwnerId, node.Access);
+        return new NodeChangeFact(node.Id, node.RootNodeId, type, node.OwnerId, node.Access);
     }
 
 

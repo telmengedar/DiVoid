@@ -1,5 +1,3 @@
-using System.Net.Http.Headers;
-using System.Reflection;
 using Backend.Models.Auth;
 using Backend.Models.Nodes;
 using Backend.Models.Users;
@@ -10,6 +8,7 @@ using Backend.Services.Users;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Pooshit.Ocelot.Clients;
+using Pooshit.Http;
 using Pooshit.Ocelot.Entities;
 using Pooshit.Ocelot.Info;
 
@@ -104,14 +103,14 @@ public sealed class NodeChangeFeedFixture : IDisposable {
     /// <returns>The new fixture credential.</returns>
     public Task<ApiKeyDetails> AddKeyAsync(long owner, string[] permissions) => Keys.CreateApiKey(new ApiKeyParameters { UserId = owner, Permissions = permissions });
 
-    /// <summary>Creates a client authenticated with the supplied synthetic key.</summary>
+    /// <summary>Creates the required HTTP service for finite requests.</summary>
+    /// <returns>The real host HTTP service.</returns>
+    public IHttpService HttpService() => Host.HttpService();
+
+    /// <summary>Provides the selected synthetic credential through the required token interface.</summary>
     /// <param name="key">The optional fixture key.</param>
-    /// <returns>The fixture-owned HTTP client.</returns>
-    public HttpClient Client(ApiKeyDetails? key = null) {
-        HttpClient client = Host.CreateClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", (key ?? Key).PlaintextKey);
-        return client;
-    }
+    /// <returns>The finite-request authentication options.</returns>
+    public HttpOptions Options(ApiKeyDetails? key = null) => new() { TokenProvider = new NodeChangeTokenProvider((key ?? Key).PlaintextKey) };
 
     /// <summary>Creates a direct private member.</summary>
     /// <param name="type">The exact member type.</param>
@@ -129,50 +128,6 @@ public sealed class NodeChangeFeedFixture : IDisposable {
         if (sqlitePath != null) {
             SqliteConnection.ClearAllPools();
             File.Delete(sqlitePath);
-        }
-    }
-}
-
-/// <summary>Forwards SQL to a real provider while counting and optionally pausing reads.</summary>
-public class NodeChangeReadProbe : DispatchProxy {
-    IDBClient inner = null!;
-    /// <summary>The optional real-read barrier.</summary>
-    public Func<string, Task>? BeforeRead { get; set; }
-
-    /// <summary>The optional transaction preparation observation.</summary>
-    public Action? BeforeTransaction { get; set; }
-    int reads;
-
-    /// <summary>The observed SQL read count.</summary>
-    public int Reads => Volatile.Read(ref reads);
-
-    /// <summary>Wraps the actual provider without changing its dialect or transaction semantics.</summary>
-    /// <param name="client">The actual provider.</param>
-    /// <param name="beforeRead">The optional read barrier.</param>
-    /// <returns>The proxy and selected probe.</returns>
-    public static (IDBClient Client, NodeChangeReadProbe Probe) Wrap(IDBClient client, Func<string, Task>? beforeRead = null) {
-        IDBClient proxy = Create<IDBClient, NodeChangeReadProbe>();
-        NodeChangeReadProbe probe = (NodeChangeReadProbe)(object)proxy;
-        probe.inner = client;
-        probe.BeforeRead = beforeRead;
-        return (proxy, probe);
-    }
-
-    /// <inheritdoc />
-    protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) {
-        if (targetMethod!.Name == "Transaction")
-            BeforeTransaction?.Invoke();
-        string? sql = args?.OfType<string>().FirstOrDefault();
-        if (sql?.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase) == true) {
-            Interlocked.Increment(ref reads);
-            if (BeforeRead != null)
-                BeforeRead(sql).GetAwaiter().GetResult();
-        }
-        try {
-            return targetMethod!.Invoke(inner, args);
-        } catch (TargetInvocationException exception) when (exception.InnerException != null) {
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(exception.InnerException).Throw();
-            throw;
         }
     }
 }

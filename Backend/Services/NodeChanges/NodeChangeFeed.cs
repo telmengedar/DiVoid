@@ -32,7 +32,7 @@ public sealed class NodeChangeFeed : IHostedService {
         NodeChangeFilter filter = request.Validate();
         for (int attempt = 0; attempt < 4; ++attempt) {
             long observed = await CaptureGenerationAsync(cancellationToken);
-            Authority authority;
+            NodeChangeAuthority authority;
             try {
                 authority = await ReadAuthorityAsync(database, keyId, userId, filter);
             } catch (SqliteException exception) when (exception.SqliteErrorCode is 5 or 6) {
@@ -74,24 +74,24 @@ public sealed class NodeChangeFeed : IHostedService {
 
     static NodeChangeException Busy() => new(HttpStatusCode.ServiceUnavailable, "graph_change_registration_busy", "A stable registration could not be established. Reconnect and resynchronize.");
 
-    static async Task<Authority> ReadAuthorityAsync(IEntityManager database, long keyId, long userId, NodeChangeFilter filter) {
+    static async Task<NodeChangeAuthority> ReadAuthorityAsync(IEntityManager database, long keyId, long userId, NodeChangeFilter filter) {
         ApiKey key = await database.Load<ApiKey>(row => row.Id, row => row.UserId, row => row.Enabled, row => row.Permissions, row => row.ExpiresAt)
             .Where(row => row.Id == keyId).ExecuteEntityAsync();
         User user = await database.Load<User>(row => row.Id, row => row.Enabled).Where(row => row.Id == userId).ExecuteEntityAsync();
         if (key == null || key.UserId != userId || !key.Enabled || user == null || !user.Enabled || key.ExpiresAt <= DateTime.UtcNow)
-            return new Authority(false, key?.ExpiresAt, new AuthenticationFailedException("The API key is no longer eligible."));
+            return new NodeChangeAuthority(false, key?.ExpiresAt, new AuthenticationFailedException("The API key is no longer eligible."));
         string[] permissions = string.IsNullOrEmpty(key.Permissions) ? [] : Json.Read<string[]>(key.Permissions) ?? [];
         bool admin = permissions.Contains("admin", StringComparer.Ordinal);
         if (!admin && !permissions.Contains("read", StringComparer.Ordinal) && !permissions.Contains("write", StringComparer.Ordinal))
-            return new Authority(false, key.ExpiresAt, new AuthorizationFailedException("The API key requires read permission."));
+            return new NodeChangeAuthority(false, key.ExpiresAt, new AuthorizationFailedException("The API key requires read permission."));
         foreach (long id in filter.Id.Append(filter.RootNodeId).Distinct()) {
             Node node = await database.Load<Node>(row => row.Id, row => row.RootNodeId, row => row.OwnerId, row => row.Access)
                 .Where(row => row.Id == id).ExecuteEntityAsync();
-            if (node == null || !new NodeChangeDelta.Fact(node.Id, node.RootNodeId, null, node.OwnerId, node.Access).Readable(userId, admin) ||
+            if (node == null || !new NodeChangeFact(node.Id, node.RootNodeId, null, node.OwnerId, node.Access).Readable(userId, admin) ||
                 id != filter.RootNodeId && node.RootNodeId != filter.RootNodeId)
-                return new Authority(admin, key.ExpiresAt, new NotFoundException<Node>("Requested scope is unavailable."));
+                return new NodeChangeAuthority(admin, key.ExpiresAt, new NotFoundException<Node>("Requested scope is unavailable."));
         }
-        return new Authority(admin, key.ExpiresAt, null);
+        return new NodeChangeAuthority(admin, key.ExpiresAt, null);
     }
 
     internal async Task CommitAsync(Action commit, IReadOnlyList<NodeChangeDelta> changes, long? userId = null, long? keyId = null, CancellationToken cancellationToken = default) {
@@ -228,6 +228,4 @@ public sealed class NodeChangeFeed : IHostedService {
         }
         await ResetAsync();
     }
-
-    internal sealed record Authority(bool Admin, DateTime? ExpiresAt, Exception Failure);
 }

@@ -9,8 +9,8 @@ using Backend.Services.Users;
 using Backend.Services.NodeChanges;
 using Backend.Errors.Exceptions;
 using System.Net;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
+using Pooshit.Http;
+using Pooshit.Http.Paths;
 using Backend.Models.Auth;
 using Backend.Models.Nodes;
 using Backend.Models.Users;
@@ -23,11 +23,11 @@ using Pooshit.Ocelot.Entities;
 namespace Backend.tests.Tests;
 
 /// <summary>Exercises the authenticated producer-driven graph feed through actual HTTP mutations.</summary>
-[TestFixture]
+[TestFixture, Parallelizable]
 public class NodeChangeFeedTests {
     /// <summary>Checks a newly created scoped type wakes a real stream without a prior node hook.</summary>
     /// <returns>The asynchronous test operation.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChanges_CreateWithoutLinksAndInitialMembership_Wakes() {
         using JwtAuthFixture fixture = new();
         long ownerId = await fixture.EntityManager.Insert<User>().Columns(user => user.Name, user => user.Enabled, user => user.CreatedAt)
@@ -37,38 +37,30 @@ public class NodeChangeFeedTests {
         ApiKeyDetails key = await fixture.Services.GetRequiredService<IApiKeyService>().CreateApiKey(new ApiKeyParameters {
             UserId = ownerId, Permissions = ["read", "write"]
         });
-        using HttpClient client = fixture.CreateClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", key.PlaintextKey);
         using CancellationTokenSource deadline = new(TimeSpan.FromSeconds(10));
-        using HttpResponseMessage stream = await client.GetAsync($"/api/v1/nodechanges?rootNodeId={root}&type=configuration", HttpCompletionOption.ResponseHeadersRead, deadline.Token);
-        Assert.That(stream.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        using StreamReader reader = new(await stream.Content.ReadAsStreamAsync(deadline.Token));
-        Assert.That(await reader.ReadLineAsync(deadline.Token), Is.EqualTo("event:ready"));
-        Assert.That(await reader.ReadLineAsync(deadline.Token), Is.EqualTo("data:{\"version\":1,\"coverage\":\"this-process\",\"replay\":false,\"resyncRequired\":true}"));
-        Assert.That(await reader.ReadLineAsync(deadline.Token), Is.Empty);
-        using HttpResponseMessage created = await client.PostAsJsonAsync("/api/nodes", new NodeDetails {
+        await using NodeChangeFeedConnection stream = await NodeChangeFeedConnection.OpenAsync(fixture, FeedPath(root, new QueryParameters("type", "configuration")), key.PlaintextKey, deadline.Token);
+        Assert.That(await stream.Frame(), Is.EqualTo("event:ready\ndata:{\"version\":1,\"coverage\":\"this-process\",\"replay\":false,\"resyncRequired\":true}"));
+        using HttpResponseMessage created = await fixture.HttpService().Post<NodeDetails, HttpResponseMessage>(Rest.Path(TestSetup.BaseUrl, "api", "nodes"), new NodeDetails {
             Name = "private-config-value", Type = "configuration", RootNodeId = root, Access = NodeAccess.None
-        }, deadline.Token);
+        }, new HttpOptions { TokenProvider = new NodeChangeTokenProvider(key.PlaintextKey) });
         Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        Assert.That(await reader.ReadLineAsync(deadline.Token), Is.EqualTo("event:invalidate"));
-        Assert.That(await reader.ReadLineAsync(deadline.Token), Is.EqualTo("data:{}"));
-        Assert.That(await reader.ReadLineAsync(deadline.Token), Is.Empty);
+        Assert.That(await stream.Frame(), Is.EqualTo("event:invalidate\ndata:{}"));
     }
+
     /// <summary>Checks the actual HTTP producer and stream on each qualified provider.</summary>
     /// <param name="postgres">Whether PostgreSQL is selected.</param>
     /// <param name="sharedCache">Whether SQLite shared-cache locking is selected.</param>
     /// <returns>The asynchronous check.</returns>
-    [TestCase(false, false), TestCase(false, true), TestCase(true, false)]
+    [TestCase(false, false), TestCase(false, true), TestCase(true, false), Parallelizable]
     public async Task NodeChangesHttp_RealProducerAndEmptyFrames(bool postgres, bool sharedCache) {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync(postgres, sharedCache);
-        await using Connection stream = await Connect(fixture, "&type=configuration");
+        await using NodeChangeFeedConnection stream = await Connect(fixture, new QueryParameters("type", "configuration"));
         Assert.That(stream.Response.Content.Headers.ContentType!.MediaType, Is.EqualTo("text/event-stream"));
         Assert.That(stream.Response.Headers.CacheControl!.NoStore, Is.True);
         Assert.That(stream.Response.Headers.GetValues("X-Accel-Buffering"), Is.EqualTo(new[] { "no" }));
-        using HttpClient client = fixture.Client();
-        using HttpResponseMessage created = await client.PostAsJsonAsync("/api/nodes", new NodeDetails {
+        using HttpResponseMessage created = await fixture.HttpService().Post<NodeDetails, HttpResponseMessage>(Rest.Path(TestSetup.BaseUrl, "api", "nodes"), new NodeDetails {
             Name = "private-value-canary", Type = "configuration", RootNodeId = fixture.RootId, Access = NodeAccess.None
-        });
+        }, fixture.Options());
         Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         Assert.That(await stream.Frame(), Is.EqualTo("event:invalidate\ndata:{}"));
     }
@@ -76,7 +68,7 @@ public class NodeChangeFeedTests {
     /// <summary>Checks exact root/type selection and entry or exit independently of category filtering.</summary>
     /// <param name="postgres">Whether PostgreSQL is selected.</param>
     /// <returns>The asynchronous check.</returns>
-    [TestCase(false), TestCase(true)]
+    [TestCase(false), TestCase(true), Parallelizable]
     public async Task NodeChangesFilters_RootIdsTypesAndLifecycle(bool postgres) {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync(postgres);
         await using NodeChangeSubscription sub = await Subscribe(fixture, new NodeChangeFilter { RootNodeId = fixture.RootId, Type = ["selected"], Events = NodeHookEvents.Status });
@@ -102,7 +94,7 @@ public class NodeChangeFeedTests {
     /// <summary>Checks initial links, content, edge changes, positions and no-op suppression.</summary>
     /// <param name="postgres">Whether PostgreSQL is selected.</param>
     /// <returns>The asynchronous check.</returns>
-    [TestCase(false), TestCase(true)]
+    [TestCase(false), TestCase(true), Parallelizable]
     public async Task NodeChanges_ActualMutationPathCoverage(bool postgres) {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync(postgres);
         long group = await fixture.MemberAsync("group");
@@ -142,66 +134,62 @@ public class NodeChangeFeedTests {
 
     /// <summary>Checks API keys cannot inherit DB-user admin grants and JWT identities cannot select key authority.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChangesHttp_RequiresCurrentApiKeyReadAndReadableRoot() {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
         long dbAdmin = await fixture.AddUserAsync("[\"admin\"]");
         ApiKeyDetails limited = await fixture.AddKeyAsync(dbAdmin, ["read"]);
-        using HttpClient restricted = fixture.Client(limited);
-        using HttpResponseMessage invisible = await restricted.GetAsync($"/api/v1/nodechanges?rootNodeId={fixture.RootId}");
+        IHttpService http = fixture.HttpService();
+        using HttpResponseMessage invisible = await http.Get<HttpResponseMessage>(FeedPath(fixture.RootId), fixture.Options(limited));
         Assert.That(invisible.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
-        using HttpClient jwt = fixture.Host.CreateClient();
-        jwt.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", fixture.Host.MintToken(userId: dbAdmin));
-        using HttpResponseMessage wrongIdentity = await jwt.GetAsync($"/api/v1/nodechanges?rootNodeId={fixture.RootId}");
+        using HttpResponseMessage wrongIdentity = await http.Get<HttpResponseMessage>(FeedPath(fixture.RootId), new HttpOptions { TokenProvider = new NodeChangeTokenProvider(fixture.Host.MintToken(userId: dbAdmin)) });
         Assert.That(wrongIdentity.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
         ApiKeyDetails admin = await fixture.AddKeyAsync(dbAdmin, ["admin"]);
-        await using Connection authorized = await Connect(fixture, "", admin);
-        using HttpClient absent = fixture.Host.CreateClient();
-        using HttpResponseMessage denied = await absent.GetAsync($"/api/v1/nodechanges?rootNodeId={fixture.RootId}");
+        await using NodeChangeFeedConnection authorized = await Connect(fixture, key: admin);
+        using HttpResponseMessage denied = await http.Get<HttpResponseMessage>(FeedPath(fixture.RootId), new HttpOptions());
         Assert.That(denied.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
     }
 
     /// <summary>Checks an authentication-disabled host does not admit an anonymous stream.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChangesHttp_AuthDisabledNeverBypassesKeyIdentity() {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync(authEnabled: false);
-        using HttpClient client = fixture.Client();
-        using HttpResponseMessage response = await client.GetAsync($"/api/v1/nodechanges?rootNodeId={fixture.RootId}");
+        using HttpResponseMessage response = await fixture.HttpService().Get<HttpResponseMessage>(FeedPath(fixture.RootId), fixture.Options());
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
     }
 
     /// <summary>Checks malformed filters and unsupported resume fields fail before ready.</summary>
-    /// <param name="suffix">The invalid query suffix.</param>
+    /// <param name="field">The invalid query field.</param>
+    /// <param name="value">The invalid query value.</param>
     /// <returns>The asynchronous check.</returns>
-    [TestCase("&unknown=x"), TestCase("&cursor=1"), TestCase("&resume=1"), TestCase("&id=0"), TestCase("&id=true"), TestCase("&events=16"), TestCase("&type=%20")]
-    public async Task NodeChangesHttp_InvalidFilters_NoReady(string suffix) {
+    [TestCase("unknown", "x"), TestCase("cursor", "1"), TestCase("resume", "1"), TestCase("id", "0"), TestCase("id", "true"), TestCase("events", "16"), TestCase("type", " "), Parallelizable]
+    public async Task NodeChangesHttp_InvalidFilters_NoReady(string field, string value) {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
-        using HttpClient client = fixture.Client();
-        using HttpResponseMessage response = await client.GetAsync($"/api/v1/nodechanges?rootNodeId={fixture.RootId}{suffix}");
+        using HttpResponseMessage response = await fixture.HttpService().Get<HttpResponseMessage>(FeedPath(fixture.RootId, new QueryParameters(field, value)), fixture.Options());
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
         Assert.That(response.Content.Headers.ContentType!.MediaType, Is.Not.EqualTo("text/event-stream"));
     }
 
     /// <summary>Checks replay headers and selector bounds cannot be silently ignored.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChangesHttp_RejectsReplayAndSelectorOverflow() {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
-        using HttpClient client = fixture.Client();
-        using HttpRequestMessage request = new(HttpMethod.Get, $"/api/v1/nodechanges?rootNodeId={fixture.RootId}");
+        IHttpService http = fixture.HttpService();
+        using HttpRequestMessage request = await http.CreateRequest(FeedPath(fixture.RootId), HttpMethod.Get, fixture.Options());
         request.Headers.Add("Last-Event-ID", "1");
-        using HttpResponseMessage replay = await client.SendAsync(request);
+        using HttpResponseMessage replay = await http.Send<HttpResponseMessage>(request, fixture.Options());
         Assert.That(replay.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
-        using HttpResponseMessage ids = await client.GetAsync($"/api/v1/nodechanges?rootNodeId={fixture.RootId}&id=" + string.Join(',', Enumerable.Range(1, 65)));
+        using HttpResponseMessage ids = await http.Get<HttpResponseMessage>(FeedPath(fixture.RootId, new QueryParameters("id", string.Join(',', Enumerable.Range(1, 65)))), fixture.Options());
         Assert.That(ids.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
-        using HttpResponseMessage types = await client.GetAsync($"/api/v1/nodechanges?rootNodeId={fixture.RootId}&type=" + string.Join(',', Enumerable.Range(1, 17).Select(value => "t" + value)));
+        using HttpResponseMessage types = await http.Get<HttpResponseMessage>(FeedPath(fixture.RootId, new QueryParameters("type", string.Join(',', Enumerable.Range(1, 17).Select(value => "t" + value)))), fixture.Options());
         Assert.That(types.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
     }
 
     /// <summary>Checks explicit IDs are direct readable members and combine with exact types by OR.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChangesFilters_ExplicitIdsOrTypesAndDirectRootOnly() {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
         long explicitId = await fixture.MemberAsync("anchor");
@@ -219,12 +207,11 @@ public class NodeChangeFeedTests {
         });
     }
 
-
     /// <summary>Checks current key and user authority changes close both idle and queued streams.</summary>
     /// <param name="scenario">The supported revocation producer.</param>
     /// <returns>The asynchronous check.</returns>
     [TestCase("key-enabled"), TestCase("key-permissions"), TestCase("key-owner"), TestCase("key-expiry"), TestCase("key-delete")]
-    [TestCase("user-enabled"), TestCase("user-permissions"), TestCase("user-delete"), TestCase("root-owner"), TestCase("root-delete"), TestCase("explicit-id")]
+    [TestCase("user-enabled"), TestCase("user-permissions"), TestCase("user-delete"), TestCase("root-owner"), TestCase("root-delete"), TestCase("explicit-id"), Parallelizable]
     public async Task NodeChanges_IdleKeyUserRevocation_ClosesWithoutDiscoveryReads(string scenario) {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
         long member = await fixture.MemberAsync();
@@ -250,7 +237,7 @@ public class NodeChangeFeedTests {
 
     /// <summary>Checks unreadable type membership stays private while visible entry and exit invalidate.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChanges_RootAndNodeReadLoss_NoPostRevokeAdmission() {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
         await fixture.Nodes.Patch(fixture.RootId, [Patch("/access", "Read")], fixture.OwnerId, false, default);
@@ -272,11 +259,11 @@ public class NodeChangeFeedTests {
 
     /// <summary>Checks a far future key lifetime remains valid and one short deadline closes without reads.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChanges_ExpiryDeadlineSupportsAllLifetimesWithoutPolling() {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
         await fixture.Keys.UpdateApiKey(fixture.Key.Id, Patch("/expiresAt", DateTime.MaxValue));
-        await using (Connection distant = await Connect(fixture)) {
+        await using (NodeChangeFeedConnection distant = await Connect(fixture)) {
             await fixture.MemberAsync();
             Assert.That(await distant.Frame(), Is.EqualTo("event:invalidate\ndata:{}"));
         }
@@ -291,7 +278,7 @@ public class NodeChangeFeedTests {
 
     /// <summary>Checks capacity-one coalescing preserves changes after a writer takes its pending signal.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChanges_DirtyMailboxCoalescesAndPreservesDuringWrite() {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
         await using NodeChangeSubscription sub = await Subscribe(fixture, new NodeChangeFilter { RootNodeId = fixture.RootId });
@@ -307,31 +294,30 @@ public class NodeChangeFeedTests {
 
     /// <summary>Checks each connected socket has independent capacity and cancellation releases its slot.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChanges_ConnectionCapacityCancellationAndIndependentOwners() {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
-        List<Connection> streams = [];
+        List<NodeChangeFeedConnection> streams = [];
         try {
             for (int index = 0; index < 8; ++index)
                 streams.Add(await Connect(fixture));
-            using HttpClient ninth = fixture.Client();
-            using HttpResponseMessage denied = await ninth.GetAsync($"/api/v1/nodechanges?rootNodeId={fixture.RootId}");
+            using HttpResponseMessage denied = await fixture.HttpService().Get<HttpResponseMessage>(FeedPath(fixture.RootId), fixture.Options());
             Assert.That(denied.StatusCode, Is.EqualTo(HttpStatusCode.TooManyRequests));
             await fixture.MemberAsync();
-            foreach (Connection stream in streams)
+            foreach (NodeChangeFeedConnection stream in streams)
                 Assert.That(await stream.Frame(), Is.EqualTo("event:invalidate\ndata:{}"));
             await streams[0].DisposeAsync();
             streams.RemoveAt(0);
-            await using Connection replacement = await Connect(fixture);
+            await using NodeChangeFeedConnection replacement = await Connect(fixture);
         } finally {
-            foreach (Connection stream in streams)
+            foreach (NodeChangeFeedConnection stream in streams)
                 await stream.DisposeAsync();
         }
     }
 
     /// <summary>Checks the global connection bound and shutdown release without a persisted subscription.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChanges_GlobalCapacityAndShutdown() {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
         List<NodeChangeSubscription> subscriptions = [];
@@ -358,7 +344,7 @@ public class NodeChangeFeedTests {
     /// <param name="postgres">Whether PostgreSQL is selected.</param>
     /// <param name="negative">Whether an initially denied key gains read authority.</param>
     /// <returns>The asynchronous check.</returns>
-    [TestCase(false, false), TestCase(true, false), TestCase(false, true), TestCase(true, true)]
+    [TestCase(false, false), TestCase(true, false), TestCase(false, true), TestCase(true, true), Parallelizable]
     public async Task NodeChanges_RegistrationGenerationFence_NoStaleGrantOrNegative(bool postgres, bool negative) {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync(postgres);
         if (negative)
@@ -388,7 +374,7 @@ public class NodeChangeFeedTests {
 
     /// <summary>Checks four actual authority commits exhaust the fence without a registration leak.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChanges_RegistrationGenerationConflicts_AreBounded() {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
         int conflicts = 0;
@@ -415,7 +401,7 @@ public class NodeChangeFeedTests {
     /// <param name="postgres">Whether PostgreSQL is selected.</param>
     /// <param name="sharedCache">Whether SQLite uses shared cache.</param>
     /// <returns>The asynchronous check.</returns>
-    [TestCase(false, false), TestCase(false, true), TestCase(true, false)]
+    [TestCase(false, false), TestCase(false, true), TestCase(true, false), Parallelizable]
     public async Task NodeChanges_SqliteRollbackJournalAndSharedCache_NoGateDbLockInversion(bool postgres, bool sharedCache) {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync(postgres, sharedCache);
         long other = await fixture.AddUserAsync();
@@ -425,8 +411,8 @@ public class NodeChangeFeedTests {
             registering = Task.Run(() => Subscribe(fixture, new NodeChangeFilter { RootNodeId = fixture.RootId }));
             await Task.Delay(50);
             await fixture.Feed.CommitAsync(transaction.Commit, [new NodeChangeDelta(
-                new NodeChangeDelta.Fact(fixture.RootId, null, null, fixture.OwnerId, NodeAccess.None),
-                new NodeChangeDelta.Fact(fixture.RootId, null, null, other, NodeAccess.None), NodeHookEvents.Metadata)]).WaitAsync(TimeSpan.FromSeconds(5));
+                new NodeChangeFact(fixture.RootId, null, null, fixture.OwnerId, NodeAccess.None),
+                new NodeChangeFact(fixture.RootId, null, null, other, NodeAccess.None), NodeHookEvents.Metadata)]).WaitAsync(TimeSpan.FromSeconds(5));
         }
         try {
             await using NodeChangeSubscription acceptedBeforeCommit = await registering.WaitAsync(TimeSpan.FromSeconds(5));
@@ -439,7 +425,7 @@ public class NodeChangeFeedTests {
 
     /// <summary>Checks unknown commit outcomes and post-commit failures terminate continuity without replay.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChanges_UnknownCommitAndPublicationFailure_ResetContinuity() {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
         await using NodeChangeSubscription first = await Subscribe(fixture, new NodeChangeFilter { RootNodeId = fixture.RootId });
@@ -455,10 +441,10 @@ public class NodeChangeFeedTests {
 
     /// <summary>Checks connected keepalives perform no discovery and commits wake independently of the heartbeat.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChanges_QuietConnectedConsumer_PerformsZeroDiscoveryReads() {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
-        await using Connection stream = await Connect(fixture);
+        await using NodeChangeFeedConnection stream = await Connect(fixture);
         int idleReads = fixture.Probe.Reads;
         Assert.That(idleReads, Is.GreaterThan(0));
         Assert.That(await stream.Frame(20), Is.EqualTo(":keepalive"));
@@ -470,21 +456,54 @@ public class NodeChangeFeedTests {
         Assert.That(fixture.Probe.Reads, Is.EqualTo(committedReads));
     }
 
+    /// <summary>Checks the supported Pooshit streaming seam cancels and observes a pending header request.</summary>
+    /// <returns>The asynchronous check.</returns>
+    [Test, Parallelizable]
+    public async Task NodeChangesHttp_PendingHeadersCancellation_CompletesRequest() {
+        NodeChangeWriteBarrier barrier = new() { BeforeHeaders = true };
+        using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync(configureServices: services => services.AddSingleton<IStartupFilter>(barrier));
+        using CancellationTokenSource cancellation = new(TimeSpan.FromSeconds(10));
+        Task<NodeChangeFeedConnection> opening = NodeChangeFeedConnection.OpenAsync(fixture.Host, FeedPath(fixture.RootId), fixture.Key.PlaintextKey, cancellation.Token);
+        await barrier.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await cancellation.CancelAsync();
+        Assert.That(() => opening, Throws.InstanceOf<OperationCanceledException>());
+        await barrier.Completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        barrier.Release.TrySetResult();
+        await using NodeChangeFeedConnection replacement = await Connect(fixture);
+        await fixture.MemberAsync();
+        Assert.That(await replacement.Frame(), Is.EqualTo("event:invalidate\ndata:{}"));
+    }
+
+    /// <summary>Checks a live response read is canceled and its owned request is disposed.</summary>
+    /// <returns>The asynchronous check.</returns>
+    [Test, Parallelizable]
+    public async Task NodeChangesHttp_BodyCancellation_CompletesRequest() {
+        NodeChangeWriteBarrier barrier = new();
+        using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync(configureServices: services => services.AddSingleton<IStartupFilter>(barrier));
+        using CancellationTokenSource cancellation = new(TimeSpan.FromSeconds(10));
+        await using (NodeChangeFeedConnection stream = await NodeChangeFeedConnection.OpenAsync(fixture.Host, FeedPath(fixture.RootId), fixture.Key.PlaintextKey, cancellation.Token)) {
+            Assert.That(await stream.Frame(), Does.StartWith("event:ready\n"));
+            Task<string> reading = stream.Frame();
+            Assert.That(reading.IsCompleted, Is.False);
+            await cancellation.CancelAsync();
+            Assert.That(() => reading, Throws.InstanceOf<OperationCanceledException>());
+            await barrier.Completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
 
     /// <summary>Checks changes committed while ready is blocked remain pending behind the first frame.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChanges_RegisterReadyBeforeSnapshot_NoLostRelevantCommit() {
         NodeChangeWriteBarrier barrier = new() { Armed = true };
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync(configureServices: services => services.AddSingleton<IStartupFilter>(barrier));
-        HttpClient client = fixture.Client();
-        CancellationTokenSource lifetime = new(TimeSpan.FromSeconds(10));
-        Task<HttpResponseMessage> opening = client.GetAsync($"/api/v1/nodechanges?rootNodeId={fixture.RootId}", HttpCompletionOption.ResponseHeadersRead, lifetime.Token);
+        using CancellationTokenSource lifetime = new(TimeSpan.FromSeconds(10));
+        Task<NodeChangeFeedConnection> opening = NodeChangeFeedConnection.OpenAsync(fixture.Host, FeedPath(fixture.RootId), fixture.Key.PlaintextKey, lifetime.Token);
         await barrier.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         long member = await fixture.MemberAsync();
         barrier.Armed = false;
         barrier.Release.SetResult();
-        await using Connection stream = new(client, await opening, lifetime);
+        await using NodeChangeFeedConnection stream = await opening;
         Assert.That(await stream.Frame(), Does.StartWith("event:ready\n"));
         Assert.That(await stream.Frame(), Is.EqualTo("event:invalidate\ndata:{}"));
         NodeDetails state = await fixture.Nodes.GetNodeById(member, fixture.OwnerId, false);
@@ -495,11 +514,11 @@ public class NodeChangeFeedTests {
 
     /// <summary>Checks a real blocked writer neither holds the producer gate nor admits queued work after revocation.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChanges_BlockedHttpWriter_RevocationAbortsWithoutBlockingCommit() {
         NodeChangeWriteBarrier barrier = new();
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync(configureServices: services => services.AddSingleton<IStartupFilter>(barrier));
-        await using Connection stream = await Connect(fixture);
+        await using NodeChangeFeedConnection stream = await Connect(fixture);
         barrier.Armed = true;
         await fixture.MemberAsync();
         await barrier.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -513,11 +532,11 @@ public class NodeChangeFeedTests {
 
     /// <summary>Checks a stalled network writer is bounded even without another producer event.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChanges_SlowHttpWriter_DisconnectsAtItsBound() {
         NodeChangeWriteBarrier barrier = new();
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync(configureServices: services => services.AddSingleton<IStartupFilter>(barrier));
-        await using Connection stream = await Connect(fixture);
+        await using NodeChangeFeedConnection stream = await Connect(fixture);
         barrier.Armed = true;
         await fixture.MemberAsync();
         await barrier.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -527,7 +546,7 @@ public class NodeChangeFeedTests {
     /// <summary>Checks a hint insertion failure rolls back graph data and emits no invalidation.</summary>
     /// <param name="postgres">Whether PostgreSQL is selected.</param>
     /// <returns>The asynchronous check.</returns>
-    [TestCase(false), TestCase(true)]
+    [TestCase(false), TestCase(true), Parallelizable]
     public async Task NodeChanges_Rollback_DiscardsAttemptDeltas(bool postgres) {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync(postgres);
         long member = await fixture.MemberAsync();
@@ -549,7 +568,7 @@ public class NodeChangeFeedTests {
     /// <param name="atCommit">Whether the abort occurs during commit.</param>
     /// <param name="failures">The injected serialization failures.</param>
     /// <returns>The asynchronous check.</returns>
-    [TestCase(false, 2), TestCase(true, 2), TestCase(false, 100), TestCase(true, 100)]
+    [TestCase(false, 2), TestCase(true, 2), TestCase(false, 100), TestCase(true, 100), Parallelizable]
     public async Task NodeChanges_SerializationRetry_PublishConfirmedCommitOnly(bool atCommit, int failures) {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync(true);
         long member = await fixture.MemberAsync();
@@ -574,7 +593,7 @@ public class NodeChangeFeedTests {
     /// <summary>Checks authority preparation does not acquire the gate while waiting for a rollback-journal writer.</summary>
     /// <param name="key">Whether key or user authority is changed.</param>
     /// <returns>The asynchronous check.</returns>
-    [TestCase(false), TestCase(true)]
+    [TestCase(false), TestCase(true), Parallelizable]
     public async Task NodeChanges_AuthorityPreparationOutsideGate_NoWriterInversion(bool key) {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
         await using NodeChangeSubscription sub = await Subscribe(fixture, new NodeChangeFilter { RootNodeId = fixture.RootId });
@@ -597,7 +616,7 @@ public class NodeChangeFeedTests {
 
     /// <summary>Checks unrelated principals and last-used maintenance do not cancel a live connection.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChanges_UnrelatedAuthorityAndLastUsed_DoNotClose() {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
         await using NodeChangeSubscription sub = await Subscribe(fixture, new NodeChangeFilter { RootNodeId = fixture.RootId });
@@ -613,7 +632,7 @@ public class NodeChangeFeedTests {
 
     /// <summary>Checks independent processes are explicitly outside the live singleton's coverage.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChanges_ProcessCoverageIsHonest() {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
         await using NodeChangeSubscription sub = await Subscribe(fixture, new NodeChangeFilter { RootNodeId = fixture.RootId });
@@ -624,10 +643,9 @@ public class NodeChangeFeedTests {
         Assert.That(sub.Reader.TryRead(out _), Is.False);
     }
 
-
     /// <summary>Checks time expiry between fresh reads and final registration cannot admit stale authority.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChanges_ExpiryBeforeGenerationCompare_NoReady() {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
         await fixture.Keys.UpdateApiKey(fixture.Key.Id, Patch("/expiresAt", DateTime.UtcNow.AddSeconds(1)));
@@ -650,24 +668,23 @@ public class NodeChangeFeedTests {
 
     /// <summary>Checks a reconnect always requests resynchronization and then sees current state.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChanges_DisconnectReconnectRequiresFullResync() {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
-        await using (Connection initial = await Connect(fixture)) {
+        await using (NodeChangeFeedConnection initial = await Connect(fixture)) {
             await fixture.MemberAsync();
             Assert.That(await initial.Frame(), Is.EqualTo("event:invalidate\ndata:{}"));
         }
         long duringGap = await fixture.MemberAsync();
-        await using Connection reconnected = await Connect(fixture);
+        await using NodeChangeFeedConnection reconnected = await Connect(fixture);
         Assert.That((await fixture.Nodes.GetNodeById(duringGap, fixture.OwnerId, false)).RootNodeId, Is.EqualTo(fixture.RootId));
         await fixture.Nodes.Patch(duringGap, [Patch("/status", "after-reconnect")], fixture.OwnerId, false, default);
         Assert.That(await reconnected.Frame(), Is.EqualTo("event:invalidate\ndata:{}"));
     }
 
-
     /// <summary>Checks physical timer segments preserve one far-future deadline and cannot rearm after revocation.</summary>
     /// <returns>The asynchronous check.</returns>
-    [Test]
+    [Test, Parallelizable]
     public async Task NodeChanges_LogicalDeadlineSegment_StopsAfterRevocationAndDispose() {
         using NodeChangeFeedFixture fixture = await NodeChangeFeedFixture.CreateAsync();
         await fixture.Keys.UpdateApiKey(fixture.Key.Id, Patch("/expiresAt", DateTime.MaxValue));
@@ -691,40 +708,15 @@ public class NodeChangeFeedTests {
 
     static void Dirty(NodeChangeSubscription subscription) => Assert.That(subscription.Reader.TryRead(out bool dirty) && dirty, Is.True);
 
-    static async Task<Connection> Connect(NodeChangeFeedFixture fixture, string suffix = "", ApiKeyDetails? key = null) {
-        HttpClient client = fixture.Client(key);
-        CancellationTokenSource cancellation = new(TimeSpan.FromSeconds(60));
-        HttpResponseMessage response = await client.GetAsync($"/api/v1/nodechanges?rootNodeId={fixture.RootId}{suffix}", HttpCompletionOption.ResponseHeadersRead, cancellation.Token);
-        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        Connection connection = new(client, response, cancellation);
+    static string FeedPath(long root, QueryParameters? query = null) {
+        query ??= new QueryParameters();
+        query.Add("rootNodeId", root);
+        return Rest.PathQuery(query, TestSetup.BaseUrl, "api", "v1", "nodechanges");
+    }
+
+    static async Task<NodeChangeFeedConnection> Connect(NodeChangeFeedFixture fixture, QueryParameters? query = null, ApiKeyDetails? key = null) {
+        NodeChangeFeedConnection connection = await NodeChangeFeedConnection.OpenAsync(fixture.Host, FeedPath(fixture.RootId, query), (key ?? fixture.Key).PlaintextKey);
         Assert.That(await connection.Frame(), Is.EqualTo("event:ready\ndata:{\"version\":1,\"coverage\":\"this-process\",\"replay\":false,\"resyncRequired\":true}"));
         return connection;
     }
-
-    sealed class Connection(HttpClient client, HttpResponseMessage response, CancellationTokenSource cancellation) : IAsyncDisposable {
-        readonly StreamReader reader = new(response.Content.ReadAsStream());
-        internal HttpResponseMessage Response => response;
-
-        internal async Task<string> Frame(int seconds = 5) {
-            List<string> lines = [];
-            while (true) {
-                string? line = await reader.ReadLineAsync(cancellation.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(seconds));
-                if (line == null)
-                    return "<eof>";
-                if (line.Length == 0)
-                    return string.Join('\n', lines);
-                lines.Add(line);
-            }
-        }
-
-        /// <inheritdoc />
-        public async ValueTask DisposeAsync() {
-            await cancellation.CancelAsync();
-            reader.Dispose();
-            response.Dispose();
-            client.Dispose();
-            cancellation.Dispose();
-        }
-    }
-
 }
