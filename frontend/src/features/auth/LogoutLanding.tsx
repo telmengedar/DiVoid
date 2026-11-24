@@ -7,7 +7,7 @@
  * Must NOT be auth-gated.
  */
 
-import { useAuth } from 'react-oidc-context';
+import { useAuth } from '@/features/auth/AppSession';
 import { LogIn } from 'lucide-react';
 
 export function LogoutLanding() {

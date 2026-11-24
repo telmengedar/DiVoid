@@ -12,7 +12,7 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import { useAuth } from 'react-oidc-context';
+import { useAuth } from '@/features/auth/AppSession';
 import { useApiClient } from '@/lib/useApiClient';
 import { API } from '@/lib/constants';
 import type { UserDetails } from '@/types/divoid';
@@ -32,7 +32,7 @@ export function useWhoami() {
 
   return useQuery<UserDetails>({
     queryKey: WHOAMI_QUERY_KEY,
-    queryFn: () => client.get<UserDetails>(API.USERS.ME),
+    queryFn: ({ signal }) => client.get<UserDetails>(API.USERS.ME, undefined, signal),
     enabled: auth.isAuthenticated,
     staleTime: 5 * 60 * 1_000,
     refetchOnWindowFocus: true,

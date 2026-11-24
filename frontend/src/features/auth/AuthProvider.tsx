@@ -20,6 +20,9 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { AuthProvider as OidcAuthProvider, useAuth } from 'react-oidc-context';
 import { WebStorageStateStore, InMemoryWebStorage } from 'oidc-client-ts';
+import { AppSessionContext } from './AppSession';
+import { ApiKeyProvider } from './ApiKeyProvider';
+import { AUTH_MODE } from './authMode';
 import {
   KEYCLOAK_AUTHORITY,
   KEYCLOAK_CLIENT_ID,
@@ -105,7 +108,9 @@ function DiVoidAuthEventWatcher({ children }: { children: ReactNode }) {
 
   return (
     <DiVoidAuthContext.Provider value={{ terminalAuthFailure }}>
-      {children}
+      <AppSessionContext.Provider value={{ ...auth, mode: 'oidc' }}>
+        {children}
+      </AppSessionContext.Provider>
     </DiVoidAuthContext.Provider>
   );
 }
@@ -122,6 +127,7 @@ interface AuthProviderProps {
  * useDiVoidAuthContext().
  */
 export function AuthProvider({ children }: AuthProviderProps) {
+  if (AUTH_MODE === 'api-key') return <ApiKeyProvider>{children}</ApiKeyProvider>;
   return (
     <OidcAuthProvider
       authority={KEYCLOAK_AUTHORITY}

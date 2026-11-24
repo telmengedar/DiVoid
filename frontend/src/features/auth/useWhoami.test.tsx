@@ -33,7 +33,7 @@ afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 // Mock react-oidc-context so tests don't need a full OIDC provider setup.
-vi.mock('react-oidc-context', () => ({
+vi.mock('@/features/auth/AppSession', () => ({
   useAuth: vi.fn(() => ({
     isAuthenticated: true,
     user: { access_token: 'test-access-token' },
@@ -91,7 +91,7 @@ describe('useWhoami', () => {
   });
 
   it('is disabled when not authenticated', async () => {
-    const { useAuth } = await import('react-oidc-context');
+    const { useAuth } = await import('@/features/auth/AppSession');
     vi.mocked(useAuth).mockReturnValueOnce({
       isAuthenticated: false,
       user: undefined,

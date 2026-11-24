@@ -10,7 +10,7 @@
  */
 
 import { NavLink } from 'react-router-dom';
-import { useAuth } from 'react-oidc-context';
+import { useAuth } from '@/features/auth/AppSession';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { LogOut, Network, ListTodo, Search, BookOpen } from 'lucide-react';
 import { cn } from '@/lib/cn';
@@ -39,7 +39,9 @@ function UserMenuTrigger({ name }: { name?: string }) {
 
 export function TopNav() {
   const auth = useAuth();
-  const userName = auth.user?.profile?.name ?? auth.user?.profile?.preferred_username;
+  const userName = auth.mode === 'api-key'
+    ? auth.identity?.name
+    : auth.user?.profile?.name ?? auth.user?.profile?.preferred_username;
 
   const navLinks = [
     { to: ROUTES.SEARCH, label: 'Search', Icon: Search },

@@ -85,7 +85,7 @@ afterAll(() => server.close());
 // IMPORTANT: unlike the unit tests, we do NOT mock sonner here so that render-body
 // toast() calls hit the real sonner store and trigger real subscriber notifications.
 // That is the scenario that causes the loop.
-vi.mock('react-oidc-context', () => ({
+vi.mock('@/features/auth/AppSession', () => ({
   useAuth: vi.fn(() => ({
     isAuthenticated: true,
     user: { access_token: 'test-token' },

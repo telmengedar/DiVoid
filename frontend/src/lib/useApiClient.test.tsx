@@ -46,7 +46,7 @@ afterAll(() => server.close());
 const mockSigninRedirect = vi.fn();
 const mockSigninSilent = vi.fn().mockRejectedValue(new Error('refresh failed'));
 
-vi.mock('react-oidc-context', () => ({
+vi.mock('@/features/auth/AppSession', () => ({
   useAuth: vi.fn(() => ({
     isAuthenticated: false,
     user: undefined,

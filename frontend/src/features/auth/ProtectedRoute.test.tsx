@@ -45,7 +45,7 @@ const MAX_RENDERS = 30;
 // Controlled mock state — updated by re-render-inducing signinRedirect below
 let mockCallCount = 0;
 
-vi.mock('react-oidc-context', () => ({
+vi.mock('@/features/auth/AppSession', () => ({
   useAuth: vi.fn(),
 }));
 
@@ -114,7 +114,7 @@ describe('ProtectedRoute_RefreshFailure_DoesNotLoop', () => {
    *   and mockCallCount >> 1 (signinRedirect called many times).
    */
   it('calls signinRedirect at most once when settled in unauthenticated+error state', async () => {
-    const { useAuth } = await import('react-oidc-context');
+    const { useAuth } = await import('@/features/auth/AppSession');
 
     render(
       <MemoryRouter>
@@ -160,7 +160,7 @@ describe('ProtectedRoute_RefreshFailure_DoesNotLoop', () => {
    * Boundary: isLoading=true should NOT call signinRedirect at all.
    */
   it('does not call signinRedirect while isLoading is true', async () => {
-    const { useAuth } = await import('react-oidc-context');
+    const { useAuth } = await import('@/features/auth/AppSession');
     vi.mocked(useAuth).mockReturnValue({
       isLoading: true,
       isAuthenticated: false,
@@ -193,7 +193,7 @@ describe('ProtectedRoute_RefreshFailure_DoesNotLoop', () => {
    * Happy path: authenticated → renders children, no redirect.
    */
   it('renders children when authenticated without calling signinRedirect', async () => {
-    const { useAuth } = await import('react-oidc-context');
+    const { useAuth } = await import('@/features/auth/AppSession');
     const mockRedirect = vi.fn();
 
     vi.mocked(useAuth).mockReturnValue({
