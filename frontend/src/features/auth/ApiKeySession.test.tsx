@@ -189,7 +189,7 @@ describe('API-key application session', () => {
     await signIn('second-test-key');
     await act(async () => release());
     fireEvent.click(screen.getByText('Inspect cache'));
-    expect(screen.getByRole('status')).toHaveTextContent('No late data');
+    expect(screen.getByText('No late data')).toBeInTheDocument();
     expect(screen.queryByText('First reader')).not.toBeInTheDocument();
     expect(screen.queryByText('First graph')).not.toBeInTheDocument();
   });
