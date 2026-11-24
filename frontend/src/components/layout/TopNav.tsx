@@ -28,12 +28,12 @@ function UserMenuTrigger({ name }: { name?: string }) {
     : '?';
 
   return (
-    <button
+    <DropdownMenu.Trigger
       className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-xs font-medium hover:opacity-80 transition-opacity"
       aria-label={`User menu for ${name ?? 'current user'}`}
     >
       {initials}
-    </button>
+    </DropdownMenu.Trigger>
   );
 }
 
@@ -94,9 +94,7 @@ export function TopNav() {
       {/* User menu */}
       {auth.isAuthenticated && (
         <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild>
-            <UserMenuTrigger name={userName} />
-          </DropdownMenu.Trigger>
+          <UserMenuTrigger name={userName} />
 
           <DropdownMenu.Portal>
             <DropdownMenu.Content
