@@ -33,12 +33,12 @@
  */
 
 import { useMemo, useRef } from 'react';
-import { useAuth } from 'react-oidc-context';
+import { useAuth } from '@/features/auth/AppSession';
 import { createApiClient } from '@/lib/api';
 import { API_BASE_URL } from '@/lib/constants';
 import { useDiVoidAuthContext } from '@/features/auth/AuthProvider';
 import type { ApiClient } from '@/lib/api';
-import type { AuthContextProps } from 'react-oidc-context';
+import type { AppSession } from '@/features/auth/AppSession';
 
 /**
  * Returns a stable API client bound to the current OIDC session.
@@ -55,7 +55,7 @@ export function useApiClient(): ApiClient {
   // Keep a mutable ref to the latest auth object so the stable closures
   // below can always read the freshest token and callables without
   // needing to be recreated.
-  const authRef = useRef<AuthContextProps>(auth);
+  const authRef = useRef<AppSession>(auth);
   authRef.current = auth;
 
   // Keep a mutable ref to the latest terminalAuthFailure flag so the stable
@@ -65,11 +65,11 @@ export function useApiClient(): ApiClient {
 
   // Create the client exactly once. The three closures delegate to authRef
   // so they are always up-to-date without recomputing the memo.
-  return useMemo(
+  const oidcClient = useMemo(
     () =>
       createApiClient(
-        () => authRef.current.user?.access_token,
-        () => authRef.current.signinSilent(),
+        () => authRef.current.mode === 'api-key' ? undefined : authRef.current.user?.access_token,
+        () => authRef.current.mode === 'api-key' ? Promise.reject(new Error('Session ended')) : authRef.current.signinSilent(),
         () => {
           // Short-circuit: when the session is conclusively dead, do not call
           // signinRedirect from each concurrent in-flight query. ProtectedRoute
@@ -84,4 +84,5 @@ export function useApiClient(): ApiClient {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
+  return auth.mode === 'api-key' ? auth.client : oidcClient;
 }

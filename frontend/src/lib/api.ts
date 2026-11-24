@@ -18,6 +18,12 @@
 
 import { DivoidApiError } from '@/types/divoid';
 
+/** Binds all transport calls to one revocable authentication lifetime. */
+export interface RequestSession {
+  signal: AbortSignal;
+  onUnauthorized: () => void;
+}
+
 // ─── Query string serialisation ───────────────────────────────────────────────
 
 /**
@@ -93,6 +99,7 @@ export function createApiClient(
   signinSilent?: () => Promise<unknown>,
   signinRedirect?: () => void,
   baseUrl?: string,
+  session?: RequestSession,
 ) {
   // Resolve base URL: explicit > env var > empty (will fail loudly at request time)
   const resolvedBase =
@@ -162,6 +169,7 @@ export function createApiClient(
       });
     }
 
+    session?.signal.throwIfAborted();
     const token = getToken();
 
     const headers: Record<string, string> = { ...(init.headers ?? {}) };
@@ -175,11 +183,10 @@ export function createApiClient(
 
     // Combine caller signal with our timeout signal if supported
     let combinedSignal: AbortSignal;
-    if (init.signal && typeof AbortSignal.any === 'function') {
-      combinedSignal = AbortSignal.any([init.signal, timeoutController.signal]);
-    } else {
-      combinedSignal = timeoutController.signal;
-    }
+    const signals = [timeoutController.signal];
+    if (init.signal) signals.push(init.signal);
+    if (session) signals.push(session.signal);
+    combinedSignal = signals.length > 1 ? AbortSignal.any(signals) : timeoutController.signal;
 
     if (import.meta.env.DEV) {
       console.debug(`[DiVoid API] ${init.method} ${path}`);
@@ -196,6 +203,9 @@ export function createApiClient(
     } finally {
       clearTimeout(timeoutId);
     }
+
+    session?.signal.throwIfAborted();
+    if (response.status === 401) session?.onUnauthorized();
 
     if (response.status === 401 && !isRetry && signinSilent) {
       // §6.3 single-flight: coalesce all concurrent 401 waiters onto one signinSilent() call.
@@ -257,6 +267,7 @@ export function createApiClient(
     }
 
     const text = await response.text();
+    session?.signal.throwIfAborted();
     if (!text) {
       return undefined as T;
     }

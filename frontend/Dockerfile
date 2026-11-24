@@ -10,12 +10,14 @@ COPY . .
 
 # All VITE_* vars are baked at build time.
 # Pass them as --build-arg to docker build.
+ARG VITE_AUTH_MODE=oidc
 ARG VITE_KEYCLOAK_AUTHORITY=https://auth.mamgo.io/realms/master
 ARG VITE_KEYCLOAK_CLIENT_ID=DiVoid
 ARG VITE_API_BASE_URL=https://divoid.mamgo.io/api
 ARG VITE_OIDC_REDIRECT_URI=https://divoid.mamgo.io/callback
 ARG VITE_OIDC_POST_LOGOUT_REDIRECT_URI=https://divoid.mamgo.io/logout
 
+ENV VITE_AUTH_MODE=$VITE_AUTH_MODE
 ENV VITE_KEYCLOAK_AUTHORITY=$VITE_KEYCLOAK_AUTHORITY
 ENV VITE_KEYCLOAK_CLIENT_ID=$VITE_KEYCLOAK_CLIENT_ID
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL

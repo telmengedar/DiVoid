@@ -68,7 +68,7 @@ beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-vi.mock('react-oidc-context', () => ({
+vi.mock('@/features/auth/AppSession', () => ({
   useAuth: vi.fn(() => ({
     isAuthenticated: true,
     user: { access_token: 'test-token' },

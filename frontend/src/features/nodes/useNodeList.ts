@@ -10,7 +10,7 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import { useAuth } from 'react-oidc-context';
+import { useAuth } from '@/features/auth/AppSession';
 import { useApiClient } from '@/lib/useApiClient';
 import { API } from '@/lib/constants';
 import type { NodeFilter, Page, NodeDetails } from '@/types/divoid';

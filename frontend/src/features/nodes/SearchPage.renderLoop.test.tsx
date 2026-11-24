@@ -63,7 +63,7 @@ afterAll(() => server.close());
 // The whole point of this test is that the real dialog mounts and
 // does NOT trigger an infinite render loop.
 
-vi.mock('react-oidc-context', () => ({
+vi.mock('@/features/auth/AppSession', () => ({
   useAuth: vi.fn(() => ({
     isAuthenticated: true,
     user: { access_token: 'test-token' },

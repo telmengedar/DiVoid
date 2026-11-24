@@ -37,7 +37,7 @@ afterEach(() => {
 });
 afterAll(() => server.close());
 
-vi.mock('react-oidc-context', () => ({
+vi.mock('@/features/auth/AppSession', () => ({
   useAuth: vi.fn(() => ({
     isAuthenticated: true,
     user: { access_token: 'test-token' },

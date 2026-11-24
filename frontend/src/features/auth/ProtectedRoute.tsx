@@ -15,39 +15,36 @@
  */
 
 import { type ReactNode, useEffect, useRef } from 'react';
-import { useAuth } from 'react-oidc-context';
+import { useAuth } from '@/features/auth/AppSession';
+
+import { ApiKeyLogin } from './ApiKeyLogin';
+import type { AppSession } from './AppSession';
 
 interface ProtectedRouteProps {
   children: ReactNode;
 }
 
+/** Renders protected content or the selected protocol's login flow.
+ * @param children Content requiring a verified application session.
+ */
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
   const auth = useAuth();
+  if (auth.mode === 'api-key') {
+    return auth.isAuthenticated ? <>{children}</> : <ApiKeyLogin session={auth} />;
+  }
+  return <OidcProtectedRoute auth={auth}>{children}</OidcProtectedRoute>;
+}
 
-  // One-shot guard: ensures signinRedirect() is called at most once per mount,
-  // even if the component re-renders multiple times in the unauthenticated state.
+function OidcProtectedRoute({ auth, children }: ProtectedRouteProps & { auth: Exclude<AppSession, { mode: 'api-key' }> }) {
   const hasRedirectedRef = useRef(false);
-
   useEffect(() => {
     if (!auth.isLoading && !auth.isAuthenticated && !hasRedirectedRef.current) {
       hasRedirectedRef.current = true;
       void auth.signinRedirect();
     }
-  }, [auth.isLoading, auth.isAuthenticated, auth]);
-
+  }, [auth]);
   if (auth.isLoading) {
-    return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="text-muted-foreground text-sm">Loading…</div>
-      </div>
-    );
+    return <div className="flex h-screen items-center justify-center"><div className="text-muted-foreground text-sm">Loading…</div></div>;
   }
-
-  if (!auth.isAuthenticated) {
-    // Redirect is firing in the background (useEffect above).
-    // Return null while the browser navigates to Keycloak.
-    return null;
-  }
-
-  return <>{children}</>;
+  return auth.isAuthenticated ? <>{children}</> : null;
 }
