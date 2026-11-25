@@ -79,9 +79,10 @@ export function WorkspaceFilterPopover({
       <Popover.Portal>
         <Popover.Content
           sideOffset={6}
+          collisionPadding={8}
           align="start"
           className={cn(
-            'z-50 min-w-44 rounded-md border border-border bg-popover p-2 shadow-md',
+            'z-50 min-w-44 max-w-[calc(100vw-1rem)] max-h-[min(24rem,var(--radix-popover-content-available-height))] overflow-y-auto overscroll-contain rounded-md border border-border bg-popover p-2 shadow-md',
             'text-sm text-popover-foreground',
             // Radix animate-in / animate-out via CSS data attributes:
             'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
@@ -122,7 +123,7 @@ export function WorkspaceFilterPopover({
                         <Check size={10} strokeWidth={3} aria-hidden="true" />
                       </Checkbox.Indicator>
                     </Checkbox.Root>
-                    <span className="select-none">{opt.label}</span>
+                    <span className="min-w-0 break-words select-none">{opt.label}</span>
                   </label>
                 </li>
               );
