@@ -55,7 +55,6 @@ export function WorkspaceNodePeekModal({
           aria-describedby="peek-modal-description"
           data-testid="workspace-peek-modal"
         >
-          {/* The header stays visible while the detail body scrolls. */}
           <div className="flex shrink-0 items-center justify-between gap-3 px-4 py-4 sm:px-6 border-b border-border bg-background">
             <Dialog.Title className="min-w-0 truncate text-base font-semibold">
               {title}
