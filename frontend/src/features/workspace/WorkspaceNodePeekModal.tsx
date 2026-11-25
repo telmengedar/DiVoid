@@ -51,19 +51,18 @@ export function WorkspaceNodePeekModal({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/40 z-40 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
         <Dialog.Content
-          className="fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-3xl max-h-[85vh] overflow-y-auto bg-background border border-border rounded-lg shadow-lg focus:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+          className="fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col w-[calc(100vw-1rem)] max-w-[96rem] h-[calc(100vh-1rem)] supports-[height:100dvh]:h-[calc(100dvh-1rem)] sm:w-[calc(100vw-2rem)] sm:h-[calc(100vh-2rem)] sm:supports-[height:100dvh]:h-[calc(100dvh-2rem)] overflow-hidden bg-background border border-border rounded-lg shadow-lg focus:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
           aria-describedby="peek-modal-description"
           data-testid="workspace-peek-modal"
         >
-          {/* Modal header — close button + sr-only title */}
-          <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-border bg-background">
-            <Dialog.Title className="text-base font-semibold">
+          <div className="flex shrink-0 items-center justify-between gap-3 px-4 py-4 sm:px-6 border-b border-border bg-background">
+            <Dialog.Title className="min-w-0 truncate text-base font-semibold">
               {title}
             </Dialog.Title>
             <Dialog.Close asChild>
               <button
                 aria-label="Close preview"
-                className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                className="shrink-0 rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
               >
                 <X size={16} aria-hidden="true" />
               </button>
@@ -75,7 +74,7 @@ export function WorkspaceNodePeekModal({
           </Dialog.Description>
 
           {/* Body — NodeDetailView mounts only when peekId is set */}
-          <div className="px-6 py-6">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-6">
             {peekId !== null && (
               <NodeDetailView
                 nodeId={peekId}
