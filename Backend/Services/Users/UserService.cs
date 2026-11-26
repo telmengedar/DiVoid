@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Backend.Extensions;
+using Backend.Services.Organizations;
 using Backend.Services.NodeChanges;
 using Backend.Models.Auth;
 using Backend.Models.Users;
@@ -12,6 +13,7 @@ using Pooshit.AspNetCore.Services.Formatters.DataStream;
 using Pooshit.AspNetCore.Services.Patches;
 using Pooshit.Json;
 using Pooshit.Ocelot.Entities;
+using Pooshit.Ocelot.Clients;
 using Pooshit.Ocelot.Expressions;
 using Pooshit.Ocelot.Tokens;
 
@@ -35,11 +37,14 @@ public class UserService : IUserService {
     /// <inheritdoc />
     public async Task<UserDetails> CreateUser(UserParameters parameters) {
         DateTime now = DateTime.UtcNow;
+        using Transaction transaction = database.Transaction();
+        await OrganizationService.ValidateReference(database, parameters.OrganizationId, transaction);
         long id = await database.Insert<User>()
-                                .Columns(u => u.Name, u => u.Email, u => u.Enabled, u => u.CreatedAt)
-                                .Values(parameters.Name, parameters.Email, true, now)
+                                .Columns(u => u.Name, u => u.Email, u => u.Enabled, u => u.CreatedAt, u => u.OrganizationId)
+                                .Values(parameters.Name, parameters.Email, true, now, parameters.OrganizationId)
                                 .ReturnID()
-                                .ExecuteAsync();
+                                .ExecuteAsync(transaction);
+        transaction.Commit();
         return await GetUserById(id);
     }
 
@@ -66,6 +71,7 @@ public class UserService : IUserService {
     /// <inheritdoc />
     public async Task<UserDetails> UpdateUser(long userId, params PatchOperation[] patches) {
         await feed.UpdateAuthorityAsync(database, async transaction => {
+            await OrganizationService.ValidatePatchReference(database, patches, "/organizationId", transaction);
             if (await database.Update<User>().Patch(patches).Where(user => user.Id == userId).ExecuteAsync(transaction) == 0)
                 throw new NotFoundException<User>(userId);
             return true;

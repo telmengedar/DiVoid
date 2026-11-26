@@ -81,7 +81,7 @@ public sealed class TeamsRoutingDatabase : IDisposable {
             await schemas.CreateOrUpdateSchema<NodeType>();
             await schemas.CreateOrUpdateSchema<NodeHook>();
             if (postgres)
-                entities.DBClient.NonQuery("CREATE TABLE node (id BIGSERIAL PRIMARY KEY, typeid BIGINT NOT NULL, name TEXT, contenttype TEXT, content BYTEA, substance TEXT, skipembedding BOOLEAN NOT NULL DEFAULT TRUE, status TEXT, severity INTEGER, refinement TEXT, x DOUBLE PRECISION NOT NULL DEFAULT 0, y DOUBLE PRECISION NOT NULL DEFAULT 0, ownerid BIGINT NOT NULL DEFAULT 0, access INTEGER NOT NULL DEFAULT 3, rootnodeid BIGINT, created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, lastupdate TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)");
+                entities.DBClient.NonQuery("CREATE TABLE node (id BIGSERIAL PRIMARY KEY, typeid BIGINT NOT NULL, name TEXT, contenttype TEXT, content BYTEA, substance TEXT, skipembedding BOOLEAN NOT NULL DEFAULT TRUE, status TEXT, severity INTEGER, refinement TEXT, x DOUBLE PRECISION NOT NULL DEFAULT 0, y DOUBLE PRECISION NOT NULL DEFAULT 0, ownerid BIGINT NOT NULL DEFAULT 0, access INTEGER NOT NULL DEFAULT 3, organizationid BIGINT, rootnodeid BIGINT, created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, lastupdate TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)");
             else
                 await schemas.CreateOrUpdateSchema<Node>();
             database.RecipientId = await database.AddUserAsync(true, ["read", "write"]);

@@ -24,7 +24,7 @@ import { toast } from 'sonner';
 import { useApiClient } from '@/lib/useApiClient';
 import { buildQueryString } from '@/lib/api';
 import { API } from '@/lib/constants';
-import type { LinkType, NodeDetails, PatchOperation } from '@/types/divoid';
+import type { LinkType, NodeAccess, NodeDetails, PatchOperation } from '@/types/divoid';
 import { DivoidApiError } from '@/types/divoid';
 import { nodeQueryKey } from './useNode';
 import { nodeContentQueryKey } from './useNodeContent';
@@ -60,6 +60,8 @@ export interface CreateNodeInput {
    */
   type?: string;
   name: string;
+  /** Omit to retain the backend global read/write default. */
+  access?: NodeAccess;
   /** Only send status for types that carry one (task, bug). */
   status?: string;
   /** Canvas X position (workspace view). Omit for non-canvas creation. */

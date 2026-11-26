@@ -17,8 +17,9 @@ public interface INodeService
     /// </summary>
     /// <param name="node">node to create</param>
     /// <param name="callerId">DiVoid user-id of the authenticated caller; becomes the node's OwnerId</param>
+    /// <param name="isAdmin">Whether the caller has effective administrator access.</param>
     /// <returns>created node</returns>
-    Task<NodeDetails> CreateNode(NodeDetails node, long callerId);
+    Task<NodeDetails> CreateNode(NodeDetails node, long callerId, bool isAdmin = false);
 
     /// <summary>
     /// get a node by id
@@ -112,8 +113,10 @@ public interface INodeService
     /// <param name="ids">node ids whose incident links are requested</param>
     /// <param name="filter">paging/sort filter</param>
     /// <param name="ct">cancellation token</param>
+    /// <param name="callerId">The authenticated local user identifier.</param>
+    /// <param name="isAdmin">Whether the caller has effective administrator access.</param>
     /// <returns>page of link adjacency pairs</returns>
-    Task<AsyncPageResponseWriter<NodeLink>> ListLinks(long[] ids, ListFilter filter, CancellationToken ct);
+    Task<AsyncPageResponseWriter<NodeLink>> ListLinks(long[] ids, ListFilter filter, long callerId, bool isAdmin, CancellationToken ct);
 
     /// <summary>
     /// lists all node types that are currently in use (i.e. have at least one referencing node),
@@ -121,8 +124,10 @@ public interface INodeService
     /// returns an empty result for a graph with no nodes.
     /// </summary>
     /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
+    /// <param name="callerId">The authenticated local user identifier.</param>
+    /// <param name="isAdmin">Whether the caller has effective administrator access.</param>
     /// <returns>page envelope of type-catalog rows; <c>continue</c> is always null</returns>
-    Task<AsyncPageResponseWriter<TypeListItem>> ListTypes(CancellationToken ct = default);
+    Task<AsyncPageResponseWriter<TypeListItem>> ListTypes(long callerId, bool isAdmin, CancellationToken ct = default);
 
     /// <summary>
     /// deletes an existing node
@@ -181,12 +186,14 @@ public interface INodeService
     /// <c>HomeNodeId</c> one is returned arbitrarily.
     /// </summary>
     /// <param name="nodeId">id of the node to resolve</param>
+    /// <param name="callerId">The authenticated local user identifier.</param>
+    /// <param name="isAdmin">Whether the caller has effective administrator access.</param>
     /// <returns>auth user-id of the user bound to this node</returns>
     /// <exception cref="Pooshit.AspNetCore.Services.Errors.Exceptions.NotFoundException{User}">
     /// thrown when no <c>divoid_user</c> row has <c>HomeNodeId == nodeId</c>.
     /// maps to HTTP 404 via the existing error-handler middleware.
     /// </exception>
-    Task<long> GetUserIdForNode(long nodeId);
+    Task<long> GetUserIdForNode(long nodeId, long callerId, bool isAdmin);
 
     /// <summary>registers a node subscription</summary>
     /// <param name="hook">subscription tuple</param>

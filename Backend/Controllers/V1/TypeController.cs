@@ -31,6 +31,6 @@ public class TypeController(ILogger<TypeController> logger, INodeService nodeSer
     public Task<AsyncPageResponseWriter<TypeListItem>> ListTypes(CancellationToken ct) {
         long callerId = User.GetDivoidUserId();
         logger.LogInformation("event=type.list callerId={CallerId}", callerId);
-        return nodeService.ListTypes(ct);
+        return nodeService.ListTypes(callerId, !User.Identities.Any(i => i.IsAuthenticated) || User.HasClaim("permission", "admin"), ct);
     }
 }

@@ -12,6 +12,7 @@ using Backend.Services.Messages;
 using Backend.Services.MessageChanges;
 using Backend.Services.Nodes;
 using Backend.Services.Users;
+using Backend.Services.Organizations;
 using Backend.Services.Teams;
 using mamgo.services.Binding;
 using Microsoft.AspNetCore.Authentication;
@@ -117,6 +118,7 @@ public class Startup
         services.AddTransient<INodeService, NodeService>();
         services.AddTransient<IKeyGenerator, KeyGenerator>();
         services.AddTransient<IUserService, UserService>();
+        services.AddTransient<IOrganizationService, OrganizationService>();
         services.AddTransient<IApiKeyService, ApiKeyService>();
         services.AddTransient<MessageService>();
         services.AddTransient<IMessageService>(provider => provider.GetRequiredService<MessageService>());

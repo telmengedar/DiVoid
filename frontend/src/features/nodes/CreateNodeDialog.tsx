@@ -19,10 +19,11 @@
  * Task: DiVoid node #229
  */
 
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as Dialog from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
+import { NodeAccessFields } from './NodeAccessFields';
 import { useCreateNode } from './mutations';
 import { createNodeSchema, statusOptionsForType, type CreateNodeFormValues } from './schemas';
 
@@ -42,13 +43,14 @@ export function CreateNodeDialog({ open, onOpenChange, onCreated, initialPositio
 
   const {
     register,
+    control,
     handleSubmit,
     watch,
     reset,
     formState: { errors, isSubmitting },
   } = useForm<CreateNodeFormValues>({
     resolver: zodResolver(createNodeSchema),
-    defaultValues: { type: '', name: '', status: undefined },
+    defaultValues: { type: '', name: '', status: undefined, access: 3 },
   });
 
   const typeValue = watch('type');
@@ -71,6 +73,7 @@ export function CreateNodeDialog({ open, onOpenChange, onCreated, initialPositio
     const input = {
       ...(trimmedType ? { type: trimmedType } : {}),
       name: values.name.trim(),
+      ...(values.access !== undefined && values.access !== 3 ? { access: values.access } : {}),
       ...(values.status && statusOptions ? { status: values.status } : {}),
       ...(initialPosition != null ? { x: initialPosition.x, y: initialPosition.y } : {}),
     };
@@ -175,6 +178,14 @@ export function CreateNodeDialog({ open, onOpenChange, onCreated, initialPositio
                 </select>
               </div>
             )}
+
+            <Controller
+              name="access"
+              control={control}
+              render={({ field }) => (
+                <NodeAccessFields value={field.value ?? 3} onChange={field.onChange} />
+              )}
+            />
 
             {/* Actions */}
             <div className="flex justify-end gap-2 pt-2">

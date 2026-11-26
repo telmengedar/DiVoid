@@ -376,9 +376,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                          documentation, related research). Link liberally — this is
                          what makes the session-log discoverable from the nodes it
                          references. The Docs group link is always added automatically.
-            access: Visibility flags for the new node. Accepts int (0-3) or string
-                    ("None", "Read", "Write", "Read, Write"). When None, the server's
-                    default of Read|Write (3) applies. Use access=0 to create a
+            access: Integer bitmask (unknown bits preserved), or names None, Read,
+                    Write, OrgRead, OrgWrite joined with commas or pipes. Read/Write
+                    are global; OrgRead/OrgWrite require matching organization.
+                    When None, the server's default of Read|Write (3) applies. Use access=0 to create a
                     private node visible only to owner/admin.
             severity: Optional integer severity for this node. When absent the server
                       defaults to NULL (no severity set).

@@ -1,4 +1,5 @@
 using Backend.Auth;
+using Backend.Errors.Exceptions;
 using Backend.Models.Users;
 using Backend.Services.Users;
 using Microsoft.AspNetCore.Authorization;
@@ -85,6 +86,8 @@ public class UserController(ILogger<UserController> logger, IUserService userSer
     [HttpPatch("me")]
     [Authorize]
     public Task<UserDetails> PatchMe([FromBody] PatchOperation[] patches) {
+        if (patches.Any(p => new[] { "/organizationId", "/permissions", "/enabled" }.Contains(p.Path, StringComparer.OrdinalIgnoreCase)))
+            throw new AuthorizationFailedException("Security fields require administrator access.");
         long userId = User.GetDivoidUserId();
         logger.LogInformation("User {UserId} patching own profile", userId);
         return userService.UpdateUser(userId, patches);

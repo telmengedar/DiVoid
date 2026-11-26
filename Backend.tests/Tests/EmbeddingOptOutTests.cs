@@ -29,6 +29,7 @@ public class EmbeddingOptOutTests
     static DataTable NodeRow()
     {
         DataTable table = new();
+        table.Columns.Add("organizationid", typeof(long));
         table.Columns.Add("id", typeof(long));
         table.Columns.Add("type", typeof(string));
         table.Columns.Add("name", typeof(string));
@@ -46,7 +47,7 @@ public class EmbeddingOptOutTests
         table.Columns.Add("skipembedding", typeof(bool));
         table.Columns.Add("created", typeof(DateTime));
         table.Columns.Add("lastupdate", typeof(DateTime));
-        table.Rows.Add(5L, "task", "named", DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, 0.0, 0.0, DBNull.Value, DBNull.Value, 0L, 3, false, DateTime.UtcNow, DateTime.UtcNow);
+        table.Rows.Add(DBNull.Value, 5L, "task", "named", DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, DBNull.Value, 0.0, 0.0, DBNull.Value, DBNull.Value, 0L, 3, false, DateTime.UtcNow, DateTime.UtcNow);
         return table;
     }
 

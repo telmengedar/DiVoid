@@ -16,6 +16,7 @@ public class UserMapper : FieldMapper<UserDetails, User> {
     }
 
     static IEnumerable<FieldMapping<UserDetails>> Mappings() {
+        yield return new FieldMapping<UserDetails, long?>("organizationId", u => u.OrganizationId, (u, v) => u.OrganizationId = v);
         yield return new FieldMapping<UserDetails, long>("id",
                                                          u => u.Id,
                                                          (u, v) => u.Id = v);

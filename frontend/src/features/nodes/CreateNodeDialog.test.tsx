@@ -210,3 +210,33 @@ describe('CreateNodeDialog', () => {
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 });
+
+
+describe('CreateNodeDialog — access flags', () => {
+  it('keeps default global read/write and omits access and organization assignment', async () => {
+    const user = userEvent.setup();
+    const onCreated = vi.fn();
+    render(<Wrapper><CreateNodeDialog open onOpenChange={vi.fn()} onCreated={onCreated} /></Wrapper>);
+    expect(screen.getByRole('checkbox', { name: 'Global read' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Global write' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Organization read' })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Organization write' })).not.toBeChecked();
+    await user.type(screen.getByLabelText(/name/i), 'Default access');
+    await user.click(screen.getByRole('button', { name: /create/i }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(42));
+    expect(lastPostBody).toEqual({ name: 'Default access' });
+  });
+
+  it.each([4, 8, 12, 15])('creates with mask %i when the grants are edited', async (mask) => {
+    const user = userEvent.setup();
+    const onCreated = vi.fn();
+    render(<Wrapper><CreateNodeDialog open onOpenChange={vi.fn()} onCreated={onCreated} /></Wrapper>);
+    for (const [label, bit] of [['Global read', 1], ['Global write', 2], ['Organization read', 4], ['Organization write', 8]] as const) {
+      if (((mask ^ 3) & bit) !== 0) await user.click(screen.getByRole('checkbox', { name: label }));
+    }
+    await user.type(screen.getByLabelText(/name/i), 'Organization node');
+    await user.click(screen.getByRole('button', { name: /create/i }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(42));
+    expect(lastPostBody).toEqual({ name: 'Organization node', access: mask });
+  });
+});

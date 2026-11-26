@@ -2,8 +2,8 @@
 divoid_get_node — fetch a single node's properties by id.
 
 Wraps GET /api/nodes/{id}. Returns id, type, name, status, contentType,
-substance, x, y, access, ownerId, created, lastUpdate, skipEmbedding. Does NOT return the
-content body — use divoid_get_content for that.
+substance, x, y, access, ownerId, organizationId, created, lastUpdate, skipEmbedding.
+Does NOT return the content body — use divoid_get_content for that.
 
 Architecture reference: §8.2
 """
@@ -23,13 +23,14 @@ logger = logging.getLogger(__name__)
 
 _TOOL_DESCRIPTION = """\
 Fetch a single node's properties (id, type, name, status, severity, refinement, \
-rootNodeId, contentType, substance, position, access, ownerId, created, lastUpdate, \
-skipEmbedding). Use this \
+rootNodeId, contentType, substance, position, access, ownerId, organizationId, \
+created, lastUpdate, skipEmbedding). Use this \
 when you have a node id (from search results, a link, a memory pointer) and need \
 its metadata. For the content body, use divoid_get_content separately — properties \
 and content are intentionally split because content can be large and is not \
 always needed. substance is the client-written condensed form of the node's \
-content, returned as null when no client has written one.\
+content, returned as null when no client has written one. organizationId is the \
+nullable server-owned organization, also null when an older backend omits it.\
 """
 
 
@@ -44,8 +45,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
         Args:
             id: The node id. Must be a positive integer. Returns id, type, name,
                 status, severity, refinement, rootNodeId, contentType, substance, x, y, access,
-                ownerId, created, lastUpdate, skipEmbedding. rootNodeId is null for
-                ungrouped nodes. substance is null when no client has written one.
+                ownerId, organizationId, created, lastUpdate, skipEmbedding. rootNodeId
+                is null for ungrouped nodes. organizationId is the nullable server-owned
+                organization, also null when an older backend does not report it.
+                substance is null when no client has written one.
                 skipEmbedding is true when the node is opted out of semantic search,
                 and null when the backend does not report it.
         """
@@ -86,6 +89,7 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
             "y": data.get("y"),
             "access": data.get("access"),
             "ownerId": data.get("ownerId"),
+            "organizationId": data.get("organizationId"),
             "created": data.get("created"),
             "lastUpdate": data.get("lastUpdate"),
             "skipEmbedding": data.get("skipEmbedding"),

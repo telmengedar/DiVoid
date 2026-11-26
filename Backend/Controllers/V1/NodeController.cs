@@ -55,8 +55,8 @@ namespace Backend.Controllers.V1
         public Task<NodeDetails> CreateNode([FromBody] NodeDetails node)
         {
             logger.LogInformation("Creating node '{name}'", node.Name);
-            (long callerId, bool _) = ResolveCaller();
-            return nodeService.CreateNode(node, callerId);
+            (long callerId, bool isAdmin) = ResolveCaller();
+            return nodeService.CreateNode(node, callerId, isAdmin);
         }
 
         /// <summary>
@@ -113,7 +113,8 @@ namespace Backend.Controllers.V1
         public Task<AsyncPageResponseWriter<NodeLink>> ListLinks([FromQuery] long[] ids, [FromQuery] ListFilter filter, CancellationToken ct)
         {
             logger.LogInformation("Listing links for {Count} nodes", ids?.Length ?? 0);
-            return nodeService.ListLinks(ids ?? [], filter, ct);
+            (long callerId, bool isAdmin) = ResolveCaller();
+            return nodeService.ListLinks(ids ?? [], filter, callerId, isAdmin, ct);
         }
 
 
@@ -148,7 +149,8 @@ namespace Backend.Controllers.V1
         public async Task<UserIdResponse> GetUser(long nodeId)
         {
             logger.LogInformation("event=node.user.lookup nodeId={NodeId} callerId={CallerId}", nodeId, User.GetDivoidUserId());
-            return new UserIdResponse { UserId = await nodeService.GetUserIdForNode(nodeId) };
+            (long callerId, bool isAdmin) = ResolveCaller();
+            return new UserIdResponse { UserId = await nodeService.GetUserIdForNode(nodeId, callerId, isAdmin) };
         }
 
         /// <summary>

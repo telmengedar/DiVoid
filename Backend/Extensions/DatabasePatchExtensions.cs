@@ -39,8 +39,10 @@ public static class DatabasePatchExtensions {
 
         List<Expression<Func<T, bool>>> setters = [];
         foreach(PatchOperation patch in operations) {
-            string propertyname = patch.Path[1..].ToLower();
-            PropertyInfo property = entitytype.GetProperties().FirstOrDefault(p => p.Name.ToLower() == propertyname);
+            if (string.IsNullOrEmpty(patch.Path) || patch.Path.Length < 2 || patch.Path[0] != '/')
+                throw new ArgumentException("Patch paths must start with '/' and name a property.");
+            string propertyname = patch.Path[1..];
+            PropertyInfo property = entitytype.GetProperties().FirstOrDefault(p => string.Equals(p.Name, propertyname, StringComparison.OrdinalIgnoreCase));
             if(property == null)
                 throw new PropertyNotFoundException(entitytype, propertyname);
 
