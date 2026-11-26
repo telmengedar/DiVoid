@@ -239,7 +239,21 @@ describe('NodeDetailPage — read regions', () => {
     });
 
     // Load-bearing: revert the Access MetadataRow from NodeDetailView.tsx and this fails.
-    expect(screen.getByText('Read, Write')).toBeInTheDocument();
+    expect(screen.getByText('Global read, Global write')).toBeInTheDocument();
+  });
+
+  it.each([
+    [0, 'None'],
+    [4, 'Organization read'],
+    [8, 'Organization write'],
+    [12, 'Organization read, Organization write'],
+    [15, 'Global read, Global write, Organization read, Organization write'],
+    [36, 'Organization read, Other flags (32)'],
+  ] as const)('displays access mask %i with audience labels', async (access, label) => {
+    server.use(http.get(`${BASE_URL}/nodes/42`, () => HttpResponse.json({ ...sampleNode, access })));
+    renderAtId(42);
+    await screen.findByText('Test Document');
+    expect(screen.getByText(label)).toBeInTheDocument();
   });
 
   it('renders Refinement metadata row as an em-dash when unset (DiVoid #14811)', async () => {

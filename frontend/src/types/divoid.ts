@@ -7,12 +7,9 @@
 
 // ─── Node ─────────────────────────────────────────────────────────────────────
 
-/**
- * The four canonical access values serialized by the backend NodeAccess enum.
- * `"Read, Write"` is the flags-combined string produced by JsonStringEnumConverter
- * for NodeAccess.Read | NodeAccess.Write (value 3). See NodeAccess.cs.
- */
-export type NodeAccess = 'None' | 'Read' | 'Write' | 'Read, Write';
+/** JSON enum names/combinations or an integer mask when unnamed access bits are present. */
+export type NodeAccess = number | 'None' | 'Read' | 'Write' | 'OrgRead' | 'OrgWrite'
+  | `${'Read' | 'Write' | 'OrgRead' | 'OrgWrite'}, ${string}`;
 
 /** Mirrors the backend NodeDetails DTO. */
 export interface NodeDetails {
@@ -36,6 +33,8 @@ export interface NodeDetails {
    * the backend always populates it on `GET /api/nodes/:id`. See DiVoid #1370 / PR #130.
    */
   access?: NodeAccess;
+  /** Owning organization; null grants no organization membership. */
+  organizationId?: number | null;
   /**
    * Severity level for bug nodes (null for all other types).
    * Non-null severity counts as lifecycle state per design #2014 §9.1 — a node
@@ -86,6 +85,8 @@ export interface UserDetails {
   permissions: string[];
   /** Optional home node — drives org/project pill filtering and auto-redirect. */
   homeNodeId: number | null;
+  /** Persisted organization membership, independent of API permission scopes. */
+  organizationId?: number | null;
 }
 
 // ─── API error ────────────────────────────────────────────────────────────────

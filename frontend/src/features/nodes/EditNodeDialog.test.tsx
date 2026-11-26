@@ -1,29 +1,3 @@
-/**
- * EditNodeDialog tests — load-bearing per DiVoid #275.
- *
- * Covers:
- *  - Owner can edit Access: select changes to 'None', PATCH body contains
- *    `{op:'replace', path:'/access', value:'None'}`.
- *  - Admin (non-owner) can edit Access on someone else's node: same PATCH shape.
- *  - Non-owner non-admin sees no Access selector at all.
- *
- * Load-bearing substitution proof per contract §13.1 and §13.7:
- *
- *  T1 (owner edits): revert the `canEditAccess` guard block inside `onSubmit`
- *     (the `if (canEditAccess && values.access !== undefined && ...)` branch).
- *     The PATCH body contains no `/access` op → `capturedBody` assertion fails.
- *
- *  T2 (admin edits): same revert; plus if `canEditAccess` logic were wired to
- *     `canWrite` instead of owner/admin, admin on someone else's node would still
- *     pass but a non-owner write-user would also see the selector, breaking T3.
- *
- *  T3 (non-owner non-admin sees no selector): revert the `{canEditAccess && (...)}` JSX
- *     guard in EditNodeDialog. The select renders → `queryByLabelText` returns
- *     an element instead of null → T3 fails with a concrete assertion.
- *
- * See also: NodeAuthorization.BuildOwnerPredicate (the backend gate this mirrors).
- */
-
 import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -146,7 +120,7 @@ beforeAll(async () => {
 });
 
 describe('EditNodeDialog — Access field', () => {
-  it('T1: owner sees the Access selector and submitted PATCH body contains /access op', async () => {
+  it('T1: owner sees the Access controls and submitted PATCH body contains /access op', async () => {
     const user = userEvent.setup();
 
     let capturedBody: PatchOperation[] | null = null;
@@ -161,10 +135,11 @@ describe('EditNodeDialog — Access field', () => {
     renderDialog(ownerNode);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Access')).toBeInTheDocument();
+      expect(screen.getByRole('group', { name: 'Access' })).toBeInTheDocument();
     });
 
-    await user.selectOptions(screen.getByLabelText('Access'), 'None');
+    await user.click(screen.getByRole('checkbox', { name: 'Global read' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Global write' }));
 
     await user.click(screen.getByRole('button', { name: /^save$/i }));
 
@@ -172,10 +147,10 @@ describe('EditNodeDialog — Access field', () => {
       expect(capturedBody).not.toBeNull();
     });
 
-    expect(capturedBody).toContainEqual({ op: 'replace', path: '/access', value: 'None' });
+    expect(capturedBody).toContainEqual({ op: 'replace', path: '/access', value: 0 });
   });
 
-  it('T2: admin (non-owner) sees the Access selector and can submit /access PATCH op', async () => {
+  it('T2: admin (non-owner) sees the Access controls and can submit /access PATCH op', async () => {
     const user = userEvent.setup();
 
     let capturedBody: PatchOperation[] | null = null;
@@ -190,10 +165,10 @@ describe('EditNodeDialog — Access field', () => {
     renderDialog(otherOwnerNode);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Access')).toBeInTheDocument();
+      expect(screen.getByRole('group', { name: 'Access' })).toBeInTheDocument();
     });
 
-    await user.selectOptions(screen.getByLabelText('Access'), 'Read');
+    await user.click(screen.getByRole('checkbox', { name: 'Global write' }));
 
     await user.click(screen.getByRole('button', { name: /^save$/i }));
 
@@ -201,10 +176,10 @@ describe('EditNodeDialog — Access field', () => {
       expect(capturedBody).not.toBeNull();
     });
 
-    expect(capturedBody).toContainEqual({ op: 'replace', path: '/access', value: 'Read' });
+    expect(capturedBody).toContainEqual({ op: 'replace', path: '/access', value: 1 });
   });
 
-  it('T3: non-owner non-admin sees no Access selector', async () => {
+  it('T3: non-owner non-admin sees no Access controls', async () => {
     server.use(
       http.get(`${BASE_URL}/users/me`, () => HttpResponse.json(nonOwnerNonAdminUser)),
     );
@@ -212,12 +187,12 @@ describe('EditNodeDialog — Access field', () => {
     renderDialog(otherOwnerNode);
 
     // We assert something else IS visible (the Name field) so the absence of
-    // the Access selector is a real absence, not a load-timing false negative.
+    // the Access controls is a real absence, not a load-timing false negative.
     await waitFor(() => {
       expect(screen.getByRole('textbox', { name: /name/i })).toBeInTheDocument();
     });
 
-    expect(screen.queryByLabelText('Access')).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Access' })).toBeNull();
   });
 });
 
@@ -321,5 +296,87 @@ describe('EditNodeDialog — Refinement field (DiVoid #14811)', () => {
     });
 
     expect(capturedBody).toContainEqual({ op: 'replace', path: '/refinement', value: null });
+  });
+});
+
+
+describe('EditNodeDialog — organization flags', () => {
+  it.each([
+    [4, 'OrgRead'],
+    [8, 'OrgWrite'],
+    [12, 'OrgRead, OrgWrite'],
+    [15, 'Read, Write, OrgRead, OrgWrite'],
+  ] as const)('roundtrips mask %i and its enum names without an unrelated ACL patch', async (mask, names) => {
+    const user = userEvent.setup();
+    let capturedBody: PatchOperation[] = [];
+    server.use(http.patch(`${BASE_URL}/nodes/42`, async ({ request }) => {
+      capturedBody = await request.json();
+      return new HttpResponse(null, { status: 204 });
+    }));
+    const view = renderDialog({ ...ownerNode, access: names, organizationId: 7 });
+    await screen.findByRole('group', { name: 'Access' });
+    const grants = [['Global read', 1], ['Global write', 2], ['Organization read', 4], ['Organization write', 8]] as const;
+    for (const [label, bit] of grants) {
+      expect(screen.getByRole('checkbox', { name: label })).toHaveProperty('checked', (mask & bit) !== 0);
+    }
+    await user.click(screen.getByRole('checkbox', { name: 'Organization read' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Organization read' }));
+    await user.type(screen.getByLabelText('Name', { exact: false }), ' updated');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(capturedBody).toContainEqual({ op: 'replace', path: '/name', value: 'Test Document updated' }));
+    expect(capturedBody.some((op) => op.path === '/access' || op.path === '/organizationId')).toBe(false);
+    view.unmount();
+    renderDialog({ ...ownerNode, access: mask });
+    await screen.findByRole('group', { name: 'Access' });
+    for (const [label, bit] of grants) {
+      expect(screen.getByRole('checkbox', { name: label })).toHaveProperty('checked', (mask & bit) !== 0);
+    }
+  });
+
+  it.each([4, 8, 12, 15])('submits organization mask %i through the real PATCH path', async (mask) => {
+    const user = userEvent.setup();
+    let capturedBody: PatchOperation[] = [];
+    server.use(http.patch(`${BASE_URL}/nodes/42`, async ({ request }) => {
+      capturedBody = await request.json();
+      return new HttpResponse(null, { status: 204 });
+    }));
+    renderDialog({ ...ownerNode, access: 0 });
+    await screen.findByRole('group', { name: 'Access' });
+    for (const [label, bit] of [['Global read', 1], ['Global write', 2], ['Organization read', 4], ['Organization write', 8]] as const) {
+      if ((mask & bit) !== 0) await user.click(screen.getByRole('checkbox', { name: label }));
+    }
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(capturedBody).toContainEqual({ op: 'replace', path: '/access', value: mask }));
+    expect(capturedBody.some((op) => op.path === '/organizationId')).toBe(false);
+  });
+
+  it('preserves unknown integer bits on a known-bit toggle', async () => {
+    const user = userEvent.setup();
+    let capturedBody: PatchOperation[] = [];
+    server.use(http.patch(`${BASE_URL}/nodes/42`, async ({ request }) => {
+      capturedBody = await request.json();
+      return new HttpResponse(null, { status: 204 });
+    }));
+    renderDialog({ ...ownerNode, access: 36 });
+    await screen.findByRole('group', { name: 'Access' });
+    expect(screen.getByRole('checkbox', { name: 'Organization read' })).toBeChecked();
+    await user.click(screen.getByRole('checkbox', { name: 'Organization write' }));
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(capturedBody).toContainEqual({ op: 'replace', path: '/access', value: 44 }));
+  });
+
+  it('preserves the exact unknown-bit mask when saving unrelated metadata', async () => {
+    const user = userEvent.setup();
+    let capturedBody: PatchOperation[] = [];
+    server.use(http.patch(`${BASE_URL}/nodes/42`, async ({ request }) => {
+      capturedBody = await request.json();
+      return new HttpResponse(null, { status: 204 });
+    }));
+    renderDialog({ ...ownerNode, access: 36, status: null, organizationId: 7 });
+    await screen.findByRole('group', { name: 'Access' });
+    expect(screen.getByRole('checkbox', { name: 'Organization read' })).toBeChecked();
+    await user.type(screen.getByLabelText('Refinement'), 'reviewed');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(capturedBody).toEqual([{ op: 'replace', path: '/refinement', value: 'reviewed' }]));
   });
 });

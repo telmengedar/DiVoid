@@ -26,6 +26,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
 import { toast } from 'sonner';
 import { Pencil, Repeat2, Trash2, Link2, Unlink, UploadCloud, X, FileText } from 'lucide-react';
+import { formatNodeAccess } from './nodeAccess';
 import { useNode } from './useNode';
 import { useNodeContent } from './useNodeContent';
 import { useNodeListLinkedTo } from './useNodeListLinkedTo';
@@ -555,9 +556,9 @@ export function NodeDetailView({ nodeId, onClose, onNeighbourClick }: NodeDetail
           <MetadataRow
             label="Access"
             value={
-              node?.access ? (
+              node?.access !== undefined ? (
                 <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-muted text-muted-foreground">
-                  {node.access}
+                  {formatNodeAccess(node.access)}
                 </span>
               ) : (
                 <span className="text-muted-foreground">—</span>

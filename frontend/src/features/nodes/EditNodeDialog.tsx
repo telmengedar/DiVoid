@@ -17,12 +17,14 @@
  */
 
 import { useEffect } from 'react';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as Dialog from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { usePatchNode } from './mutations';
-import { editNodeSchema, statusOptionsForType, ACCESS_OPTIONS, type EditNodeFormValues } from './schemas';
+import { editNodeSchema, statusOptionsForType, type EditNodeFormValues } from './schemas';
+import { NodeAccessFields } from './NodeAccessFields';
+import { nodeAccessMask } from './nodeAccess';
 import type { NodeDetails } from '@/types/divoid';
 import { useWhoami } from '@/features/auth/useWhoami';
 
@@ -50,6 +52,7 @@ export function EditNodeDialog({ open, onOpenChange, node }: EditNodeDialogProps
 
   const {
     register,
+    control,
     handleSubmit,
     reset,
     formState: { errors, isSubmitting },
@@ -59,7 +62,7 @@ export function EditNodeDialog({ open, onOpenChange, node }: EditNodeDialogProps
       name: node.name,
       status: node.status ?? '',
       refinement: node.refinement ?? '',
-      access: node.access,
+      access: node.access === undefined ? undefined : nodeAccessMask(node.access),
     },
   });
 
@@ -74,7 +77,7 @@ export function EditNodeDialog({ open, onOpenChange, node }: EditNodeDialogProps
         name: node.name,
         status: node.status ?? '',
         refinement: node.refinement ?? '',
-        access: node.access,
+        access: node.access === undefined ? undefined : nodeAccessMask(node.access),
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -107,10 +110,7 @@ export function EditNodeDialog({ open, onOpenChange, node }: EditNodeDialogProps
       ops.push({ op: 'replace' as const, path: '/refinement', value: newRefinement });
     }
 
-    // Access: only appended when the user is owner/admin (canEditAccess) and the
-    // selected value differs from the current node.access. The backend enforces the
-    // same owner-or-admin rule and rejects with 403 if not met.
-    if (canEditAccess && values.access !== undefined && values.access !== node.access) {
+    if (canEditAccess && values.access !== undefined && values.access !== nodeAccessMask(node.access ?? 'None')) {
       ops.push({ op: 'replace' as const, path: '/access', value: values.access });
     }
 
@@ -209,24 +209,14 @@ export function EditNodeDialog({ open, onOpenChange, node }: EditNodeDialogProps
               />
             </div>
 
-            {/* Access — owner/admin only; mirrors NodeAuthorization.BuildOwnerPredicate */}
             {canEditAccess && (
-              <div className="flex flex-col gap-1">
-                <label htmlFor="edit-access" className="text-sm font-medium">
-                  Access
-                </label>
-                <select
-                  id="edit-access"
-                  className="h-9 rounded-md border border-border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
-                  {...register('access')}
-                >
-                  {ACCESS_OPTIONS.map((a) => (
-                    <option key={a} value={a}>
-                      {a}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <Controller
+                name="access"
+                control={control}
+                render={({ field }) => (
+                  <NodeAccessFields value={field.value ?? 0} onChange={field.onChange} />
+                )}
+              />
             )}
 
             {/* Actions */}
