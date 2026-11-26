@@ -117,6 +117,7 @@ public sealed class JwtAuthFixture : IDisposable
     /// <summary>
     /// mints a signed JWT with the test RSA key, valid for 5 minutes by default
     /// </summary>
+    /// <param name="additionalClaims">Optional issuer-signed synthetic claims.</param>
     public string MintToken(
         string?  subject   = "test-sub",
         long?    userId    = null,
