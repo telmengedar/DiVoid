@@ -123,6 +123,7 @@ public class OrganizationAdministrationHttpTests {
         Assert.That(await environment.Database.Load<Organization>(DB.Count()).Where(o => o.Id == organization.Id).ExecuteScalarAsync<long>(), Is.Zero);
         Assert.That((await environment.Graph.Nodes.GetNodeById(environment.Graph.RootId, environment.Graph.OwnerId, false)).Id, Is.EqualTo(environment.Graph.RootId));
     }
+
     /// <summary>Rejects non-JSON-pointer fields before mixed security mutations.</summary>
     /// <returns>The asynchronous operation.</returns>
     [Test, Parallelizable]
@@ -154,6 +155,7 @@ public class OrganizationAdministrationHttpTests {
         Assert.That(ownerMixed.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
         Assert.That((await environment.Graph.Nodes.GetNodeById(node.Id, user, false)).Access, Is.EqualTo(NodeAccess.Read | NodeAccess.Write));
     }
+
     /// <summary>Checks issuer-signed organization claims cannot replace persisted membership.</summary>
     /// <returns>The asynchronous operation.</returns>
     [Test, Parallelizable]
