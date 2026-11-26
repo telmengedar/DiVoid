@@ -63,6 +63,7 @@ public class User {
     [AllowPatch]
     [Index("homenodeid")]
     public long? HomeNodeId { get; set; }
+
     /// <summary>The optional owning organization identifier.</summary>
     [AllowPatch]
     [Index("organization")]

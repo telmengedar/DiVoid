@@ -17,6 +17,7 @@ public interface INodeService
     /// </summary>
     /// <param name="node">node to create</param>
     /// <param name="callerId">DiVoid user-id of the authenticated caller; becomes the node's OwnerId</param>
+    /// <param name="isAdmin">Whether the caller has effective administrator access.</param>
     /// <returns>created node</returns>
     Task<NodeDetails> CreateNode(NodeDetails node, long callerId, bool isAdmin = false);
 
@@ -112,6 +113,8 @@ public interface INodeService
     /// <param name="ids">node ids whose incident links are requested</param>
     /// <param name="filter">paging/sort filter</param>
     /// <param name="ct">cancellation token</param>
+    /// <param name="callerId">The authenticated local user identifier.</param>
+    /// <param name="isAdmin">Whether the caller has effective administrator access.</param>
     /// <returns>page of link adjacency pairs</returns>
     Task<AsyncPageResponseWriter<NodeLink>> ListLinks(long[] ids, ListFilter filter, long callerId, bool isAdmin, CancellationToken ct);
 
@@ -121,6 +124,8 @@ public interface INodeService
     /// returns an empty result for a graph with no nodes.
     /// </summary>
     /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
+    /// <param name="callerId">The authenticated local user identifier.</param>
+    /// <param name="isAdmin">Whether the caller has effective administrator access.</param>
     /// <returns>page envelope of type-catalog rows; <c>continue</c> is always null</returns>
     Task<AsyncPageResponseWriter<TypeListItem>> ListTypes(long callerId, bool isAdmin, CancellationToken ct = default);
 
@@ -181,6 +186,8 @@ public interface INodeService
     /// <c>HomeNodeId</c> one is returned arbitrarily.
     /// </summary>
     /// <param name="nodeId">id of the node to resolve</param>
+    /// <param name="callerId">The authenticated local user identifier.</param>
+    /// <param name="isAdmin">Whether the caller has effective administrator access.</param>
     /// <returns>auth user-id of the user bound to this node</returns>
     /// <exception cref="Pooshit.AspNetCore.Services.Errors.Exceptions.NotFoundException{User}">
     /// thrown when no <c>divoid_user</c> row has <c>HomeNodeId == nodeId</c>.

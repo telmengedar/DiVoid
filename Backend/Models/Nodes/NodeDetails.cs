@@ -135,6 +135,7 @@ public class NodeDetails
     /// UTC timestamp of the last metadata or content modification to this node.
     /// </summary>
     public DateTime? LastUpdate { get; set; }
+
     long? organizationId;
 
     /// <summary>The optional owning organization identifier.</summary>
