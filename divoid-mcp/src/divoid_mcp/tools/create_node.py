@@ -144,8 +144,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                         verbatim with no validation (e.g. 'ready', 'needs-input',
                         'draft', 'proposal' are illustrative, not an enforced list).
                         When absent the server defaults to NULL (unclassified).
-            access: Visibility flags. Accepts int (0-3) or string ("None", "Read",
-                    "Write", "Read, Write"). Canonicalized to int before the POST.
+            access: Integer bitmask (unknown bits preserved), or names None,
+                    Read, Write, OrgRead, OrgWrite joined with commas or pipes.
+                    Read/Write are global; OrgRead/OrgWrite require matching organization.
+                    Canonicalized to int before the POST.
                     When absent the server defaults to Read|Write (3).
             extra_links: Optional list of node ids to link the new node to atomically.
                          Each id receives one POST /nodes/{id}/links call. No dedup is

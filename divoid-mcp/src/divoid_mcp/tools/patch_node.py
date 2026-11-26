@@ -10,8 +10,9 @@ Supported paths per DiVoid #8:
   /status     -- node status (string)
   /X          -- canvas X position (number)
   /Y          -- canvas Y position (number)
-  /access     -- visibility flags: None=0, Read=1, Write=2, Read|Write=3 (default)
-                 Accepts int 0-3 or string "None"/"Read"/"Write"/"Read, Write".
+  /access     -- visibility flags: None=0, global Read=1/Write=2, OrgRead=4/OrgWrite=8.
+                 Accepts integer bitmasks or names joined with commas or pipes.
+                 Unknown integer bits are preserved; Read|Write=3 remains default.
                  Canonicalized to int before composing the patch op.
                  Owner-or-admin gated on the server.
   /ownerId    -- transfer ownership (admin-only on the server; 404 if unauthorized).
@@ -63,9 +64,9 @@ PATCH /api/nodes/{id} call internally. At least one field must be provided \
 status accepts any string with no validation and no lifecycle check -- \
 divoid_set_status is a lighter-weight alternative for status-only changes \
 (same free-form PATCH under the hood, not a validation path); neither tool \
-checks a status value against the type's lifecycle. access accepts int 0-3 \
-or the string representation ("None", "Read", \
-"Write", "Read, Write") and is canonicalized to int before patching. owner_id \
+checks a status value against the type's lifecycle. access accepts integer bitmasks \
+(unknown bits preserved) or names None=0, global Read=1/Write=2, \
+OrgRead=4/OrgWrite=8 joined with commas or pipes, canonicalized to int. owner_id \
 transfer is admin-only on the server (returns 404 if unauthorized — the MCP does \
 not gate it). severity accepts a positive integer; to clear severity, pass \
 clear_severity=True — the tool composes a replace /severity null op internally. \
@@ -90,22 +91,26 @@ _ACCESS_STRING_MAP: dict[str, int] = {
     "None": 0,
     "Read": 1,
     "Write": 2,
-    "Read, Write": 3,
+    "OrgRead": 4,
+    "OrgWrite": 8,
 }
 
 
 def _canonicalize_access(access: int | str) -> int:
     if isinstance(access, int):
         return access
-    mapped = _ACCESS_STRING_MAP.get(access)
-    if mapped is None:
-        raise InvariantViolation(
-            "access_invalid_value",
-            f"access string {access!r} is not recognized. "
-            f"Valid strings: {', '.join(repr(k) for k in _ACCESS_STRING_MAP)}. "
-            "Or pass an integer 0-3 directly.",
-        )
-    return mapped
+    value = 0
+    for token in access.replace("|", ",").split(","):
+        mapped = _ACCESS_STRING_MAP.get(token.strip())
+        if mapped is None:
+            raise InvariantViolation(
+                "access_invalid_value",
+                f"access string {access!r} is not recognized. "
+                f"Valid flag names: {', '.join(_ACCESS_STRING_MAP)}; "
+                "combine with commas or pipes, or pass an integer bitmask directly.",
+            )
+        value |= mapped
+    return value
 
 
 def _check_invariants(
@@ -284,8 +289,10 @@ def register(mcp_server: fastmcp.FastMCP) -> None:
                     (e.g. no_fields_to_patch), not status content.
             x: New canvas X position (world units). Optional.
             y: New canvas Y position (world units). Optional.
-            access: Visibility flags. Accepts int (0-3) or string ("None", "Read",
-                    "Write", "Read, Write"). Canonicalized to int before composing
+            access: Integer bitmask (unknown bits preserved), or names None,
+                    Read, Write, OrgRead, OrgWrite joined with commas or pipes.
+                    Read/Write are global; OrgRead/OrgWrite require matching organization.
+                    Canonicalized to int before composing
                     the patch op. None=0, Read=1, Write=2, Read|Write=3 (default).
                     Owner-or-admin gated on the server.
             owner_id: Transfer ownership to this user id. Admin-only on the server —
