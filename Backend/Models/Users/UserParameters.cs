@@ -14,4 +14,6 @@ public class UserParameters {
     /// optional email address
     /// </summary>
     public string Email { get; set; }
+    /// <summary>The optional owning organization identifier.</summary>
+    public long? OrganizationId { get; set; }
 }

@@ -41,7 +41,7 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
     }
 
     /// <inheritdoc />
-    public override string[] DefaultListFields => ["id", "type", "name", "status", "severity", "refinement", "rootNodeId", "contentType", "ownerId", "access", "created", "lastupdate"];
+    public override string[] DefaultListFields => ["id", "type", "name", "status", "severity", "refinement", "rootNodeId", "contentType", "ownerId", "organizationId", "access", "created", "lastupdate"];
 
     /// <summary>
     /// post-process callback invoked by <see cref="FieldMapper{TModel}"/> after all field
@@ -57,6 +57,8 @@ public class NodeMapper : FieldMapper<NodeDetails, Node>
 
     static IEnumerable<FieldMapping<NodeDetails>> Mappings(NodeFilter filter = null)
     {
+        yield return new FieldMapping<NodeDetails, long?>("organizationId",
+            DB.Property<Node>(n => n.OrganizationId, "node"), (n, v) => n.OrganizationId = v);
         yield return new FieldMapping<NodeDetails, long>("id",
                                                         DB.Property<Node>(n => n.Id, "node"),
                                                         (n, v) => n.Id = v);

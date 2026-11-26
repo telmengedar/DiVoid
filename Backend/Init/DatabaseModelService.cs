@@ -1,4 +1,5 @@
 using Backend.Models;
+using Backend.Models.Organizations;
 using Backend.Services.MessageChanges;
 using Backend.Models.Auth;
 using Backend.Models.Messages;
@@ -40,6 +41,7 @@ public class DatabaseModelService : IHostedService {
         await MessageChangeSchema.LockAsync(database, transaction);
 
         await schemaService.CreateOrUpdateSchema<ApiKey>(transaction);
+        await schemaService.CreateOrUpdateSchema<Organization>(transaction);
         await schemaService.CreateOrUpdateSchema<User>(transaction);
         await schemaService.CreateOrUpdateSchema<Node>(transaction);
         await schemaService.CreateOrUpdateSchema<NodeHook>(transaction);

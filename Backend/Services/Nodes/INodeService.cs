@@ -18,7 +18,7 @@ public interface INodeService
     /// <param name="node">node to create</param>
     /// <param name="callerId">DiVoid user-id of the authenticated caller; becomes the node's OwnerId</param>
     /// <returns>created node</returns>
-    Task<NodeDetails> CreateNode(NodeDetails node, long callerId);
+    Task<NodeDetails> CreateNode(NodeDetails node, long callerId, bool isAdmin = false);
 
     /// <summary>
     /// get a node by id
@@ -113,7 +113,7 @@ public interface INodeService
     /// <param name="filter">paging/sort filter</param>
     /// <param name="ct">cancellation token</param>
     /// <returns>page of link adjacency pairs</returns>
-    Task<AsyncPageResponseWriter<NodeLink>> ListLinks(long[] ids, ListFilter filter, CancellationToken ct);
+    Task<AsyncPageResponseWriter<NodeLink>> ListLinks(long[] ids, ListFilter filter, long callerId, bool isAdmin, CancellationToken ct);
 
     /// <summary>
     /// lists all node types that are currently in use (i.e. have at least one referencing node),
@@ -122,7 +122,7 @@ public interface INodeService
     /// </summary>
     /// <param name="ct">cancellation token bound to the HTTP request lifetime</param>
     /// <returns>page envelope of type-catalog rows; <c>continue</c> is always null</returns>
-    Task<AsyncPageResponseWriter<TypeListItem>> ListTypes(CancellationToken ct = default);
+    Task<AsyncPageResponseWriter<TypeListItem>> ListTypes(long callerId, bool isAdmin, CancellationToken ct = default);
 
     /// <summary>
     /// deletes an existing node
@@ -186,7 +186,7 @@ public interface INodeService
     /// thrown when no <c>divoid_user</c> row has <c>HomeNodeId == nodeId</c>.
     /// maps to HTTP 404 via the existing error-handler middleware.
     /// </exception>
-    Task<long> GetUserIdForNode(long nodeId);
+    Task<long> GetUserIdForNode(long nodeId, long callerId, bool isAdmin);
 
     /// <summary>registers a node subscription</summary>
     /// <param name="hook">subscription tuple</param>

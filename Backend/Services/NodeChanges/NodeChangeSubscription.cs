@@ -19,11 +19,12 @@ internal sealed class NodeChangeSubscription : IAsyncDisposable {
     int cancellationStarted;
     bool disposed;
 
-    internal NodeChangeSubscription(NodeChangeFeed owner, long keyId, long userId, bool admin, DateTime? expiresAt, NodeChangeFilter filter) {
+    internal NodeChangeSubscription(NodeChangeFeed owner, long keyId, long userId, bool admin, DateTime? expiresAt, long? organizationId, NodeChangeFilter filter) {
         this.owner = owner;
         KeyId = keyId;
         UserId = userId;
         Admin = admin;
+        OrganizationId = organizationId;
         ExpiresAt = expiresAt;
         Filter = filter;
         deadline = new ChangeStreamDeadline(expiresAt, () => Closed, () => _ = owner.RemoveAsync(this));
@@ -34,6 +35,8 @@ internal sealed class NodeChangeSubscription : IAsyncDisposable {
     internal long UserId { get; }
 
     internal bool Admin { get; }
+
+    internal long? OrganizationId { get; }
 
     internal DateTime? ExpiresAt { get; }
 
@@ -51,7 +54,7 @@ internal sealed class NodeChangeSubscription : IAsyncDisposable {
 
     void Expire() => deadline.Tick();
 
-    internal bool Selects(NodeChangeFact fact) => fact != null && fact.Readable(UserId, Admin) &&
+    internal bool Selects(NodeChangeFact fact) => fact != null && fact.Readable(UserId, Admin, OrganizationId) &&
         ((fact.Id == Filter.RootNodeId && Filter.Id.Contains(fact.Id)) ||
          (fact.RootNodeId == Filter.RootNodeId && (Filter.Id.Length == 0 && Filter.Type.Length == 0 || Filter.Id.Contains(fact.Id) || Filter.Type.Contains(fact.Type, StringComparer.Ordinal))));
 
@@ -60,7 +63,7 @@ internal sealed class NodeChangeSubscription : IAsyncDisposable {
         NodeChangeFact after = delta.After;
         long id = before?.Id ?? after.Id;
         bool anchor = id == Filter.RootNodeId || Filter.Id.Contains(id);
-        if (anchor && (after == null || !after.Readable(UserId, Admin) || id != Filter.RootNodeId && after.RootNodeId != Filter.RootNodeId)) {
+        if (anchor && (after == null || !after.Readable(UserId, Admin, OrganizationId) || id != Filter.RootNodeId && after.RootNodeId != Filter.RootNodeId)) {
             Close();
             return;
         }

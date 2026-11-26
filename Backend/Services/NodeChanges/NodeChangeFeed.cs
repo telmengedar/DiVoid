@@ -54,7 +54,7 @@ public sealed class NodeChangeFeed : IHostedService {
                         if (subscriptions.Count >= 128 || subscriptions.Count(existing => existing.KeyId == keyId) >= 8)
                             failure = new NodeChangeException(HttpStatusCode.TooManyRequests, "graph_change_capacity", "The change-stream connection limit is reached.");
                         else {
-                            subscription = new NodeChangeSubscription(this, keyId, userId, authority.Admin, authority.ExpiresAt, filter);
+                            subscription = new NodeChangeSubscription(this, keyId, userId, authority.Admin, authority.ExpiresAt, authority.OrganizationId, filter);
                             subscriptions.Add(subscription);
                         }
                     }
@@ -77,7 +77,7 @@ public sealed class NodeChangeFeed : IHostedService {
     static async Task<NodeChangeAuthority> ReadAuthorityAsync(IEntityManager database, long keyId, long userId, NodeChangeFilter filter) {
         ApiKey key = await database.Load<ApiKey>(row => row.Id, row => row.UserId, row => row.Enabled, row => row.Permissions, row => row.ExpiresAt)
             .Where(row => row.Id == keyId).ExecuteEntityAsync();
-        User user = await database.Load<User>(row => row.Id, row => row.Enabled).Where(row => row.Id == userId).ExecuteEntityAsync();
+        User user = await database.Load<User>(row => row.Id, row => row.Enabled, row => row.OrganizationId).Where(row => row.Id == userId).ExecuteEntityAsync();
         if (key == null || key.UserId != userId || !key.Enabled || user == null || !user.Enabled || key.ExpiresAt <= DateTime.UtcNow)
             return new NodeChangeAuthority(false, key?.ExpiresAt, new AuthenticationFailedException("The API key is no longer eligible."));
         string[] permissions = string.IsNullOrEmpty(key.Permissions) ? [] : Json.Read<string[]>(key.Permissions) ?? [];
@@ -85,13 +85,13 @@ public sealed class NodeChangeFeed : IHostedService {
         if (!admin && !permissions.Contains("read", StringComparer.Ordinal) && !permissions.Contains("write", StringComparer.Ordinal))
             return new NodeChangeAuthority(false, key.ExpiresAt, new AuthorizationFailedException("The API key requires read permission."));
         foreach (long id in filter.Id.Append(filter.RootNodeId).Distinct()) {
-            Node node = await database.Load<Node>(row => row.Id, row => row.RootNodeId, row => row.OwnerId, row => row.Access)
+            Node node = await database.Load<Node>(row => row.Id, row => row.RootNodeId, row => row.OwnerId, row => row.Access, row => row.OrganizationId)
                 .Where(row => row.Id == id).ExecuteEntityAsync();
-            if (node == null || !new NodeChangeFact(node.Id, node.RootNodeId, null, node.OwnerId, node.Access).Readable(userId, admin) ||
+            if (node == null || !new NodeChangeFact(node.Id, node.RootNodeId, null, node.OwnerId, node.Access, node.OrganizationId).Readable(userId, admin, user.OrganizationId) ||
                 id != filter.RootNodeId && node.RootNodeId != filter.RootNodeId)
                 return new NodeChangeAuthority(admin, key.ExpiresAt, new NotFoundException<Node>("Requested scope is unavailable."));
         }
-        return new NodeChangeAuthority(admin, key.ExpiresAt, null);
+        return new NodeChangeAuthority(admin, key.ExpiresAt, null, user.OrganizationId);
     }
 
     internal async Task CommitAsync(Action commit, IReadOnlyList<NodeChangeDelta> changes, long? userId = null, long? keyId = null, CancellationToken cancellationToken = default) {

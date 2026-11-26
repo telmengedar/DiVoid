@@ -42,4 +42,6 @@ public class UserDetails {
     /// Null when not set.
     /// </summary>
     public long? HomeNodeId { get; set; }
+    /// <summary>The optional owning organization identifier.</summary>
+    public long? OrganizationId { get; set; }
 }

@@ -14,5 +14,11 @@ public enum NodeAccess
     Read = 1,
 
     /// <summary>everyone authenticated for write may PATCH, POST content, embed-op, DELETE</summary>
-    Write = 2
+    Write = 2,
+
+    /// <summary>Members of the owning organization may read.</summary>
+    OrgRead = 4,
+
+    /// <summary>Members of the owning organization may write.</summary>
+    OrgWrite = 8
 }

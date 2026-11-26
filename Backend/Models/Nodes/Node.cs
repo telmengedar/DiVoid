@@ -145,4 +145,8 @@ public class Node
     [Index("lastupdate")]
     [DefaultValue("0001-01-01 00:00:00")]
     public DateTime LastUpdate { get; set; }
+    /// <summary>The optional owning organization identifier.</summary>
+    [AllowPatch]
+    [Index("organization")]
+    public long? OrganizationId { get; set; }
 }
