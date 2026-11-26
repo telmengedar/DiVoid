@@ -309,7 +309,7 @@ describe('EditNodeDialog — organization flags', () => {
   ] as const)('roundtrips mask %i and its enum names without an unrelated ACL patch', async (mask, names) => {
     const user = userEvent.setup();
     let capturedBody: PatchOperation[] = [];
-    server.use(http.patch(`${BASE_URL}/nodes/42`, async ({ request }) => {
+    server.use(http.patch<never, PatchOperation[]>(`${BASE_URL}/nodes/42`, async ({ request }) => {
       capturedBody = await request.json();
       return new HttpResponse(null, { status: 204 });
     }));
@@ -336,7 +336,7 @@ describe('EditNodeDialog — organization flags', () => {
   it.each([4, 8, 12, 15])('submits organization mask %i through the real PATCH path', async (mask) => {
     const user = userEvent.setup();
     let capturedBody: PatchOperation[] = [];
-    server.use(http.patch(`${BASE_URL}/nodes/42`, async ({ request }) => {
+    server.use(http.patch<never, PatchOperation[]>(`${BASE_URL}/nodes/42`, async ({ request }) => {
       capturedBody = await request.json();
       return new HttpResponse(null, { status: 204 });
     }));
@@ -353,7 +353,7 @@ describe('EditNodeDialog — organization flags', () => {
   it('preserves unknown integer bits on a known-bit toggle', async () => {
     const user = userEvent.setup();
     let capturedBody: PatchOperation[] = [];
-    server.use(http.patch(`${BASE_URL}/nodes/42`, async ({ request }) => {
+    server.use(http.patch<never, PatchOperation[]>(`${BASE_URL}/nodes/42`, async ({ request }) => {
       capturedBody = await request.json();
       return new HttpResponse(null, { status: 204 });
     }));
@@ -368,7 +368,7 @@ describe('EditNodeDialog — organization flags', () => {
   it('preserves the exact unknown-bit mask when saving unrelated metadata', async () => {
     const user = userEvent.setup();
     let capturedBody: PatchOperation[] = [];
-    server.use(http.patch(`${BASE_URL}/nodes/42`, async ({ request }) => {
+    server.use(http.patch<never, PatchOperation[]>(`${BASE_URL}/nodes/42`, async ({ request }) => {
       capturedBody = await request.json();
       return new HttpResponse(null, { status: 204 });
     }));
