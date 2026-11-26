@@ -125,11 +125,14 @@ public sealed class JwtAuthFixture : IDisposable
         DateTime? notBefore = null,
         DateTime? expires  = null,
         bool     useWrongKey = false,
-        string   userIdClaimName = "userId")
+        string   userIdClaimName = "userId",
+        IEnumerable<Claim>? additionalClaims = null)
     {
         DateTime now = DateTime.UtcNow;
 
         List<Claim> claims = new();
+        if (additionalClaims != null)
+            claims.AddRange(additionalClaims);
         if (subject != null)    claims.Add(new Claim(JwtRegisteredClaimNames.Sub, subject));
         if (userId.HasValue)    claims.Add(new Claim(userIdClaimName, userId.Value.ToString()));
 
