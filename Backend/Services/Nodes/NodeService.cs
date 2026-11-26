@@ -1316,9 +1316,9 @@ public class NodeService(IEntityManager database, IEmbeddingCapability embedding
     /// <inheritdoc />
     public async Task<long> GetUserIdForNode(long nodeId, long callerId, bool isAdmin)
     {
-        await RequireReadable(null, nodeId, callerId, isAdmin);
+        LoadOperation<Node> readable = ReadableNodes(callerId, isAdmin);
         long? userId = await database.Load<User>(u => u.Id)
-                                     .Where(u => u.HomeNodeId == nodeId)
+                                     .Where(u => u.HomeNodeId == nodeId && DB.Property<User>(u => u.HomeNodeId).Int64.In(readable))
                                      .ExecuteScalarAsync<long?>();
         if (userId == null)
             throw new NotFoundException<User>(nodeId);
